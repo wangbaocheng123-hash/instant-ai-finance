@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>即时 AI</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">即</div>
+        <div><strong>即时 AI</strong><span>个人财经情报库</span></div>
+      </div>
+      <nav id="nav">
+        <button class="nav-item active" data-view="focus"><span>◉</span> 今日重点</button>
+        <button class="nav-item" data-view="all"><span>▤</span> 全部情报</button>
+        <button class="nav-item" data-view="saved"><span>★</span> 我的收藏</button>
+        <div class="nav-label">专题</div>
+        <button class="nav-item" data-topic="AI产业链"><span class="dot violet"></span> AI 产业链</button>
+        <button class="nav-item" data-topic="紫金矿业"><span class="dot amber"></span> 紫金矿业</button>
+        <button class="nav-item" data-topic="黄金"><span class="dot gold"></span> 黄金</button>
+        <button class="nav-item" data-topic="铜/有色"><span class="dot copper"></span> 铜与有色</button>
+        <button class="nav-item" data-topic="宏观政策"><span class="dot blue"></span> 宏观政策</button>
+        <div class="nav-label">系统</div>
+        <button class="nav-item" data-view="sources"><span>⌁</span> 来源状态</button>
+        <button class="nav-item" data-view="alerts"><span>◇</span> 重要提醒 <b id="alert-count" class="nav-count">0</b></button>
+        <button class="nav-item" data-view="storage"><span>▣</span> 数据位置</button>
+      </nav>
+      <div class="local-badge"><span></span>仅本机运行 · 无账户</div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="view-title">今日重点</h1>
+          <p id="view-subtitle">只显示最值得关注的新变化</p>
+        </div>
+        <div class="top-actions">
+          <label class="search"><span>⌕</span><input id="search-input" placeholder="搜索标题、实体或摘要"></label>
+          <button id="export-button" class="button ghost">导出</button>
+          <button id="collect-button" class="button primary"><span>↻</span> 立即采集</button>
+        </div>
+      </header>
+
+      <section id="stats" class="stats-grid"></section>
+      <section id="notice" class="notice hidden"></section>
+      <section id="content" class="content-grid"></section>
+    </main>
+  </div>
+
+  <div id="detail-backdrop" class="backdrop hidden">
+    <article id="detail-panel" class="detail-panel"></article>
+  </div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

@@ -16,8 +16,18 @@
 | R0-RUN-01 | DONE | 按已授权范围进行受控运行验证 | TrendRadar 已完成隔离启动尝试；六仓 `TEST_RESULTS.md` 均记录结果或依赖审批阻塞 |
 | R0-SYNTH-01 | DONE | 完成功能/许可证/架构对比与复用选型 | 六份总报告、九类模式库、ADR-0002 提案 |
 | R0-CHECKPOINT-01 | DONE | R0 完成后创建本地 Git 检查点 | 本地提交 `R0-open-source-reconnaissance`，未推送远程 |
-| D0-APPROVAL-01 | BLOCKED | 用户审阅并批准实施方案 | 用户决定与 ADR |
-| P0-BOOTSTRAP-01 | BLOCKED | 建立正式产品工程骨架 | 仅在 D0 通过后开放 |
+| D0-APPROVAL-01 | DONE | 用户审阅并批准分阶段实施方案 | 用户于 2026-08-23 要求继续开发；ADR-0004 |
+| P0-BOOTSTRAP-01 | DONE | 建立正式产品工程骨架 | `product/instant_ai/`、本地服务、SQLite 迁移和测试基线 |
+| P1-STORAGE-01 | DONE | 建立 H 盘正式库与证据布局 | SQLite/WAL、内容寻址 raw、evidence 运行清单、备份校验 |
+| P1-INGEST-01 | DONE | 接入首批官方来源并验证幂等 | 第 5 次正式采集：6 来源、112 条、新增 0、错误 0 |
+| P1-RULES-01 | DONE | 实现主题、实体、事件与可解释评分 | `product/instant_ai/rules.py` 与单元测试 |
+| P1-API-UI-01 | DONE | 完成本地 API 与阅读界面 | 今日重点、时间线、搜索、详情证据、来源状态、导出 |
+| P1-DESKTOP-01 | DONE | 建立桌面启动入口 | `C:\Users\36590\Desktop\即时 AI.lnk`，Edge 应用壳 |
+| P1-VERIFY-01 | DONE | 验证核心、接口、数据位置和备份 | `product/tests/`、`scripts/verify-instant-ai.ps1`、SQLite 完整性检查 |
+| P2-AI-01 | IN_PROGRESS | 建立可选 AI 后处理接口、证据引用和离线降级 | 未配置密钥时不得阻断入库或冒充 AI 结果 |
+| P2-NOTIFY-01 | IN_PROGRESS | 建立低噪声通知 outbox 和 Windows 通知 | 站内 outbox/确认已完成；系统级通知待实现；仅规则阈值触发、无交易动作 |
+| P3-RESTORE-01 | DONE | 完成备份恢复演练 | schema 2 带校验备份在 H 盘隔离恢复，`integrity_check=ok`，112 条/6 来源一致，报告留证 |
+| P3-UPGRADE-01 | NOT_STARTED | 建立升级、迁移回滚和独立 EXE 评估 | 升级不删除 H 盘业务库，失败可回退 |
 
 ## 当前依赖说明
 
@@ -25,4 +35,5 @@
 - `R0-STATIC-01` 依赖对应仓库完成锁定，但遇到运行依赖阻塞时仍继续静态分析。
 - `R0-CLONE-01` 已通过用户手工登记的专用 SSH 公钥完成；该密钥只用于上游源码获取，不属于产品账户层。
 - 更深入运行验证依赖用户批准各项目局部依赖安装；当前最低停止条件中的 TrendRadar 运行尝试已满足。
-- 所有 `P*` 任务依赖 `D0-APPROVAL-01`，不得提前执行。
+- `D0-APPROVAL-01` 已完成；P1 核心闭环已可用，P2/P3 按任务账本继续推进。
+- 真实模型调用依赖用户提供服务选择和安全凭据；在此之前先完成不含密钥的接口与降级路径。

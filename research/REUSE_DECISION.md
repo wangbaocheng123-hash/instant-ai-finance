@@ -1,6 +1,6 @@
 # R0 复用决策
 
-状态：`RECOMMENDATION_READY / NOT_AUTHORIZED_FOR_IMPLEMENTATION`。
+状态：`APPROVED_FOR_PHASED_IMPLEMENTATION_BY_ADR-0004`。
 
 ## 结论先行
 
@@ -77,15 +77,13 @@
 
 首批主题固定为 AI 产业链、紫金矿业、黄金、铜与有色金属；首批来源优先公司/交易所/监管/政府和具有明确授权的 Feed/API，热榜只作发现线索而非最终事实依据。
 
-## 尚未确认
+## 实施后仍需确认
 
-- 六仓正式 Git 浅克隆尚未完成；官方归档无历史。
-- TrendRadar 依赖尚未获批安装，因此只有失败启动尝试。
-- changedetection、RSSHub、OpenBB 的最小 Windows 运行尚未进行。
-- 产品发布/商业模型和 GPL/AGPL 接受度未决定。
-- 桌面壳与数据库仍是候选，不在 R0 锁定。
-- 首批数据源条款、速率、字段质量和长期存档权需逐源核验。
+- 六仓正式浅克隆和 TrendRadar 受控运行均已完成；其余大型 sidecar 仍按需经过独立依赖、许可证和运行闸门。
+- 当前个人本地使用不等于解决未来分发/商业场景的 GPL/AGPL/SUL 义务；若范围变化必须重新评估。
+- MVP 桌面壳与 SQLite 已由 ADR-0004 采纳，未来替换必须保留数据迁移与 H 盘边界。
+- 首批来源仍需持续记录条款、速率、字段质量和长期存档权；当前仅启用公开官方页面/Feed。
 
-## 决策请求
+## 实施记录
 
-建议用户在 D0 选择：是否批准“方案 B：薄型领域核心 + sidecar”进入分阶段实施设计；是否批准下一轮只在隔离目录安装 TrendRadar 锁定依赖并继续运行验证。未经批准，本文件不得被解释为已经开始产品开发。
+用户已批准方案 B 分阶段实施。第一版薄型核心已在不启用 sidecar 的条件下完成可用闭环；RSSHub、changedetection、OpenBB、TrendRadar 和 n8n 继续作为可选隔离能力，不是默认启动依赖。

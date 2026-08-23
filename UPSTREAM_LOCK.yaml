@@ -1,6 +1,6 @@
 schema_version: 1
 updated_at: "2026-08-23"
-phase: "R0_COMPLETE_AWAITING_D0_APPROVAL"
+phase: "POST_R0_P1_LOCAL_MVP"
 clone_policy: "depth=1, filter=blob:none, official repository only"
 projects:
   TrendRadar:

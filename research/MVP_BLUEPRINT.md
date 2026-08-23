@@ -1,6 +1,6 @@
 # “即时 AI”MVP 蓝图
 
-状态：`DESIGN_RECOMMENDATION / IMPLEMENTATION_NOT_STARTED`。本文件不包含正式产品代码，也不锁定最终 UI 框架或数据库。
+状态：`LOCAL_MVP_USABLE / IMPLEMENTATION_CONTINUES`。正式实现和运行选择见 ADR-0004；本文件继续作为范围与验收蓝图。
 
 ## 产品边界
 
@@ -12,10 +12,10 @@
 
 | 层 | MVP 候选 | R0 判断 |
 |---|---|---|
-| Windows 客户端 | localhost Web UI + 薄桌面壳 | 形态推荐；Tauri/Electron/PySide6 需小型对比试验后再锁定 |
-| 领域核心/API | Python 本地服务候选 | 与 TrendRadar/changedetection/OpenBB 生态接近，但正式技术栈待 D0/P0 批准 |
-| 元数据/检索 | SQLite WAL + FTS5 候选 | 适合单机起步；不是最终不可逆决定 |
-| 原文/附件证据 | H 盘内容寻址文件 | 与数据库分离，hash 校验、不可变保存 |
+| Windows 客户端 | localhost Web UI + Edge 应用壳 | MVP 已实现；未来可替换为独立打包壳 |
+| 领域核心/API | Python 本地服务 | MVP 已实现，只监听 `127.0.0.1` |
+| 元数据/检索 | SQLite WAL + FTS5 | MVP 已实现，迁移与备份必须版本化 |
+| 原文/附件证据 | H 盘内容寻址文件 | 已实现，与数据库分离并以 SHA-256 定位 |
 | Feed 转换 | RSSHub localhost sidecar | 白名单路由，非必需来源不启用 |
 | 网页变化 | changedetection.io localhost sidecar | 只监测授权官方页面 |
 | 结构化金融数据 | OpenBB 最小 Provider/API sidecar | 只装首批 Provider，逐项审数据条款 |
@@ -94,9 +94,9 @@ AI 不负责决定是否保存原文；原始证据必须先落地。AI 结果�
 | 2 | Adapter contract | mock/RSS/changedetection 三类输入转同一 Evidence envelope，失败可重试且幂等 |
 | 3 | 首批权威来源 | 每类至少一个来源连续两次采集，无重复丢证据，条款记录齐全 |
 | 4 | 规则/实体/事件 | 固定标注集上可解释，误报/漏报有人工复核记录 |
-| 5 | AI 后处理 | 所有摘要带证据引用；离线/超预算时不阻断入库和阅读 |
+| 5 | AI 后处理 | 证据包/任务边界已实现；真实模型执行待安全配置，离线时不阻断入库和阅读 |
 | 6 | 本地 API 与阅读 UI | 今日重点、时间线、详情、搜索、来源状态闭环可用 |
-| 7 | 通知 outbox | 只发送达到阈值的新事件，可撤销/重试/审计，无交易动作 |
+| 7 | 通知 outbox | 站内低噪声 outbox 已实现；Windows 系统通知待完成，无交易动作 |
 | 8 | Windows 壳与安装 | 只监听 localhost，业务数据仅落 H 盘，升级/卸载不删除业务库 |
 | 9 | 可选 Provider/工作流 | OpenBB/n8n 分别通过独立闸门，不影响核心启动 |
 
@@ -108,11 +108,11 @@ AI 不负责决定是否保存原文；原始证据必须先落地。AI 结果�
 - 不让 Agent/MCP 获得任意网络、文件、通知或配置修改权限。
 - 不构建任何账户、个人资料、用户偏好中心、多用户权限、手机 App、实时行情终端或自动交易，也不为这些能力预留 schema/API。
 
-## 进入实施前的批准项
+## 实施批准与当前状态
 
-1. 是否批准方案 B（薄型领域核心 + sidecars）。
+1. 方案 B（薄型领域核心 + 可选 sidecars）已由用户批准并记入 ADR-0004。
 2. 产品已固定为仅本机所有者个人使用；若未来另行提出分发/商业化，必须重新评估 GPL/AGPL/SUL 边界，不在当前架构预留。
 3. TrendRadar 隔离依赖安装已获“其他任务继续执行”授权；随后项目仍按依赖规模逐项记录。
-4. 是否批准在 P0 做 SQLite/FTS5 与桌面壳的可丢弃 spike；这不是最终技术栈锁定。
+4. SQLite/FTS5 与桌面壳已完成第一版实现；核心采集、证据、去重、检索和阅读闭环可用。
 
-在用户明确批准前，`product/` 继续保持未开始状态。
+`product/` 已进入持续实施。真实 AI 提供器、通知 outbox、恢复演练和可选 sidecar 仍按任务账本推进，不得阻断现有离线/无密钥能力。

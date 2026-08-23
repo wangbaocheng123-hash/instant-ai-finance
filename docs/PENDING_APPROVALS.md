@@ -1,6 +1,6 @@
 # R0 外部动作与授权记录
 
-状态：`R0_AUTHORIZATIONS_RESOLVED / NO_PENDING_R0_ACTION`。
+状态：`R0_AUTHORIZATIONS_RESOLVED / PRODUCT_IMPLEMENTATION_APPROVED`。
 
 ## A. GitHub SSH 公钥登记（已完成）
 
@@ -31,4 +31,10 @@
 
 ## 不在本次申请范围
 
-不申请 Docker、WSL、全局 Node/Python 组件、Folo/n8n monorepo 依赖、正式产品开发、真实密钥、自动交易或真实通知账号。
+正式产品开发已经用户批准并进入本地 MVP；本记录不自动批准 Docker、WSL、全局 Node/Python 组件、Folo/n8n monorepo 依赖、真实模型密钥、自动交易或真实通知账号。
+
+## D. 后续单独批准边界
+
+- 接入真实 AI 模型前需确认服务选择并使用安全密钥存储；当前无密钥核心必须持续可用。
+- Docker、WSL、全局运行时和大型依赖仍需单独批准。
+- 自动交易、账户体系和多用户层不在批准范围内。
