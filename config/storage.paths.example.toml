@@ -1,0 +1,10 @@
+# 即时 AI 的非密钥路径模板。正式产品尚未开始；此文件仅固化边界。
+library_root = 'H:\即时AI文件库'
+raw_dir = 'H:\即时AI文件库\raw'
+evidence_dir = 'H:\即时AI文件库\evidence'
+database_dir = 'H:\即时AI文件库\database'
+exports_dir = 'H:\即时AI文件库\exports'
+backups_dir = 'H:\即时AI文件库\backups'
+cache_dir = 'H:\即时AI文件库\cache'
+logs_dir = 'H:\即时AI文件库\logs'
+

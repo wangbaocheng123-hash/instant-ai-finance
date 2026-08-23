@@ -1,0 +1,58 @@
+# 上游研究原件：每个目录保持独立 Git 仓库，不进入本仓库
+upstream/*
+!upstream/README.md
+
+# 实验依赖与生成物
+experiments/**/node_modules/
+experiments/**/.venv/
+experiments/**/venv/
+experiments/**/dist/
+experiments/**/build/
+experiments/**/.next/
+experiments/**/.cache/
+# 隔离运行可从锁定快照重建；不把上游源码副本提交到研究主仓库
+experiments/**/source/
+
+# 通用依赖、缓存和构建产物
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+dist/
+build/
+coverage/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 数据、数据库、日志和下载
+data/
+downloads/
+cache/
+logs/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.zip
+*.7z
+*.tar
+*.gz
+
+# 密钥和登录信息
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*cookie*
+*secret*
+*credential*
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
