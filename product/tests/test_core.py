@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from instant_ai.collectors import parse_feed
-from instant_ai.database import connect, initialize, seed_sources
+from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources
 from instant_ai.rules import analyze, canonical_key, normalized_url
 
 
@@ -33,6 +33,19 @@ class RuleTests(unittest.TestCase):
         second = canonical_key("https://example.com/a", "B")
         self.assertEqual(first, second)
 
+    def test_global_finance_topics_and_ascii_boundaries(self) -> None:
+        result = analyze(
+            "NVIDIA and TSMC lift Nasdaq as Wall Street watches AI chips",
+            "Goldman Sachs published a global markets outlook.",
+            4,
+            ["全球财经"],
+        )
+        self.assertIn("全球财经", result.topics)
+        self.assertIn("华尔街", result.topics)
+        self.assertIn("AI产业链", result.topics)
+        self.assertIn("英伟达", result.entities)
+        self.assertNotIn("AI产业链", analyze("Daily oil market update", "", 3, []).topics)
+
 
 class FeedTests(unittest.TestCase):
     def test_rss_parsing(self) -> None:
@@ -52,7 +65,7 @@ class DatabaseTests(unittest.TestCase):
             with connect(path) as connection:
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
-            self.assertEqual(source_count, 6)
+            self.assertEqual(source_count, len(DEFAULT_SOURCES))
             self.assertEqual(version, "2")
             with connect(path) as connection:
                 tables = {

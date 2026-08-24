@@ -19,6 +19,8 @@
 | Folo | `UI_REFERENCE` | `DESIGN_REFERENCE` / `REWRITE_FROM_PATTERN` | 参考阅读器、时间线、详情、搜索与桌面交互；不复制代码和资产 |
 | n8n | `WORKFLOW_ENGINE` | `API_INTEGRATION` | MVP 后用户可选 sidecar；不 Fork、不嵌入、不随默认核心运行 |
 
+P2 后置决定：World Monitor 不改变上述六仓 R0 角色，也不成为 `PRIMARY_BASE`；它按 ADR-0005 作为 `LICENSE_ISOLATED_PRESENTATION_FORK`，只消费即时 AI 的 localhost API。
+
 ## 直接复用、API 接入和自有实现边界
 
 ### 通过独立服务/API
@@ -75,7 +77,7 @@
   -> Windows 阅读器 + 可审计通知
 ```
 
-首批主题固定为 AI 产业链、紫金矿业、黄金、铜与有色金属；首批来源优先公司/交易所/监管/政府和具有明确授权的 Feed/API，热榜只作发现线索而非最终事实依据。
+主题已在 P2 扩展到全球/华尔街、中国/亚洲、AI 产业链、紫金矿业、黄金、铜与有色、宏观央行、地缘供应链、融资并购和财经知识；来源仍优先公司/交易所/监管/政府和具有明确授权的 Feed/API，公开搜索 Feed 只作发现线索而非授权全文或最终事实依据。
 
 ## 实施后仍需确认
 
@@ -87,3 +89,5 @@
 ## 实施记录
 
 用户已批准方案 B 分阶段实施。第一版薄型核心已在不启用 sidecar 的条件下完成可用闭环；RSSHub、changedetection、OpenBB、TrendRadar 和 n8n 继续作为可选隔离能力，不是默认启动依赖。
+
+2026-08-24，用户进一步批准全球财经文字终端改造。World Monitor 展示分叉保持独立 Git 历史与 AGPL 许可证，只部署窄化的本地 API 前端；源码证据和删除清单见 `research/WORLDMONITOR_FINANCE_FORK.md`。

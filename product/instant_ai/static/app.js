@@ -1,176 +1,40 @@
-const state = { view: 'focus', topic: '', query: '', items: [], status: null };
-const $ = (selector) => document.querySelector(selector);
-const content = $('#content');
-const notice = $('#notice');
-
-async function api(path, options = {}) {
-  const headers = { ...(options.headers || {}) };
-  if (options.method === 'POST') {
-    headers['Content-Type'] = 'application/json';
-    headers['X-Instant-AI'] = '1';
-  }
-  const response = await fetch(path, { ...options, headers });
-  if (!response.ok) throw new Error(`请求失败 (${response.status})`);
-  return response.json();
-}
-
-function escapeHtml(value = '') {
-  const node = document.createElement('div');
-  node.textContent = value;
-  return node.innerHTML;
-}
-
-function safeExternalUrl(value = '') {
-  try {
-    const url = new URL(value);
-    return ['http:', 'https:'].includes(url.protocol) ? escapeHtml(url.href) : '#';
-  } catch { return '#'; }
-}
-
-function formatTime(value) {
-  if (!value) return '时间未知';
-  try { return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)); }
-  catch { return value; }
-}
-
-function showNotice(message, error = false) {
-  notice.textContent = message;
-  notice.className = `notice${error ? ' error' : ''}`;
-  setTimeout(() => notice.classList.add('hidden'), 8000);
-}
-
-function renderStats(status) {
-  const items = status.items || {};
-  const sources = status.sources || {};
-  const last = status.last_run;
-  $('#stats').innerHTML = `
-    <div class="stat-card"><span>情报总量</span><strong>${items.total || 0}</strong><small>条</small></div>
-    <div class="stat-card"><span>尚未阅读</span><strong>${items.unread || 0}</strong><small>条</small></div>
-    <div class="stat-card"><span>已收藏</span><strong>${items.saved || 0}</strong><small>条</small></div>
-    <div class="stat-card"><span>来源健康</span><strong>${(sources.enabled || 0) - (sources.errors || 0)}/${sources.enabled || 0}</strong><small>${last ? escapeHtml(last.status) : '待采集'}</small></div>`;
-  $('#alert-count').textContent = status.notifications?.pending || 0;
-}
-
-function itemCard(item) {
-  const scoreClass = item.importance_score >= 85 ? 'hot' : (item.importance_score >= 70 ? 'high' : '');
-  const summary = item.summary || '已保存来源标题和原始证据，打开详情可查看来源。';
-  return `<article class="item-card" data-id="${item.id}">
-    <div class="score ${scoreClass}">${item.importance_score}</div>
-    <div>
-      <h2>${escapeHtml(item.title)}</h2>
-      <p>${escapeHtml(summary)}</p>
-      <div class="tags">
-        <span class="tag event">${escapeHtml(item.event_type)}</span>
-        ${(item.topics || []).map(topic => `<span class="tag">${escapeHtml(topic)}</span>`).join('')}
-        <span>${formatTime(item.published_at || item.first_seen_at)}</span>
-        <span>${item.source_count} 个来源</span>
+var S=Object.defineProperty;var w=(i,t,e)=>t in i?S(i,t,{enumerable:!0,configurable:!0,writable:!0,value:e}):i[t]=e;var m=(i,t,e)=>w(i,typeof t!="symbol"?t+"":t,e);(function(){const t=document.createElement("link").relList;if(t&&t.supports&&t.supports("modulepreload"))return;for(const a of document.querySelectorAll('link[rel="modulepreload"]'))n(a);new MutationObserver(a=>{for(const s of a)if(s.type==="childList")for(const r of s.addedNodes)r.tagName==="LINK"&&r.rel==="modulepreload"&&n(r)}).observe(document,{childList:!0,subtree:!0});function e(a){const s={};return a.integrity&&(s.integrity=a.integrity),a.referrerPolicy&&(s.referrerPolicy=a.referrerPolicy),a.crossOrigin==="use-credentials"?s.credentials="include":a.crossOrigin==="anonymous"?s.credentials="omit":s.credentials="same-origin",s}function n(a){if(a.ep)return;a.ep=!0;const s=e(a);fetch(a.href,s)}})();async function p(i,t={}){const e=new Headers(t.headers);t.method==="POST"&&(e.set("Content-Type","application/json"),e.set("X-Instant-AI","1"));const n=await fetch(i,{...t,headers:e});if(!n.ok)throw new Error(`本机接口请求失败 (${n.status})`);return n.json()}const h={status:()=>p("/api/status"),items:(i="",t="",e=40)=>{const n=new URLSearchParams({limit:String(e)});return i&&n.set("topic",i),t&&n.set("q",t),p(`/api/items?${n.toString()}`)},item:i=>p(`/api/items/${i}`),sources:()=>p("/api/sources"),collect:()=>p("/api/collect",{method:"POST",body:"{}"}),save:(i,t)=>p(`/api/items/${i}/save`,{method:"POST",body:JSON.stringify({value:t})}),read:i=>p(`/api/items/${i}/read`,{method:"POST",body:JSON.stringify({value:!0})})},x=i=>{if(!i)return"时间待确认";const t=new Date(i);return Number.isNaN(t.getTime())?i:new Intl.DateTimeFormat("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:!1}).format(t)};class T{constructor(t){m(this,"element");m(this,"body");m(this,"count");m(this,"activity");m(this,"definition");this.definition=t,this.element=document.createElement("section"),this.element.className="finance-panel",this.element.dataset.panel=t.id,this.element.style.setProperty("--panel-accent",t.accent);const e=document.createElement("header");e.className="panel-header";const n=document.createElement("div");n.className="panel-heading";const a=document.createElement("h2");a.textContent=t.title;const s=document.createElement("span");s.textContent=t.subtitle,n.append(a,s),this.activity=document.createElement("b"),this.activity.className="activity-badge hidden",this.activity.textContent="新",this.count=document.createElement("strong"),this.count.className="panel-count",this.count.textContent="0",e.append(n,this.activity,this.count),this.body=document.createElement("div"),this.body.className="panel-body",this.element.append(e,this.body)}setLoading(){this.body.replaceChildren(this.message("正在读取本机财经库…"))}setError(t){this.body.replaceChildren(this.message(t,"error"))}render(t){if(this.count.textContent=String(t.length),this.markActivity(t),t.length===0){this.body.replaceChildren(this.message("暂时没有匹配消息，下一轮采集后自动更新。"));return}const e=document.createDocumentFragment();t.slice(0,12).forEach(n=>e.append(this.renderItem(n))),this.body.replaceChildren(e)}message(t,e=""){const n=document.createElement("div");return n.className=`panel-message ${e}`.trim(),n.textContent=t,n}renderItem(t){var c;const e=document.createElement("button");e.className=`news-row${t.is_read?" is-read":""}`,e.type="button",e.dataset.itemId=String(t.id);const n=document.createElement("div");n.className="news-meta";const a=document.createElement("span");a.className="news-source",a.textContent=((c=t.sources)==null?void 0:c[0])||t.event_type;const s=document.createElement("time");s.textContent=x(t.published_at||t.first_seen_at);const r=document.createElement("b");r.className=`score score-${t.importance_score>=85?"critical":t.importance_score>=70?"high":"normal"}`,r.textContent=String(t.importance_score),n.append(a,s,r);const o=document.createElement("h3");o.textContent=t.title;const l=document.createElement("div");return l.className="news-tags",t.topics.slice(0,3).forEach(d=>{const u=document.createElement("span");u.textContent=d,l.append(u)}),e.append(n,o,l),e}markActivity(t){const e=`instant-ai-seen-${this.definition.id}`,n=t.map(o=>o.id);let a=[];try{a=JSON.parse(localStorage.getItem(e)||"[]")}catch{a=[]}const s=new Set(a),r=a.length===0?0:n.filter(o=>!s.has(o)).length;this.activity.textContent=r>0?`${r} 新`:"新",this.activity.classList.toggle("hidden",r===0),localStorage.setItem(e,JSON.stringify(n.slice(0,80)))}}const g=[{id:"global",title:"全球即时财经",subtitle:"GLOBAL FINANCIAL WIRE",accent:"#ff9d35"},{id:"wall-street",title:"华尔街与全球投行",subtitle:"WALL STREET · REUTERS · BANK RESEARCH",topic:"华尔街",accent:"#42d6a4"},{id:"china",title:"中国财经",subtitle:"CHINA MARKETS · POLICY · FILINGS",topic:"中国财经",accent:"#ff5c65"},{id:"asia",title:"亚洲市场",subtitle:"JAPAN · KOREA · SINGAPORE · INDIA",topic:"亚洲市场",accent:"#56a8ff"},{id:"gold",title:"黄金与贵金属",subtitle:"GOLD · SILVER · CENTRAL BANK FLOWS",topic:"黄金",accent:"#f2c94c"},{id:"zijin",title:"紫金矿业与全球矿业",subtitle:"ZIJIN · MINES · M&A · PRODUCTION",topic:"紫金矿业",accent:"#d9913d"},{id:"metals",title:"铜与有色金属",subtitle:"COPPER · LITHIUM · RARE METALS",topic:"铜/有色",accent:"#d27d49"},{id:"ai",title:"AI、芯片与大型科技",subtitle:"NVIDIA · GOOGLE · APPLE · SEMICONDUCTORS",topic:"AI产业链",accent:"#a57bff"},{id:"macro",title:"央行、利率与宏观",subtitle:"FED · PBOC · ECB · BOJ · DATA",topic:"宏观政策",accent:"#4cc9f0"},{id:"geopolitics",title:"战争、制裁与供应链",subtitle:"MARKET IMPACT ONLY · NO LIVE VIDEO",topic:"战争/地缘",accent:"#ff6b6b"},{id:"venture",title:"创业、融资与并购",subtitle:"AI STARTUPS · VC · IPO · M&A",topic:"创业融资",accent:"#61d095"},{id:"knowledge",title:"纳斯达克与财经知识",subtitle:"INVESTOR EDUCATION · MARKET STRUCTURE",topic:"财经知识",accent:"#8aa4ff"}],E=i=>{if(!i)return"时间待确认";const t=new Date(i);return Number.isNaN(t.getTime())?i:new Intl.DateTimeFormat("zh-CN",{dateStyle:"medium",timeStyle:"short",hour12:!1}).format(t)};class A{constructor(t){m(this,"root");m(this,"panels",new Map);m(this,"activeDetail",null);this.root=t}async start(){this.renderShell(),this.createPanels(),this.bindEvents(),await this.refresh(),window.setInterval(()=>void this.refresh(!1),6e4)}renderShell(){this.root.innerHTML=`
+      <div class="terminal-shell">
+        <header class="terminal-header">
+          <div class="brand-block"><span class="brand-mark">即</span><div><strong>即时 AI</strong><small>全球财经情报终端</small></div></div>
+          <div class="header-status"><span class="status-dot"></span><b id="healthText">连接本机数据核心</b><span id="lastUpdate">--:--</span></div>
+          <div class="header-actions">
+            <label class="terminal-search"><span>⌕</span><input id="searchInput" autocomplete="off" placeholder="搜索公司、人物、商品或事件" /></label>
+            <button type="button" data-action="sources">来源</button>
+            <button type="button" class="collect-button" data-action="collect">立即采集</button>
+          </div>
+        </header>
+        <section class="ticker" aria-label="即时财经快讯"><b>即时</b><div class="ticker-window"><div id="tickerTrack" class="ticker-track"><span>正在读取本机财经库…</span></div></div></section>
+        <div class="terminal-body">
+          <aside class="rail">
+            <div class="rail-title">情报频道</div>
+            <nav id="sectionNav"></nav>
+            <div class="rail-title">全球市场中心</div>
+            <div class="region-grid">
+              <button data-query="美国 华尔街">纽约</button><button data-query="中国 A股 港股">中国</button>
+              <button data-query="日本 韩国 新加坡 印度">亚洲</button><button data-query="欧洲 欧元 英国">欧洲</button>
+              <button data-query="中东 战争 制裁 原油">中东</button><button data-query="非洲 矿业 黄金 铜">资源国</button>
+            </div>
+            <div class="local-only"><span></span><div><b>仅本机运行</b><small>无账户 · 无云回退 · 无自动视频</small></div></div>
+          </aside>
+          <main class="workspace">
+            <section class="pulse-board">
+              <div><span>情报总量</span><strong id="totalItems">0</strong></div>
+              <div><span>未读消息</span><strong id="unreadItems">0</strong></div>
+              <div><span>来源健康</span><strong id="sourceHealth">0/0</strong></div>
+              <div><span>重要提醒</span><strong id="alertCount">0</strong></div>
+              <div class="coverage"><span>覆盖范围</span><p>全球媒体 · 中国/亚洲 · 黄金矿业 · AI产业 · 宏观央行 · 地缘供应链</p></div>
+            </section>
+            <section id="searchResults" class="search-results hidden"></section>
+            <section id="panelGrid" class="panel-grid"></section>
+          </main>
+        </div>
       </div>
-    </div>
-    <button class="save-button ${item.is_saved ? 'saved' : ''}" data-save="${item.id}" title="收藏">★</button>
-  </article>`;
-}
-
-async function loadItems() {
-  const params = new URLSearchParams({ limit: '120' });
-  if (state.topic) params.set('topic', state.topic);
-  if (state.query) params.set('q', state.query);
-  if (state.view === 'saved') params.set('saved', '1');
-  const items = await api(`/api/items?${params}`);
-  state.items = state.view === 'focus' ? items.filter(item => item.importance_score >= 60).slice(0, 40) : items;
-  content.innerHTML = state.items.length
-    ? state.items.map(itemCard).join('')
-    : `<div class="empty"><strong>这里暂时没有情报</strong>${state.status?.collection?.running ? '首次采集正在进行，请稍候。' : '点击“立即采集”从已启用的官方来源获取数据。'}</div>`;
-}
-
-async function loadSources() {
-  const sources = await api('/api/sources');
-  content.innerHTML = sources.map(source => `<article class="source-card">
-    <div><h3>${escapeHtml(source.name)}</h3><p>${escapeHtml(source.url)}</p><p>可信级别 ${source.trust_level}/5 · 最近 ${source.last_item_count || 0} 条 · ${source.last_success_at ? formatTime(source.last_success_at) : '尚未成功采集'}</p>${source.last_error ? `<p class="source-status error">${escapeHtml(source.last_error)}</p>` : ''}</div>
-    <div class="source-status ${source.last_error ? 'error' : ''}">${source.last_error ? '异常' : (source.last_success_at ? '正常' : '待运行')}<br><button class="toggle ${source.enabled ? 'on' : ''}" data-source="${source.id}" data-enabled="${source.enabled}"></button></div>
-  </article>`).join('');
-}
-
-async function loadAlerts() {
-  const alerts = await api('/api/notifications');
-  content.innerHTML = alerts.length ? alerts.map(alert => `<article class="source-card alert-card" data-alert-item="${alert.item_id}">
-    <div><div class="tags"><span class="tag event">${escapeHtml(alert.event_type)}</span>${alert.topics.map(topic => `<span class="tag">${escapeHtml(topic)}</span>`).join('')}</div><h3>${escapeHtml(alert.title)}</h3><p>${escapeHtml(alert.reason.reason)}</p><p>重要度 ${alert.importance_score} · ${formatTime(alert.published_at || alert.first_seen_at)}</p></div>
-    <button class="button ghost" data-dismiss-alert="${alert.id}">知道了</button>
-  </article>`).join('') : '<div class="empty"><strong>没有待处理的重要提醒</strong>只有高可信来源与高重要度规则同时命中时才会进入这里。</div>';
-}
-
-function loadStorage() {
-  const status = state.status;
-  content.innerHTML = `<article class="storage-card">
-    <h3>正式业务文件库</h3><p>${escapeHtml(status.library_path)}</p>
-    <h3>SQLite 主数据库</h3><p>${escapeHtml(status.database_path)}</p>
-    <h3>最近备份</h3><p>${escapeHtml(status.latest_backup || '尚未创建')}</p>
-    <div class="detail-actions"><button class="button primary" id="backup-button">立即备份数据库</button><button class="button ghost" id="restore-drill-button">验证备份可恢复</button></div>
-    <h3>AI 后处理</h3><p id="ai-status">读取状态中…</p>
-    <h3>目录说明</h3><p>raw：原始抓取证据　 evidence：证据清单　 database：正式数据库　 exports：导出　 backups：备份　 cache：可删除缓存　 logs：脱敏日志</p>
-    <p>本客户端只监听 127.0.0.1，不建立账户，正式数据不上传 GitHub。</p>
-  </article>`;
-  $('#backup-button').onclick = async () => { const result = await api('/api/backup', { method: 'POST', body: '{}' }); showNotice(`数据库备份已保存：${result.path}`); await refresh(); };
-  $('#restore-drill-button').onclick = async () => { const result = await api('/api/restore-drill', { method: 'POST', body: '{}' }); showNotice(`恢复演练通过：${result.result.item_count} 条，完整性 ${result.result.integrity_check}`); await refresh(); };
-  api('/api/ai/status').then(ai => { $('#ai-status').textContent = ai.message; }).catch(() => {});
-}
-
-async function refresh() {
-  state.status = await api('/api/status');
-  renderStats(state.status);
-  const button = $('#collect-button');
-  button.disabled = Boolean(state.status.collection.running);
-  button.innerHTML = state.status.collection.running ? '<span>↻</span> 采集中…' : '<span>↻</span> 立即采集';
-  if (state.view === 'sources') await loadSources();
-  else if (state.view === 'alerts') await loadAlerts();
-  else if (state.view === 'storage') loadStorage();
-  else await loadItems();
-}
-
-async function openDetail(id) {
-  const item = await api(`/api/items/${id}`);
-  await api(`/api/items/${id}/read`, { method: 'POST', body: JSON.stringify({ value: true }) });
-  const panel = $('#detail-panel');
-  panel.innerHTML = `<button class="detail-close" id="detail-close">×</button>
-    <div class="tags"><span class="tag event">${escapeHtml(item.event_type)}</span>${item.topics.map(topic => `<span class="tag">${escapeHtml(topic)}</span>`).join('')}</div>
-    <h2>${escapeHtml(item.title)}</h2>
-    <div class="meta"><span>重要度 ${item.importance_score}</span><span>${formatTime(item.published_at || item.first_seen_at)}</span><span>${item.source_count} 个来源</span></div>
-    <p class="detail-summary">${escapeHtml(item.summary || '该来源目前只提供标题；原始页面和抓取证据已保存。')}</p>
-    <div class="detail-actions"><a class="button primary" href="${safeExternalUrl(item.url)}" target="_blank" rel="noreferrer">打开原文</a><button class="button ghost" id="detail-save">${item.is_saved ? '取消收藏' : '收藏'}</button><button class="button ghost" id="detail-analyze">准备 AI 证据包</button></div>
-    <p class="ai-state">${item.ai_job ? `AI 任务：${escapeHtml(item.ai_job.status)}（不会冒充已生成摘要）` : '尚未创建 AI 任务；现有评分来自确定性规则。'}</p>
-    <h3 class="section-title">证据链</h3>
-    ${(item.evidence || []).map(e => `<div class="evidence-card"><strong>${escapeHtml(e.source_name)}</strong><p>抓取：${formatTime(e.fetched_at)} · SHA-256：${escapeHtml(e.content_hash)}</p><a href="/api/evidence/${e.id}/raw" target="_blank">查看本地原始证据</a></div>`).join('')}`;
-  $('#detail-backdrop').classList.remove('hidden');
-  $('#detail-close').onclick = closeDetail;
-  $('#detail-save').onclick = async () => { await saveItem(item.id, !item.is_saved); closeDetail(); await refresh(); };
-  $('#detail-analyze').onclick = async () => { const result = await api(`/api/items/${item.id}/analyze`, { method: 'POST', body: '{}' }); showNotice(result.status === 'waiting_for_provider' ? '证据包已保存；配置真实模型后再执行，不影响当前阅读。' : '证据包已保存；联网执行器启用后再运行。'); closeDetail(); };
-}
-
-function closeDetail() { $('#detail-backdrop').classList.add('hidden'); }
-async function saveItem(id, value) { await api(`/api/items/${id}/save`, { method: 'POST', body: JSON.stringify({ value }) }); }
-
-document.addEventListener('click', async event => {
-  const save = event.target.closest('[data-save]');
-  if (save) { event.stopPropagation(); const item = state.items.find(x => x.id === Number(save.dataset.save)); await saveItem(item.id, !item.is_saved); await refresh(); return; }
-  const card = event.target.closest('.item-card'); if (card) { await openDetail(card.dataset.id); return; }
-  const source = event.target.closest('[data-source]'); if (source) { await api(`/api/sources/${source.dataset.source}/toggle`, { method: 'POST', body: JSON.stringify({ enabled: source.dataset.enabled !== 'true' }) }); await refresh(); }
-  const dismiss = event.target.closest('[data-dismiss-alert]'); if (dismiss) { event.stopPropagation(); await api(`/api/notifications/${dismiss.dataset.dismissAlert}/dismiss`, { method: 'POST', body: '{}' }); await refresh(); return; }
-  const alert = event.target.closest('[data-alert-item]'); if (alert) { await openDetail(alert.dataset.alertItem); }
-});
-
-$('#nav').addEventListener('click', async event => {
-  const button = event.target.closest('.nav-item'); if (!button) return;
-  document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active')); button.classList.add('active');
-  state.topic = button.dataset.topic || ''; state.view = button.dataset.view || 'topic'; state.query = ''; $('#search-input').value = '';
-  const titles = { focus: ['今日重点', '只显示最值得关注的新变化'], all: ['全部情报', '按重要度和时间查看所有证据'], saved: ['我的收藏', '本机保存的重要条目'], sources: ['来源状态', '官方来源、最近运行和失败原因'], alerts: ['重要提醒', '只有高可信与高重要度同时命中的低噪声提醒'], storage: ['数据位置', '所有正式数据都只保存在 H 盘'] };
-  const selected = titles[state.view] || [state.topic, `专题：${state.topic}`]; $('#view-title').textContent = selected[0]; $('#view-subtitle').textContent = selected[1];
-  await refresh();
-});
-
-let searchTimer;
-$('#search-input').addEventListener('input', event => { clearTimeout(searchTimer); searchTimer = setTimeout(async () => { state.query = event.target.value.trim(); state.view = 'all'; state.topic = ''; $('#view-title').textContent = state.query ? `搜索：${state.query}` : '全部情报'; await refresh(); }, 300); });
-$('#collect-button').addEventListener('click', async () => { await api('/api/collect', { method: 'POST', body: '{}' }); showNotice('采集任务已经开始，数据将直接写入 H 盘。'); await refresh(); });
-$('#export-button').addEventListener('click', async () => { const result = await api('/api/export'); showNotice(`已导出到：${result.path}`); });
-$('#detail-backdrop').addEventListener('click', event => { if (event.target.id === 'detail-backdrop') closeDetail(); });
-
-refresh().catch(error => showNotice(error.message, true));
-setInterval(() => { if (state.status?.collection?.running) refresh().catch(() => {}); }, 2500);
+      <div id="overlay" class="overlay hidden"><article id="overlayCard" class="overlay-card"></article></div>
+      <div id="toast" class="toast hidden"></div>`;const t=this.required("#sectionNav");g.forEach(e=>{const n=document.createElement("button");n.type="button",n.dataset.target=e.id;const a=document.createElement("span");a.style.background=e.accent,n.append(a,e.title),t.append(n)})}createPanels(){const t=this.required("#panelGrid");g.forEach(e=>{const n=new T(e);n.setLoading(),t.append(n.element),this.panels.set(e.id,n)})}bindEvents(){this.root.addEventListener("click",t=>{var o,l;const e=t.target,n=e.closest("[data-item-id]");if(n!=null&&n.dataset.itemId){this.openItem(Number(n.dataset.itemId));return}const a=e.closest("[data-target]");if(a!=null&&a.dataset.target){(o=document.querySelector(`[data-panel="${a.dataset.target}"]`))==null||o.scrollIntoView({behavior:"smooth",block:"start"});return}const s=e.closest("[data-query]");if(s!=null&&s.dataset.query){const c=this.required("#searchInput");c.value=s.dataset.query,this.search(s.dataset.query);return}const r=(l=e.closest("[data-action]"))==null?void 0:l.dataset.action;r==="collect"&&this.collect(),r==="sources"&&this.openSources(),r==="close-overlay"&&this.closeOverlay(),r==="save-item"&&this.activeDetail&&this.toggleSave(),r==="clear-search"&&this.clearSearch()}),this.required("#searchInput").addEventListener("keydown",t=>{const e=t.currentTarget;t.key==="Enter"&&this.search(e.value.trim()),t.key==="Escape"&&this.clearSearch()}),this.required("#overlay").addEventListener("click",t=>{t.target===t.currentTarget&&this.closeOverlay()})}async refresh(t=!0){try{const[e,n]=await Promise.all([h.status(),h.items("","",40)]);this.renderStatus(e),this.renderTicker(n),await Promise.all(g.map(async a=>{const s=this.panels.get(a.id);if(s)try{s.render(a.id==="global"?n:await h.items(a.topic||"","",36))}catch(r){s.setError(r instanceof Error?r.message:"栏目读取失败")}}))}catch(e){this.required("#healthText").textContent="本机数据核心未连接",t&&this.toast(e instanceof Error?e.message:"刷新失败",!0)}}renderStatus(t){this.required("#totalItems").textContent=String(t.items.total||0),this.required("#unreadItems").textContent=String(t.items.unread||0),this.required("#sourceHealth").textContent=`${Math.max(0,(t.sources.enabled||0)-(t.sources.errors||0))}/${t.sources.enabled||0}`,this.required("#alertCount").textContent=String(t.notifications.pending||0),this.required("#healthText").textContent=t.collection.running?"文字来源采集中":"本机数据核心正常",this.required("#lastUpdate").textContent=new Intl.DateTimeFormat("zh-CN",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:!1}).format(new Date);const e=this.required('[data-action="collect"]');e.disabled=t.collection.running,e.textContent=t.collection.running?"采集中…":"立即采集"}renderTicker(t){const e=this.required("#tickerTrack");e.replaceChildren();const n=t.slice(0,16),a=s=>{const r=document.createElement("button");r.type="button",r.dataset.itemId=String(s.id);const o=document.createElement("b");o.textContent=String(s.importance_score),r.append(o,document.createTextNode(s.title)),e.append(r)};if(n.forEach(a),n.forEach(a),n.length===0){const s=document.createElement("span");s.textContent="暂无快讯，点击“立即采集”获取公开文字来源。",e.append(s)}}async collect(){try{await h.collect(),this.toast("采集任务已开始：只抓取文字和公开元数据，不加载视频。"),await this.refresh()}catch(t){this.toast(t instanceof Error?t.message:"无法开始采集",!0)}}async search(t){if(!t)return this.clearSearch();const e=this.required("#searchResults");e.classList.remove("hidden"),e.textContent="正在搜索本机证据库…";try{const n=await h.items("",t,80);e.replaceChildren();const a=document.createElement("header"),s=document.createElement("h2");s.textContent=`搜索：${t}`;const r=document.createElement("span");r.textContent=`${n.length} 条`;const o=document.createElement("button");o.type="button",o.dataset.action="clear-search",o.textContent="关闭",a.append(s,r,o),e.append(a);const l=document.createElement("div");l.className="search-list",n.forEach(c=>{var v;const d=document.createElement("button");d.type="button",d.dataset.itemId=String(c.id);const u=document.createElement("span");u.textContent=`${c.importance_score} · ${((v=c.sources)==null?void 0:v[0])||c.event_type} · ${E(c.published_at||c.first_seen_at)}`;const f=document.createElement("b");f.textContent=c.title,d.append(u,f),l.append(d)}),e.append(l),e.scrollIntoView({behavior:"smooth",block:"start"})}catch(n){e.textContent=n instanceof Error?n.message:"搜索失败"}}clearSearch(){this.required("#searchInput").value="";const t=this.required("#searchResults");t.classList.add("hidden"),t.replaceChildren()}async openItem(t){try{const e=await h.item(t);this.activeDetail=e,h.read(t);const n=this.required("#overlayCard");n.replaceChildren();const a=document.createElement("button");a.className="overlay-close",a.type="button",a.dataset.action="close-overlay",a.textContent="×";const s=document.createElement("div");s.className="detail-kicker",s.textContent=`${e.event_type} · 重要度 ${e.importance_score} · 可信级别 ${e.trust_level}/5`;const r=document.createElement("h1");r.textContent=e.title;const o=document.createElement("p");o.className="detail-meta",o.textContent=`${E(e.published_at||e.first_seen_at)} · ${(e.sources||[]).join("、")||`${e.source_count} 个来源`}`;const l=document.createElement("p");l.className="detail-summary",l.textContent=e.summary||"来源只提供了标题；原始抓取证据已保存在本机文件库。";const c=document.createElement("div");c.className="detail-actions";const d=document.createElement("a");d.href=this.safeUrl(e.url),d.target="_blank",d.rel="noopener noreferrer",d.textContent="打开原文";const u=document.createElement("button");u.type="button",u.dataset.action="save-item",u.textContent=e.is_saved?"取消收藏":"收藏",c.append(d,u);const f=document.createElement("h2");f.textContent=`本机证据链（${e.evidence.length}）`;const v=document.createElement("div");v.className="evidence-list",e.evidence.forEach(b=>{const y=document.createElement("div"),C=document.createElement("b");C.textContent=b.source_name;const N=document.createElement("span");N.textContent=`${E(b.fetched_at)} · SHA-256 ${b.content_hash.slice(0,16)}…`,y.append(C,N),v.append(y)}),n.append(a,s,r,o,l,c,f,v),this.required("#overlay").classList.remove("hidden")}catch(e){this.toast(e instanceof Error?e.message:"详情读取失败",!0)}}async openSources(){try{const t=await h.sources(),e=this.required("#overlayCard");e.replaceChildren();const n=document.createElement("button");n.className="overlay-close",n.type="button",n.dataset.action="close-overlay",n.textContent="×";const a=document.createElement("h1");a.textContent=`文字来源状态（${t.length}）`;const s=document.createElement("p");s.className="detail-summary",s.textContent="正式证据由本机核心归档。付费媒体只使用允许公开访问的标题、摘要或授权接口，不绕过付费墙。";const r=document.createElement("div");r.className="source-list",t.forEach(o=>r.append(this.sourceRow(o))),e.append(n,a,s,r),this.required("#overlay").classList.remove("hidden")}catch(t){this.toast(t instanceof Error?t.message:"来源状态读取失败",!0)}}sourceRow(t){const e=document.createElement("div");e.className=`source-row ${t.last_error?"has-error":""}`;const n=document.createElement("div"),a=document.createElement("b");a.textContent=t.name;const s=document.createElement("span");s.textContent=t.topic_hints.join(" · ")||"综合来源",n.append(a,s);const r=document.createElement("div");r.className="source-state",r.textContent=t.last_error?"异常":t.last_success_at?"正常":"待运行";const o=document.createElement("small");return o.textContent=`可信 ${t.trust_level}/5 · 最近 ${t.last_item_count||0} 条`,r.append(o),e.append(n,r),e}async toggleSave(){if(!this.activeDetail)return;const t=!this.activeDetail.is_saved;await h.save(this.activeDetail.id,t),this.activeDetail.is_saved=t;const e=this.required('[data-action="save-item"]');e.textContent=t?"取消收藏":"收藏",this.toast(t?"已收藏到本机财经库":"已取消收藏")}closeOverlay(){this.required("#overlay").classList.add("hidden"),this.activeDetail=null}toast(t,e=!1){const n=this.required("#toast");n.textContent=t,n.className=`toast ${e?"error":""}`.trim(),window.setTimeout(()=>n.classList.add("hidden"),4500)}safeUrl(t){try{const e=new URL(t);return["http:","https:"].includes(e.protocol)?e.href:"#"}catch{return"#"}}required(t){const e=this.root.querySelector(t)||document.querySelector(t);if(!e)throw new Error(`Missing interface element: ${t}`);return e}}const I=document.querySelector("#app");if(!I)throw new Error("Instant AI root element is missing");const O=new A(I);O.start();
+//# sourceMappingURL=app.js.map

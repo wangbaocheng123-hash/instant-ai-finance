@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import quote_plus
 
 from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensure_layout
 
@@ -21,6 +22,11 @@ class ClosingConnection(sqlite3.Connection):
         result = super().__exit__(exc_type, exc_value, traceback)
         self.close()
         return result
+
+
+def _google_news(query: str, *, chinese: bool = False) -> str:
+    locale = "hl=zh-CN&gl=CN&ceid=CN:zh-Hans" if chinese else "hl=en-US&gl=US&ceid=US:en"
+    return f"https://news.google.com/rss/search?q={quote_plus(query)}&{locale}"
 
 DEFAULT_SOURCES = (
     {
@@ -80,8 +86,134 @@ DEFAULT_SOURCES = (
         "kind": "rss",
         "url": "https://blogs.nvidia.com/feed/",
         "trust_level": 5,
-        "topic_hints": [],
+        "topic_hints": ["AI产业链", "华尔街"],
         "config": {"max_entries": 40},
+    },
+    {
+        "key": "google-company-news",
+        "name": "Google 官方博客",
+        "kind": "rss",
+        "url": "https://blog.google/rss/",
+        "trust_level": 5,
+        "topic_hints": ["AI产业链", "华尔街"],
+        "config": {"max_entries": 40},
+    },
+    {
+        "key": "apple-newsroom",
+        "name": "Apple 官方新闻室",
+        "kind": "rss",
+        "url": "https://www.apple.com/newsroom/rss-feed.rss",
+        "trust_level": 5,
+        "topic_hints": ["AI产业链", "华尔街"],
+        "config": {"max_entries": 40},
+    },
+    {
+        "key": "microsoft-company-news",
+        "name": "Microsoft 官方博客",
+        "kind": "rss",
+        "url": "https://blogs.microsoft.com/feed/",
+        "trust_level": 5,
+        "topic_hints": ["AI产业链", "华尔街"],
+        "config": {"max_entries": 40},
+    },
+    {
+        "key": "sec-press-releases",
+        "name": "美国证监会 SEC 新闻稿",
+        "kind": "rss",
+        "url": "https://www.sec.gov/news/pressreleases.rss",
+        "trust_level": 5,
+        "topic_hints": ["华尔街", "宏观政策"],
+        "config": {"max_entries": 50},
+    },
+    {
+        "key": "global-financial-wire",
+        "name": "全球财经媒体发现（Reuters/Bloomberg/FT/WSJ）",
+        "kind": "rss",
+        "url": _google_news('(site:reuters.com OR site:bloomberg.com OR site:ft.com OR site:wsj.com) (markets OR economy OR stocks OR commodities) when:2d'),
+        "trust_level": 3,
+        "topic_hints": ["全球财经", "华尔街"],
+        "config": {"max_entries": 80, "discovery_only": True},
+    },
+    {
+        "key": "wall-street-wire",
+        "name": "华尔街即时资讯发现",
+        "kind": "rss",
+        "url": _google_news('(Wall Street OR Nasdaq OR S&P 500 OR Dow Jones OR US stocks) when:2d'),
+        "trust_level": 3,
+        "topic_hints": ["全球财经", "华尔街"],
+        "config": {"max_entries": 70, "discovery_only": True},
+    },
+    {
+        "key": "global-bank-research",
+        "name": "全球投行公开观点发现",
+        "kind": "rss",
+        "url": _google_news('(site:goldmansachs.com OR site:morganstanley.com OR site:jpmorgan.com OR site:blackrock.com OR site:ubs.com) (insights OR outlook OR research) when:14d'),
+        "trust_level": 3,
+        "topic_hints": ["华尔街", "投行观点"],
+        "config": {"max_entries": 60, "discovery_only": True},
+    },
+    {
+        "key": "china-finance-wire",
+        "name": "中国财经资讯发现",
+        "kind": "rss",
+        "url": _google_news('(A股 OR 港股 OR 人民银行 OR 中国经济 OR 上交所 OR 深交所 OR 港交所 OR 财新 OR 第一财经) when:2d', chinese=True),
+        "trust_level": 3,
+        "topic_hints": ["全球财经", "中国财经"],
+        "config": {"max_entries": 80, "discovery_only": True},
+    },
+    {
+        "key": "asia-markets-wire",
+        "name": "亚洲市场资讯发现",
+        "kind": "rss",
+        "url": _google_news('(Nikkei OR TOPIX OR KOSPI OR SGX OR Asian markets OR Bank of Japan OR India stocks) when:2d'),
+        "trust_level": 3,
+        "topic_hints": ["全球财经", "亚洲市场"],
+        "config": {"max_entries": 70, "discovery_only": True},
+    },
+    {
+        "key": "gold-mining-wire",
+        "name": "黄金与全球矿业资讯发现",
+        "kind": "rss",
+        "url": _google_news('(gold OR bullion OR copper OR mining OR Zijin OR gold mine OR copper mine) (Reuters OR Bloomberg OR FT OR Mining.com) when:3d'),
+        "trust_level": 3,
+        "topic_hints": ["全球财经", "黄金", "铜/有色"],
+        "config": {"max_entries": 80, "discovery_only": True},
+    },
+    {
+        "key": "market-geopolitics-wire",
+        "name": "战争、制裁与供应链市场影响",
+        "kind": "rss",
+        "url": _google_news('(war OR conflict OR sanctions OR Red Sea OR Hormuz OR shipping disruption) (markets OR oil OR gold OR stocks OR supply chain) when:2d'),
+        "trust_level": 3,
+        "topic_hints": ["全球财经", "战争/地缘", "宏观政策"],
+        "config": {"max_entries": 80, "discovery_only": True},
+    },
+    {
+        "key": "ai-big-tech-wire",
+        "name": "AI、芯片与大型科技资讯发现",
+        "kind": "rss",
+        "url": _google_news('(NVIDIA OR Google OR Apple OR Microsoft OR Amazon OR Meta OR TSMC OR ASML OR AMD OR AI chips OR semiconductors) when:2d'),
+        "trust_level": 3,
+        "topic_hints": ["全球财经", "华尔街", "AI产业链"],
+        "config": {"max_entries": 90, "discovery_only": True},
+    },
+    {
+        "key": "ai-venture-wire",
+        "name": "AI 创业融资与并购资讯发现",
+        "kind": "rss",
+        "url": _google_news('(AI startup OR artificial intelligence funding OR semiconductor acquisition OR AI venture capital) when:7d'),
+        "trust_level": 3,
+        "topic_hints": ["AI产业链", "创业融资"],
+        "config": {"max_entries": 60, "discovery_only": True},
+    },
+    {
+        "key": "nasdaq-investor-education",
+        "name": "Nasdaq 投资与市场知识发现",
+        "kind": "rss",
+        "url": _google_news('site:nasdaq.com/articles (investing OR investor education OR market structure OR stocks) when:14d'),
+        "trust_level": 3,
+        "topic_hints": ["华尔街", "财经知识"],
+        "config": {"max_entries": 50, "discovery_only": True},
     },
 )
 

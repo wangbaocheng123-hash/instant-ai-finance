@@ -21,6 +21,7 @@ from .service import (
     list_sources,
     query_items,
     raw_evidence,
+    reclassify_items,
     recent_runs,
     run_collection,
     set_item_flag,
@@ -33,7 +34,7 @@ HOST = "127.0.0.1"
 PORT = 18765
 COLLECTION_LOCK = threading.Lock()
 COLLECTION_STATE: dict[str, object] = {"running": False, "last_result": None}
-SCHEDULER_INTERVAL_SECONDS = 30 * 60
+SCHEDULER_INTERVAL_SECONDS = 5 * 60
 
 
 def _collect_in_background() -> None:
@@ -241,6 +242,7 @@ def create_server() -> ThreadingHTTPServer:
     create_backup()
     initialize()
     seed_sources()
+    reclassify_items()
     backfill_notifications()
     return ThreadingHTTPServer((HOST, PORT), InstantAIHandler)
 

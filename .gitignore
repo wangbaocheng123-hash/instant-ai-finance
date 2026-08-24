@@ -2,6 +2,10 @@
 upstream/*
 !upstream/README.md
 
+# 许可证隔离的产品 Fork：每个目录保持独立 Git 历史，不混入主仓库
+forks/*
+!forks/README.md
+
 # 实验依赖与生成物
 experiments/**/node_modules/
 experiments/**/.venv/

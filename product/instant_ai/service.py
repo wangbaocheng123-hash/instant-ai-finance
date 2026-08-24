@@ -192,6 +192,15 @@ def run_collection() -> dict[str, Any]:
         try:
             result, entries, content_hash, raw_path = collect_source(source)
             if result.status == 304:
+                with transaction() as connection:
+                    connection.execute(
+                        """
+                        UPDATE sources
+                        SET last_success_at=?, last_error=NULL, updated_at=?
+                        WHERE id=?
+                        """,
+                        (utc_now(), utc_now(), source.id),
+                    )
                 source_detail.update(status="not_modified", items=0)
                 details.append(source_detail)
                 continue
@@ -264,6 +273,8 @@ def run_collection() -> dict[str, Any]:
 
 def _decode_item(row: sqlite3.Row) -> dict[str, Any]:
     item = dict(row)
+    source_names = item.pop("source_names", "") or ""
+    item["sources"] = [name for name in source_names.split(",") if name]
     item["topics"] = json.loads(item.pop("topics_json"))
     item["entities"] = json.loads(item.pop("entities_json"))
     item["is_saved"] = bool(item["is_saved"])
@@ -277,23 +288,70 @@ def query_items(
     conditions = ["1=1"]
     values: list[Any] = []
     if topic:
-        conditions.append("topics_json LIKE ?")
+        conditions.append("i.topics_json LIKE ?")
         values.append(f'%"{topic}"%')
     if query:
-        conditions.append("(title LIKE ? OR summary LIKE ? OR entities_json LIKE ?)")
+        conditions.append("(i.title LIKE ? OR i.summary LIKE ? OR i.entities_json LIKE ?)")
         token = f"%{query}%"
         values.extend([token, token, token])
     if saved:
-        conditions.append("is_saved=1")
+        conditions.append("i.is_saved=1")
     values.extend([min(max(limit, 1), 250), max(offset, 0)])
     sql = f"""
-        SELECT * FROM items WHERE {' AND '.join(conditions)}
-        ORDER BY importance_score DESC, COALESCE(published_at, first_seen_at) DESC
+        SELECT i.*, GROUP_CONCAT(DISTINCT s.name) AS source_names
+        FROM items i
+        LEFT JOIN item_evidence ie ON ie.item_id=i.id
+        LEFT JOIN evidence e ON e.id=ie.evidence_id
+        LEFT JOIN sources s ON s.id=e.source_id
+        WHERE {' AND '.join(conditions)}
+        GROUP BY i.id
+        ORDER BY COALESCE(i.published_at, i.first_seen_at) DESC, i.importance_score DESC
         LIMIT ? OFFSET ?
     """
     with connect() as connection:
         rows = connection.execute(sql, values).fetchall()
     return [_decode_item(row) for row in rows]
+
+
+def reclassify_items() -> int:
+    """Re-run deterministic topic/entity rules after the monitored universe changes."""
+
+    with transaction() as connection:
+        rows = connection.execute(
+            "SELECT id, title, summary, trust_level FROM items ORDER BY id"
+        ).fetchall()
+        for row in rows:
+            source_rows = connection.execute(
+                """
+                SELECT DISTINCT s.topic_hints_json
+                FROM item_evidence ie
+                JOIN evidence e ON e.id=ie.evidence_id
+                JOIN sources s ON s.id=e.source_id
+                WHERE ie.item_id=?
+                """,
+                (row["id"],),
+            ).fetchall()
+            hints: list[str] = []
+            for source_row in source_rows:
+                for hint in json.loads(source_row["topic_hints_json"]):
+                    if hint not in hints:
+                        hints.append(hint)
+            result = analyze(row["title"], row["summary"], row["trust_level"], hints)
+            connection.execute(
+                """
+                UPDATE items
+                SET importance_score=?, topics_json=?, entities_json=?, event_type=?
+                WHERE id=?
+                """,
+                (
+                    result.importance_score,
+                    json.dumps(result.topics, ensure_ascii=False),
+                    json.dumps(result.entities, ensure_ascii=False),
+                    result.event_type,
+                    row["id"],
+                ),
+            )
+    return len(rows)
 
 
 def get_item(item_id: int) -> dict[str, Any] | None:
@@ -318,6 +376,9 @@ def get_item(item_id: int) -> dict[str, Any] | None:
         ).fetchone()
     item = _decode_item(row)
     item["evidence"] = [dict(evidence) for evidence in evidence_rows]
+    item["sources"] = list(
+        dict.fromkeys(evidence["source_name"] for evidence in evidence_rows)
+    )
     item["ai_job"] = dict(ai_row) if ai_row else None
     if item["ai_job"] and item["ai_job"]["result_json"]:
         item["ai_job"]["result"] = json.loads(item["ai_job"].pop("result_json"))

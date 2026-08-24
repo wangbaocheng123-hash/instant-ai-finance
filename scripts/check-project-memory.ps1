@@ -16,8 +16,10 @@ $requiredFiles = @(
     'docs/FOUNDATION_DIRECTIVE_R0.md',
     'docs/MEMORY_PROTOCOL.md',
     'docs/decisions/ADR-0003-single-user-no-account-layer.md',
+    'docs/decisions/ADR-0005-worldmonitor-presentation-fork.md',
     'research/REUSE_DECISION.md',
     'research/MVP_BLUEPRINT.md',
+    'research/WORLDMONITOR_FINANCE_FORK.md',
     'config/storage.paths.example.toml'
 )
 

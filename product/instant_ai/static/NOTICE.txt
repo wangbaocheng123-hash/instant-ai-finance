@@ -1,0 +1,8 @@
+即时 AI 全球财经前端基于 World Monitor v2.5.23 改造。
+
+上游项目：https://github.com/koala73/worldmonitor
+锁定提交：e51058e1765ef2f0c83ccb1d08d984bc59d23f10
+上游作者与版权记录保留在独立 Fork 的 Git 历史中。
+本前端继续按 AGPL-3.0-only 提供；完整许可证见 AGPL-3.0.txt。
+
+即时 AI 的 Python/SQLite 领域核心与 H 盘业务数据不属于该前端 Fork，二者只通过本机 HTTP API 通信。

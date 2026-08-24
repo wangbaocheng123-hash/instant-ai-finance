@@ -1,6 +1,6 @@
-schema_version: 1
-updated_at: "2026-08-23"
-phase: "POST_R0_P1_LOCAL_MVP"
+schema_version: 2
+updated_at: "2026-08-24"
+phase: "POST_R0_P2_GLOBAL_FINANCE_TERMINAL"
 clone_policy: "depth=1, filter=blob:none, official repository only"
 projects:
   TrendRadar:
@@ -99,3 +99,16 @@ projects:
     archive_sha256: "1B0ECF55F483D8F426B7AAF3E4C03501F63C4570331902483CEA3963358577D5"
     analysis_status: "DONE_STATIC"
     runtime_status: "NOT_ATTEMPTED_LARGE_NODE_NATIVE_DEPENDENCY_GATE"
+presentation_forks:
+  WorldMonitor:
+    repository: "https://github.com/koala73/worldmonitor.git"
+    release_tag: "v2.5.23"
+    upstream_commit: "e51058e1765ef2f0c83ccb1d08d984bc59d23f10"
+    primary_language: "TypeScript"
+    license: "AGPL-3.0-only_SOURCE_VERIFIED"
+    upstream_clone_path: "upstream/WorldMonitor"
+    fork_path: "forks/InstantAI-WorldMonitor"
+    fork_branch: "codex/instant-ai-finance"
+    fork_commit: "9682a944c9c45c5a081feee397db4f8a77be9203"
+    integration_role: "LICENSE_ISOLATED_PRESENTATION_FORK_ONLY"
+    runtime_status: "CUSTOM_TEXT_ONLY_FRONTEND_BUILD_AND_BROWSER_VERIFIED"
