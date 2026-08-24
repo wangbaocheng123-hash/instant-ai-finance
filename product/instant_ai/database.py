@@ -12,7 +12,7 @@ from urllib.parse import quote_plus
 from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensure_layout
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -359,12 +359,32 @@ def initialize(path: Path | str | None = None) -> None:
                 UNIQUE(item_id, channel)
             );
 
+            CREATE TABLE IF NOT EXISTS item_translations (
+                item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                target_language TEXT NOT NULL DEFAULT 'zh-CN',
+                original_title TEXT NOT NULL,
+                translated_title TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (item_id, target_language)
+            );
+
+            CREATE TABLE IF NOT EXISTS translation_usage (
+                usage_date TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                character_count INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (usage_date, provider)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_items_published ON items(published_at DESC);
             CREATE INDEX IF NOT EXISTS idx_items_score ON items(importance_score DESC);
             CREATE INDEX IF NOT EXISTS idx_evidence_source ON evidence(source_id, fetched_at DESC);
             CREATE INDEX IF NOT EXISTS idx_runs_started ON collection_runs(started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_ai_jobs_item ON ai_jobs(item_id, id DESC);
             CREATE INDEX IF NOT EXISTS idx_outbox_status ON notification_outbox(status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_item_translations_provider ON item_translations(provider, updated_at DESC);
             """
         )
         connection.execute(

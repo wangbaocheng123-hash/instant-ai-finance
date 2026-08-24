@@ -5,8 +5,9 @@ import unittest
 from pathlib import Path
 
 from instant_ai.collectors import parse_feed
-from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources
+from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources, transaction, utc_now
 from instant_ai.rules import analyze, canonical_key, normalized_url
+from instant_ai.translation import TranslationProvider, needs_translation, translate_items, utf8_prefix
 
 
 RSS_SAMPLE = b"""<?xml version="1.0" encoding="UTF-8"?>
@@ -66,7 +67,7 @@ class DatabaseTests(unittest.TestCase):
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             self.assertEqual(source_count, len(DEFAULT_SOURCES))
-            self.assertEqual(version, "2")
+            self.assertEqual(version, "3")
             with connect(path) as connection:
                 tables = {
                     row[0]
@@ -76,6 +77,55 @@ class DatabaseTests(unittest.TestCase):
                 }
             self.assertIn("ai_jobs", tables)
             self.assertIn("notification_outbox", tables)
+            self.assertIn("item_translations", tables)
+            self.assertIn("translation_usage", tables)
+
+
+class TranslationTests(unittest.TestCase):
+    def test_translation_detection_and_utf8_limit(self) -> None:
+        self.assertTrue(needs_translation("Gold prices rise before the Fed decision"))
+        self.assertFalse(needs_translation("黄金价格上涨，市场等待美联储决定"))
+        self.assertLessEqual(len(utf8_prefix("黄金" * 400).encode("utf-8")), 480)
+
+    def test_translation_is_cached_in_database(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "translation.db"
+            initialize(path)
+            now = utc_now()
+            with transaction(path) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO items(
+                        id, canonical_key, title, url, summary, first_seen_at, last_seen_at
+                    ) VALUES (1, 'english-item', 'Gold prices rise before the Fed decision',
+                              'https://example.com/gold', '', ?, ?)
+                    """,
+                    (now, now),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO items(
+                        id, canonical_key, title, url, summary, first_seen_at, last_seen_at
+                    ) VALUES (2, 'chinese-item', '黄金价格上涨',
+                              'https://example.com/china', '', ?, ?)
+                    """,
+                    (now, now),
+                )
+
+            provider = TranslationProvider(
+                name="unit-test-translator",
+                external=False,
+                daily_limit=None,
+                translate=lambda text: f"测试译文：{text}",
+            )
+            first = translate_items([1, 2], path=path, provider=provider)
+            second = translate_items([1], path=path, provider=provider)
+
+            self.assertEqual(first["translated_count"], 1)
+            self.assertEqual(first["skipped_count"], 1)
+            self.assertEqual(second["translated_count"], 0)
+            self.assertEqual(second["cached_count"], 1)
+            self.assertEqual(second["translations"]["1"], "测试译文：Gold prices rise before the Fed decision")
 
 
 if __name__ == "__main__":

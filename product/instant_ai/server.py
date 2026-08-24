@@ -28,6 +28,7 @@ from .service import (
     stats,
     toggle_source,
 )
+from .translation import translate_items, translation_status
 
 
 HOST = "127.0.0.1"
@@ -139,6 +140,8 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             self._json(list_notifications())
         elif path == "/api/ai/status":
             self._json(provider_status())
+        elif path == "/api/translation/status":
+            self._json(translation_status())
         elif path.startswith("/api/evidence/") and path.endswith("/raw"):
             evidence_id = path.split("/")[3]
             record = raw_evidence(evidence_id)
@@ -191,6 +194,24 @@ class InstantAIHandler(BaseHTTPRequestHandler):
 
         if path == "/api/restore-drill":
             self._json({"ok": True, "result": run_restore_drill()})
+            return
+
+        if path == "/api/translate":
+            raw_ids = payload.get("item_ids", [])
+            if not isinstance(raw_ids, list):
+                self._json({"error": "item_ids_must_be_a_list"}, HTTPStatus.BAD_REQUEST)
+                return
+            item_ids: list[int] = []
+            for value in raw_ids[:40]:
+                try:
+                    item_ids.append(int(value))
+                except (TypeError, ValueError):
+                    continue
+            try:
+                max_new = int(payload.get("max_new", 12))
+            except (TypeError, ValueError):
+                max_new = 12
+            self._json(translate_items(item_ids, max_new=max_new))
             return
 
         parts = path.strip("/").split("/")

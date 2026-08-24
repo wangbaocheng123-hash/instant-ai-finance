@@ -291,15 +291,18 @@ def query_items(
         conditions.append("i.topics_json LIKE ?")
         values.append(f'%"{topic}"%')
     if query:
-        conditions.append("(i.title LIKE ? OR i.summary LIKE ? OR i.entities_json LIKE ?)")
+        conditions.append("(i.title LIKE ? OR i.summary LIKE ? OR i.entities_json LIKE ? OR t.translated_title LIKE ?)")
         token = f"%{query}%"
-        values.extend([token, token, token])
+        values.extend([token, token, token, token])
     if saved:
         conditions.append("i.is_saved=1")
     values.extend([min(max(limit, 1), 250), max(offset, 0)])
     sql = f"""
-        SELECT i.*, GROUP_CONCAT(DISTINCT s.name) AS source_names
+        SELECT i.*, t.translated_title, t.provider AS translation_provider,
+               GROUP_CONCAT(DISTINCT s.name) AS source_names
         FROM items i
+        LEFT JOIN item_translations t
+          ON t.item_id=i.id AND t.target_language='zh-CN' AND t.original_title=i.title
         LEFT JOIN item_evidence ie ON ie.item_id=i.id
         LEFT JOIN evidence e ON e.id=ie.evidence_id
         LEFT JOIN sources s ON s.id=e.source_id
@@ -356,7 +359,16 @@ def reclassify_items() -> int:
 
 def get_item(item_id: int) -> dict[str, Any] | None:
     with connect() as connection:
-        row = connection.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
+        row = connection.execute(
+            """
+            SELECT i.*, t.translated_title, t.provider AS translation_provider
+            FROM items i
+            LEFT JOIN item_translations t
+              ON t.item_id=i.id AND t.target_language='zh-CN' AND t.original_title=i.title
+            WHERE i.id=?
+            """,
+            (item_id,),
+        ).fetchone()
         if row is None:
             return None
         evidence_rows = connection.execute(
@@ -539,10 +551,11 @@ def export_csv() -> Path:
     rows = query_items(limit=250)
     with target.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["标题", "主题", "事件类型", "重要度", "发布时间", "来源链接", "摘要"])
+        writer.writerow(["中文标题", "英文原题", "主题", "事件类型", "重要度", "发布时间", "来源链接", "摘要"])
         for item in rows:
             writer.writerow([
-                item["title"], "、".join(item["topics"]), item["event_type"],
+                item.get("translated_title") or item["title"], item["title"],
+                "、".join(item["topics"]), item["event_type"],
                 item["importance_score"], item["published_at"] or item["first_seen_at"],
                 item["url"], item["summary"],
             ])

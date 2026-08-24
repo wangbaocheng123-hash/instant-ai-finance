@@ -24,8 +24,9 @@
 | P1-API-UI-01 | DONE | 完成本地 API 与阅读界面 | 今日重点、时间线、搜索、详情证据、来源状态、导出 |
 | P1-DESKTOP-01 | DONE | 建立桌面启动入口 | `C:\Users\36590\Desktop\即时 AI.lnk`，Edge 应用壳 |
 | P1-VERIFY-01 | DONE | 验证核心、接口、数据位置和备份 | `product/tests/`、`scripts/verify-instant-ai.ps1`、SQLite 完整性检查 |
-| P2-SOURCE-02 | DONE | 扩展全球财经文字来源与五分钟采集 | 截至第 23 次正式采集：20 来源健康、838 条、来源错误 0；覆盖全球/华尔街/中国/亚洲/黄金矿业/AI/地缘/融资/财经知识 |
+| P2-SOURCE-02 | DONE | 扩展全球财经文字来源与五分钟采集 | 截至第 31 次正式采集：20 来源健康、895 条、来源错误 0；覆盖全球/华尔街/中国/亚洲/黄金矿业/AI/地缘/融资/财经知识 |
 | P2-UI-02 | DONE | 以许可证隔离的 World Monitor 分叉建立纯文字财经终端 | 分叉提交 `9682a944c9c45c5a081feee397db4f8a77be9203`；生产构建及本地浏览器频道、搜索、详情、无媒体元素验证通过 |
+| P2-I18N-01 | DONE | 在桌面客户端内置英文标题汉化与本机缓存 | 分叉提交 `867a4acbfbbce3b587a4ed5eb61fc062289e7fbb`；SQLite schema 3、MyMemory 安全额度、中英双标题、开关和重复请求缓存经 API/浏览器验证 |
 | P2-QUALITY-01 | NOT_STARTED | 建立来源质量分层、白名单和同事件聚类 | 低质来源可屏蔽；重复事件可折叠；官方/主流发现/一般发现有明确标识 |
 | P2-AI-01 | IN_PROGRESS | 建立可选 AI 后处理接口、证据引用和离线降级 | 未配置密钥时不得阻断入库或冒充 AI 结果 |
 | P2-NOTIFY-01 | IN_PROGRESS | 建立低噪声通知 outbox 和 Windows 通知 | 站内 outbox/确认已完成；系统级通知待实现；仅规则阈值触发、无交易动作 |

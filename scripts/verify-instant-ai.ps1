@@ -27,6 +27,9 @@ $health = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/health' -TimeoutSec
 if (-not $health.ok) {
     throw '即时 AI 健康检查失败。'
 }
+if ($health.version -ne '0.4.0') {
+    throw "即时 AI 版本不符合汉化版本: $($health.version)"
+}
 
 $status = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/status' -TimeoutSec 5
 if ($status.database_path -ne $database) {
@@ -36,6 +39,11 @@ if ($status.database_path -ne $database) {
 $aiStatus = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/ai/status' -TimeoutSec 5
 if (-not $aiStatus.contract_version) {
     throw 'AI 证据接口状态缺失。'
+}
+
+$translationStatus = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/translation/status' -TimeoutSec 5
+if (-not $translationStatus.enabled -or -not $translationStatus.target_language) {
+    throw '标题汉化接口状态缺失。'
 }
 
 $notifications = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/notifications' -TimeoutSec 5
@@ -51,4 +59,5 @@ if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) {
 Write-Host '即时 AI 运行验收通过。' -ForegroundColor Green
 Write-Host "数据库: $database"
 Write-Host "情报条数: $($status.items.total)"
+Write-Host "已缓存中文标题: $($translationStatus.cached_titles)"
 Write-Host "待处理重要提醒: $($status.notifications.pending)"

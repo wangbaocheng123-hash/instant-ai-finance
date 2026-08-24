@@ -11,7 +11,7 @@
 - 上游提交：`e51058e1765ef2f0c83ccb1d08d984bc59d23f10`
 - 上游只读目录：`upstream/WorldMonitor`
 - 产品分叉目录：`forks/InstantAI-WorldMonitor`
-- 产品分叉提交：`9682a944c9c45c5a081feee397db4f8a77be9203`
+- 产品分叉提交：`867a4acbfbbce3b587a4ed5eb61fc062289e7fbb`
 - 许可证：`AGPL-3.0-only`
 
 ## 上游源码证据
@@ -26,7 +26,7 @@
 
 - `src/main.ts`：唯一启动 `InstantFinanceApp`。
 - `src/instant-ai/InstantFinanceApp.ts`：顶部滚动快讯、12 个财经频道、搜索、来源和详情交互。
-- `src/instant-ai/FinancePanel.ts`：高密度文字新闻面板。
+- `src/instant-ai/FinancePanel.ts`：高密度文字新闻面板及中文译文/英文原题双标题。
 - `src/instant-ai/api.ts`：只使用相对 `/api`，由本机服务承接。
 - `src/instant-ai/styles.css`：深色终端、三列面板、响应式布局。
 - `vite.config.ts`：开发代理固定到 `127.0.0.1:18765`，生产产物为稳定的 `app.js` 和 `styles.css`。
@@ -43,10 +43,11 @@
 
 ## 验证
 
-- `npm run build`：TypeScript 严格检查与 Vite 生产构建通过；运行产物约 18.2 KiB JS 与 11.9 KiB CSS。
+- `npm run build`：TypeScript 严格检查与 Vite 生产构建通过；运行产物约 23.1 KiB JS 与 12.8 KiB CSS。
 - API 首轮扩展采集：20 来源、抓取 689 条、新增 642、更新 47、错误 0。
-- 截至第 23 次正式采集：数据库 838 条，20/20 来源健康，错误 0。
+- 截至第 31 次正式采集：数据库 895 条，20/20 来源健康，错误 0。
 - 本地浏览器：12 个频道可定位；“黄金”搜索返回 23 条；新闻详情展示 4 份 SHA-256 证据；控制台错误 0。
+- 标题汉化：开关可恢复英文原题；列表和详情均显示中文译文加英文原题，重复 API 请求命中 H 盘缓存而不增加用量。
 - DOM 检查：图片 0，`video`/`audio`/`iframe` 0；部署 HTML/JS 不含 YouTube 或 World Monitor 云端地址。
 
 ## 许可证与内容边界
