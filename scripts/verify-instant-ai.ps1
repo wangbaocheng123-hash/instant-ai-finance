@@ -27,13 +27,22 @@ $health = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/health' -TimeoutSec
 if (-not $health.ok) {
     throw '即时 AI 健康检查失败。'
 }
-if ($health.version -ne '0.5.0') {
-    throw "即时 AI 版本不符合白色缩略图版本: $($health.version)"
+if ($health.version -ne '0.6.0') {
+    throw "即时 AI 版本不符合自动采集与新闻原图版本: $($health.version)"
 }
 
 $status = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/status' -TimeoutSec 5
 if ($status.database_path -ne $database) {
     throw "数据库路径不符合约定: $($status.database_path)"
+}
+if ($status.collection.mode -ne 'automatic' -or $status.collection.interval_seconds -ne 300) {
+    throw '自动实时采集状态或五分钟调度缺失。'
+}
+
+$staticApp = Join-Path $productRoot 'instant_ai\static\app.js'
+$staticText = Get-Content -LiteralPath $staticApp -Raw -Encoding UTF8
+if ($staticText.Contains('立即采集') -or -not $staticText.Contains('自动实时采集')) {
+    throw '客户端仍存在手动采集入口，或自动采集状态缺失。'
 }
 
 $aiStatus = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/ai/status' -TimeoutSec 5
@@ -50,7 +59,7 @@ $sampleItems = @(Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/items?limit=
 if ($sampleItems.Count -ne 1 -or -not $sampleItems[0].thumbnail_url) {
     throw '新闻缩略图地址缺失。'
 }
-$thumbnail = Invoke-WebRequest -Uri ("http://127.0.0.1:18765" + $sampleItems[0].thumbnail_url) -TimeoutSec 15
+$thumbnail = Invoke-WebRequest -Uri ("http://127.0.0.1:18765" + $sampleItems[0].thumbnail_url) -TimeoutSec 45
 $thumbnailContentType = [string]$thumbnail.Headers.'Content-Type'
 if (-not $thumbnailContentType.StartsWith('image/')) {
     throw '新闻缩略图接口没有返回图片。'

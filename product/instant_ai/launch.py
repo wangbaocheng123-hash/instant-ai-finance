@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import subprocess
 import sys
 import time
@@ -11,6 +12,7 @@ from .server import HOST, PORT, run_server
 
 
 APP_URL = f"http://{HOST}:{PORT}/"
+APP_WINDOW_TITLE = "即时 AI · 全球财经情报"
 EDGE_CANDIDATES = (
     Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
     Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
@@ -25,22 +27,108 @@ def server_is_running() -> bool:
         return False
 
 
+def client_window_bounds() -> tuple[int, int, int, int]:
+    """Return a centered desktop-client size inside the Windows work area."""
+
+    if sys.platform != "win32":
+        return 1180, 760, 80, 60
+
+    class RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", ctypes.c_long),
+            ("top", ctypes.c_long),
+            ("right", ctypes.c_long),
+            ("bottom", ctypes.c_long),
+        ]
+
+    work_area = RECT()
+    if not ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work_area), 0):
+        return 1180, 760, 80, 60
+    available_width = max(800, work_area.right - work_area.left)
+    available_height = max(600, work_area.bottom - work_area.top)
+    width = min(1240, max(980, available_width - 180), available_width - 40)
+    height = min(820, max(620, available_height - 100), available_height - 40)
+    left = work_area.left + max(0, (available_width - width) // 2)
+    top = work_area.top + max(0, (available_height - height) // 2)
+    return width, height, left, top
+
+
+def _find_app_window() -> int | None:
+    if sys.platform != "win32":
+        return None
+    class RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", ctypes.c_long),
+            ("top", ctypes.c_long),
+            ("right", ctypes.c_long),
+            ("bottom", ctypes.c_long),
+        ]
+
+    handles: list[tuple[int, int]] = []
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def visit(handle: int, _: int) -> bool:
+        if not ctypes.windll.user32.IsWindowVisible(handle):
+            return True
+        length = ctypes.windll.user32.GetWindowTextLengthW(handle)
+        if length <= 0:
+            return True
+        title = ctypes.create_unicode_buffer(length + 1)
+        ctypes.windll.user32.GetWindowTextW(handle, title, length + 1)
+        if title.value == APP_WINDOW_TITLE:
+            rect = RECT()
+            if ctypes.windll.user32.GetWindowRect(handle, ctypes.byref(rect)):
+                area = max(0, rect.right - rect.left) * max(0, rect.bottom - rect.top)
+                handles.append((area, int(handle)))
+        return True
+
+    ctypes.windll.user32.EnumWindows(callback_type(visit), 0)
+    return max(handles)[1] if handles else None
+
+
+def _fit_app_window(bounds: tuple[int, int, int, int]) -> bool:
+    if sys.platform != "win32":
+        return False
+    width, height, left, top = bounds
+    handle = _find_app_window()
+    if handle is None:
+        return False
+    ctypes.windll.user32.ShowWindow(handle, 9)  # SW_RESTORE
+    return bool(
+        ctypes.windll.user32.SetWindowPos(
+            handle,
+            0,
+            left,
+            top,
+            width,
+            height,
+            0x0004 | 0x0010,  # SWP_NOZORDER | SWP_NOACTIVATE
+        )
+    )
+
+
 def open_window() -> None:
     edge = next((path for path in EDGE_CANDIDATES if path.is_file()), None)
     if edge:
         profile = CACHE_ROOT / "desktop-shell"
         profile.mkdir(parents=True, exist_ok=True)
+        bounds = client_window_bounds()
+        width, height, left, top = bounds
         subprocess.Popen(
             [
                 str(edge),
                 f"--app={APP_URL}",
                 f"--user-data-dir={profile}",
+                f"--window-size={width},{height}",
+                f"--window-position={left},{top}",
                 "--no-first-run",
                 "--disable-features=msEdgeSidebarV2",
-                "--start-maximized",
             ],
             close_fds=True,
         )
+        for _ in range(40):
+            _fit_app_window(bounds)
+            time.sleep(0.1)
     else:
         import webbrowser
 

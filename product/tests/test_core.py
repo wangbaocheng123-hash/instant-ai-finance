@@ -6,8 +6,15 @@ from pathlib import Path
 
 from instant_ai.collectors import parse_feed
 from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources, transaction, utc_now
+from instant_ai.launch import client_window_bounds
 from instant_ai.rules import analyze, canonical_key, normalized_url
-from instant_ai.thumbnails import DownloadedImage, get_thumbnail, register_thumbnail_candidate
+from instant_ai.thumbnails import (
+    DownloadedImage,
+    _article_image_candidates,
+    _extract_google_news_images,
+    get_thumbnail,
+    register_thumbnail_candidate,
+)
 from instant_ai.translation import TranslationProvider, needs_translation, translate_items, utf8_prefix
 
 
@@ -49,6 +56,15 @@ class RuleTests(unittest.TestCase):
         self.assertIn("英伟达", result.entities)
         self.assertNotIn("AI产业链", analyze("Daily oil market update", "", 3, []).topics)
 
+    def test_desktop_client_window_has_a_bounded_size(self) -> None:
+        width, height, left, top = client_window_bounds()
+        self.assertGreaterEqual(width, 760)
+        self.assertGreaterEqual(height, 560)
+        self.assertLessEqual(width, 1240)
+        self.assertLessEqual(height, 820)
+        self.assertGreaterEqual(left, 0)
+        self.assertGreaterEqual(top, 0)
+
 
 class FeedTests(unittest.TestCase):
     def test_rss_parsing(self) -> None:
@@ -86,7 +102,7 @@ class DatabaseTests(unittest.TestCase):
 
 
 class ThumbnailTests(unittest.TestCase):
-    def test_source_thumbnail_is_cached_and_placeholder_is_available(self) -> None:
+    def test_article_thumbnail_is_discovered_cached_and_missing_is_explicit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path = root / "thumbnail.db"
@@ -114,6 +130,16 @@ class ThumbnailTests(unittest.TestCase):
                     """,
                     (now, now),
                 )
+                connection.execute(
+                    """
+                    INSERT INTO items(
+                        id, canonical_key, title, url, summary, first_seen_at, last_seen_at,
+                        topics_json, event_type
+                    ) VALUES (3, 'no-original', 'News with no publisher image', 'https://example.com/c',
+                              '', ?, ?, '[]', '一般动态')
+                    """,
+                    (now, now),
+                )
                 register_thumbnail_candidate(connection, 1, "https://images.example.com/chip.png")
 
             calls: list[str] = []
@@ -122,18 +148,58 @@ class ThumbnailTests(unittest.TestCase):
                 calls.append(url)
                 return DownloadedImage(b"\x89PNG\r\n\x1a\nthumbnail", "image/png")
 
+            def fake_discoverer(url: str, feed_urls: list[str]) -> str | None:
+                self.assertEqual(feed_urls, [])
+                return "https://images.example.com/gold.png" if url.endswith("/b") else None
+
             first = get_thumbnail(1, path=path, cache_root=cache_root, fetcher=fake_fetcher)
             second = get_thumbnail(1, path=path, cache_root=cache_root, fetcher=fake_fetcher)
-            placeholder = get_thumbnail(2, path=path, cache_root=cache_root, fetcher=fake_fetcher)
+            discovered = get_thumbnail(
+                2, path=path, cache_root=cache_root, fetcher=fake_fetcher, discoverer=fake_discoverer
+            )
+            missing = get_thumbnail(
+                3, path=path, cache_root=cache_root, fetcher=fake_fetcher, discoverer=fake_discoverer
+            )
 
             self.assertIsNotNone(first)
             self.assertIsNotNone(second)
-            self.assertIsNotNone(placeholder)
-            self.assertEqual(first.kind, "source")
-            self.assertEqual(second.kind, "source")
-            self.assertEqual(placeholder.kind, "placeholder")
-            self.assertEqual(placeholder.mime_type, "image/svg+xml")
-            self.assertEqual(calls, ["https://images.example.com/chip.png"])
+            self.assertIsNotNone(discovered)
+            self.assertIsNotNone(missing)
+            self.assertEqual(first.kind, "article")
+            self.assertEqual(second.kind, "article")
+            self.assertEqual(discovered.kind, "article")
+            self.assertEqual(missing.kind, "no-original")
+            self.assertEqual(missing.mime_type, "image/svg+xml")
+            self.assertIn("暂无新闻原图", missing.content.decode("utf-8"))
+            self.assertEqual(
+                calls,
+                ["https://images.example.com/chip.png", "https://images.example.com/gold.png"],
+            )
+
+    def test_publisher_metadata_and_google_news_preview_are_extracted(self) -> None:
+        html = """
+        <html><head>
+        <meta property="og:image" content="/images/article-cover.webp">
+        <script type="application/ld+json">
+        {"@type":"NewsArticle","image":{"url":"https://cdn.example.com/cover.jpg"}}
+        </script></head></html>
+        """
+        candidates = _article_image_candidates(html, "https://publisher.example.com/news/story")
+        self.assertEqual(candidates[0], "https://publisher.example.com/images/article-cover.webp")
+        self.assertIn("https://cdn.example.com/cover.jpg", candidates)
+
+        article_id = "CBMi-test-story"
+        google_html = f"""
+        <c-wiz jsdata="oM6qxc;{article_id};1"><figure><img
+          srcset="/api/attachments/preview-w200-h112-p-df 1x,
+                  /api/attachments/preview-w400-h224-p-df 2x"></figure></c-wiz>
+        <c-wiz jsdata="oM6qxc;CBMi-next-story;2"></c-wiz>
+        """
+        previews = _extract_google_news_images(google_html)
+        self.assertEqual(
+            previews[article_id],
+            "https://news.google.com/api/attachments/preview-w400-h224-p-df",
+        )
 
 
 class TranslationTests(unittest.TestCase):

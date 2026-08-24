@@ -35,8 +35,13 @@ from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 HOST = "127.0.0.1"
 PORT = 18765
 COLLECTION_LOCK = threading.Lock()
-COLLECTION_STATE: dict[str, object] = {"running": False, "last_result": None}
 SCHEDULER_INTERVAL_SECONDS = 5 * 60
+COLLECTION_STATE: dict[str, object] = {
+    "running": False,
+    "last_result": None,
+    "mode": "automatic",
+    "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
+}
 
 
 def _collect_in_background() -> None:
@@ -211,14 +216,6 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         length = min(int(self.headers.get("Content-Length", "0") or "0"), 64 * 1024)
         payload = json.loads(self.rfile.read(length) or b"{}")
 
-        if path == "/api/collect":
-            if COLLECTION_STATE["running"]:
-                self._json({"ok": True, "running": True}, HTTPStatus.ACCEPTED)
-                return
-            threading.Thread(target=_collect_in_background, name="instant-ai-collector", daemon=True).start()
-            self._json({"ok": True, "running": True}, HTTPStatus.ACCEPTED)
-            return
-
         if path == "/api/backup":
             target = create_backup(force=True)
             self._json({"ok": True, "path": str(target) if target else None})
@@ -301,9 +298,9 @@ def create_server() -> ThreadingHTTPServer:
     return ThreadingHTTPServer((HOST, PORT), InstantAIHandler)
 
 
-def run_server(collect_if_empty: bool = True) -> None:
+def run_server(collect_on_start: bool = True) -> None:
     server = create_server()
     threading.Thread(target=_scheduler_loop, name="instant-ai-scheduler", daemon=True).start()
-    if collect_if_empty and stats()["items"]["total"] == 0:
+    if collect_on_start:
         threading.Thread(target=_collect_in_background, name="instant-ai-initial-collector", daemon=True).start()
     server.serve_forever(poll_interval=0.5)

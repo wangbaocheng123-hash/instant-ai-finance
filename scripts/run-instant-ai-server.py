@@ -14,4 +14,4 @@ from instant_ai.server import run_server
 
 
 if __name__ == "__main__":
-    run_server(collect_if_empty=True)
+    run_server(collect_on_start=True)
