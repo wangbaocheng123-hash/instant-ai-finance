@@ -12,6 +12,7 @@ from .collectors import Entry, Source, collect_source
 from .database import connect, transaction, utc_now
 from .paths import BACKUPS_ROOT, DATABASE_PATH, EVIDENCE_ROOT, EXPORTS_ROOT, LIBRARY_ROOT, RAW_ROOT
 from .rules import analyze, canonical_key
+from .thumbnails import register_thumbnail_candidate
 
 
 def _source_from_row(row: sqlite3.Row) -> Source:
@@ -136,6 +137,9 @@ def _upsert_entry(
         )
         is_updated = True
 
+    if entry.image_url:
+        register_thumbnail_candidate(connection, item_id, entry.image_url)
+
     evidence_basis = f"{source.key}\n{entry.source_item_id}\n{content_hash}\n{entry.url}"
     evidence_id = hashlib.sha256(evidence_basis.encode("utf-8")).hexdigest()
     connection.execute(
@@ -157,7 +161,10 @@ def _upsert_entry(
             raw_path,
             mime_type,
             http_status,
-            json.dumps({"source_key": source.key}, ensure_ascii=False),
+            json.dumps(
+                {"source_key": source.key, "image_url": entry.image_url or None},
+                ensure_ascii=False,
+            ),
         ),
     )
     connection.execute(
@@ -279,6 +286,7 @@ def _decode_item(row: sqlite3.Row) -> dict[str, Any]:
     item["entities"] = json.loads(item.pop("entities_json"))
     item["is_saved"] = bool(item["is_saved"])
     item["is_read"] = bool(item["is_read"])
+    item["thumbnail_url"] = f"/api/items/{item['id']}/thumbnail"
     return item
 
 

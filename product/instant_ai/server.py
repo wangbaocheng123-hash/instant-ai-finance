@@ -29,6 +29,7 @@ from .service import (
     toggle_source,
 )
 from .translation import translate_items, translation_status
+from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 
 
 HOST = "127.0.0.1"
@@ -124,6 +125,37 @@ class InstantAIHandler(BaseHTTPRequestHandler):
                     offset=int(query.get("offset", ["0"])[0]),
                 )
             )
+        elif path.startswith("/api/items/") and path.endswith("/thumbnail"):
+            parts = path.strip("/").split("/")
+            if len(parts) != 4:
+                self._not_found()
+                return
+            try:
+                item_id = int(parts[2])
+            except ValueError:
+                self._not_found()
+                return
+            thumbnail = get_thumbnail(item_id)
+            if thumbnail is None:
+                self._not_found()
+                return
+            etag = f'"{thumbnail.etag}"'
+            if self.headers.get("If-None-Match") == etag:
+                self.send_response(HTTPStatus.NOT_MODIFIED)
+                self.send_header("ETag", etag)
+                self.send_header("Cache-Control", f"public, max-age={thumbnail.cache_seconds}")
+                self.end_headers()
+                return
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", thumbnail.mime_type)
+            self.send_header("Content-Length", str(len(thumbnail.content)))
+            self.send_header("Cache-Control", f"public, max-age={thumbnail.cache_seconds}")
+            self.send_header("ETag", etag)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+            self.send_header("X-Instant-AI-Thumbnail", thumbnail.kind)
+            self.end_headers()
+            self.wfile.write(thumbnail.content)
         elif path.startswith("/api/items/"):
             try:
                 item_id = int(path.rsplit("/", 1)[-1])
@@ -264,6 +296,7 @@ def create_server() -> ThreadingHTTPServer:
     initialize()
     seed_sources()
     reclassify_items()
+    backfill_thumbnail_candidates()
     backfill_notifications()
     return ThreadingHTTPServer((HOST, PORT), InstantAIHandler)
 

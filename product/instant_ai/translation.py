@@ -67,7 +67,7 @@ def _translate_with_mymemory(text: str) -> str:
     )
     request = urllib.request.Request(
         f"{MYMEMORY_ENDPOINT}?{query}",
-        headers={"User-Agent": "Instant-AI/0.4 local-personal-client"},
+        headers={"User-Agent": "Instant-AI/0.5 local-personal-client"},
     )
     payload = _request_json(request)
     response_data = payload.get("responseData")
@@ -91,7 +91,7 @@ def _translate_with_libretranslate(text: str, endpoint: str, api_key: str) -> st
     request = urllib.request.Request(
         endpoint.rstrip("/") + "/translate",
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json", "User-Agent": "Instant-AI/0.4"},
+        headers={"Content-Type": "application/json", "User-Agent": "Instant-AI/0.5"},
         method="POST",
     )
     payload = _request_json(request)

@@ -12,7 +12,7 @@ from urllib.parse import quote_plus
 from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensure_layout
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -378,6 +378,16 @@ def initialize(path: Path | str | None = None) -> None:
                 PRIMARY KEY (usage_date, provider)
             );
 
+            CREATE TABLE IF NOT EXISTS item_thumbnails (
+                item_id INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                source_url TEXT NOT NULL,
+                local_path TEXT,
+                mime_type TEXT,
+                byte_size INTEGER,
+                status TEXT NOT NULL DEFAULT 'pending',
+                checked_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_items_published ON items(published_at DESC);
             CREATE INDEX IF NOT EXISTS idx_items_score ON items(importance_score DESC);
             CREATE INDEX IF NOT EXISTS idx_evidence_source ON evidence(source_id, fetched_at DESC);
@@ -385,6 +395,7 @@ def initialize(path: Path | str | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_ai_jobs_item ON ai_jobs(item_id, id DESC);
             CREATE INDEX IF NOT EXISTS idx_outbox_status ON notification_outbox(status, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_item_translations_provider ON item_translations(provider, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_item_thumbnails_status ON item_thumbnails(status, checked_at DESC);
             """
         )
         connection.execute(

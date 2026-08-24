@@ -18,7 +18,7 @@ from .paths import RAW_ROOT
 from .rules import clean_text, normalized_url
 
 
-USER_AGENT = "InstantAI/0.2 (+local personal research client)"
+USER_AGENT = "InstantAI/0.5 (+local personal research client)"
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,7 @@ class Entry:
     url: str
     summary: str
     published_at: str | None
+    image_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -115,6 +116,45 @@ def _entry_link(element: ET.Element) -> str:
     return ""
 
 
+def _usable_image_url(value: str, base_url: str) -> str:
+    candidate = urljoin(base_url, value.strip())
+    parsed = urlsplit(candidate)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return candidate
+
+
+def _entry_image(element: ET.Element, link: str) -> str:
+    """Read image metadata without downloading the image during collection."""
+
+    candidates: list[str] = []
+    for child in element.iter():
+        name = _local_name(child.tag)
+        attributes = {str(key).lower(): str(value) for key, value in child.attrib.items()}
+        media_type = attributes.get("type", "").lower()
+        medium = attributes.get("medium", "").lower()
+        if name in {"thumbnail", "image", "imageurl"}:
+            candidates.append(attributes.get("url") or attributes.get("href") or (child.text or ""))
+        elif name in {"content", "enclosure"} and (medium == "image" or media_type.startswith("image/")):
+            candidates.append(attributes.get("url") or attributes.get("href") or "")
+
+        if name in {"description", "summary", "content", "encoded"} and child.text:
+            match = re.search(
+                r"<img\b[^>]+(?:src|data-src)\s*=\s*['\"]([^'\"]+)",
+                child.text,
+                re.IGNORECASE,
+            )
+            if match:
+                candidates.append(match.group(1))
+
+    for candidate in candidates:
+        if candidate:
+            image_url = _usable_image_url(candidate, link)
+            if image_url:
+                return image_url
+    return ""
+
+
 def parse_date(value: str) -> str | None:
     value = value.strip()
     if not value:
@@ -147,7 +187,17 @@ def parse_feed(body: bytes, max_entries: int = 50) -> list[Entry]:
         published = parse_date(_first_text(element, {"pubdate", "published", "updated", "date"}))
         if not title or not link:
             continue
-        entries.append(Entry(identifier, title, normalized_url(link), summary[:4000], published))
+        normalized_link = normalized_url(link)
+        entries.append(
+            Entry(
+                identifier,
+                title,
+                normalized_link,
+                summary[:4000],
+                published,
+                _entry_image(element, normalized_link),
+            )
+        )
     return entries
 
 
@@ -155,15 +205,21 @@ class LinkParser(HTMLParser):
     def __init__(self, base_url: str) -> None:
         super().__init__(convert_charrefs=True)
         self.base_url = base_url
-        self.links: list[tuple[str, str]] = []
+        self.links: list[tuple[str, str, str]] = []
         self._href: str | None = None
+        self._image_url = ""
         self._text: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag.lower() == "a":
             values = dict(attrs)
             self._href = values.get("href")
+            self._image_url = ""
             self._text = []
+        elif tag.lower() == "img" and self._href is not None and not self._image_url:
+            values = dict(attrs)
+            candidate = values.get("src") or values.get("data-src") or ""
+            self._image_url = _usable_image_url(candidate, self.base_url) if candidate else ""
 
     def handle_data(self, data: str) -> None:
         if self._href is not None:
@@ -172,8 +228,9 @@ class LinkParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() == "a" and self._href is not None:
             title = clean_text(" ".join(self._text))
-            self.links.append((urljoin(self.base_url, self._href), title))
+            self.links.append((urljoin(self.base_url, self._href), title, self._image_url))
             self._href = None
+            self._image_url = ""
             self._text = []
 
 
@@ -201,7 +258,7 @@ def parse_html_links(source: Source, body: bytes) -> list[Entry]:
     source_host = urlsplit(source.url).netloc.lower()
     seen: set[str] = set()
     entries: list[Entry] = []
-    for link, title in parser.links:
+    for link, title, image_url in parser.links:
         normalized = normalized_url(link)
         if not title or len(title) < min_length or normalized in seen:
             continue
@@ -214,7 +271,7 @@ def parse_html_links(source: Source, body: bytes) -> list[Entry]:
         if normalized.startswith(("javascript:", "mailto:")):
             continue
         seen.add(normalized)
-        entries.append(Entry(normalized, title[:500], normalized, "", None))
+        entries.append(Entry(normalized, title[:500], normalized, "", None, image_url))
         if len(entries) >= max_entries:
             break
     return entries

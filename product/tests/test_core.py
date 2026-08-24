@@ -7,13 +7,15 @@ from pathlib import Path
 from instant_ai.collectors import parse_feed
 from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources, transaction, utc_now
 from instant_ai.rules import analyze, canonical_key, normalized_url
+from instant_ai.thumbnails import DownloadedImage, get_thumbnail, register_thumbnail_candidate
 from instant_ai.translation import TranslationProvider, needs_translation, translate_items, utf8_prefix
 
 
 RSS_SAMPLE = b"""<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0"><channel><title>Sample</title>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/"><channel><title>Sample</title>
 <item><title>Zijin copper production guidance</title><link>https://example.com/a?utm_source=test</link>
 <guid>item-1</guid><description>Copper and gold production increased.</description>
+<media:content medium="image" type="image/jpeg" url="https://images.example.com/copper.jpg" />
 <pubDate>Sun, 23 Aug 2026 08:00:00 GMT</pubDate></item></channel></rss>"""
 
 
@@ -55,6 +57,7 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(entries[0].source_item_id, "item-1")
         self.assertEqual(entries[0].url, "https://example.com/a")
         self.assertTrue(entries[0].published_at.startswith("2026-08-23"))
+        self.assertEqual(entries[0].image_url, "https://images.example.com/copper.jpg")
 
 
 class DatabaseTests(unittest.TestCase):
@@ -67,7 +70,7 @@ class DatabaseTests(unittest.TestCase):
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             self.assertEqual(source_count, len(DEFAULT_SOURCES))
-            self.assertEqual(version, "3")
+            self.assertEqual(version, "4")
             with connect(path) as connection:
                 tables = {
                     row[0]
@@ -79,6 +82,58 @@ class DatabaseTests(unittest.TestCase):
             self.assertIn("notification_outbox", tables)
             self.assertIn("item_translations", tables)
             self.assertIn("translation_usage", tables)
+            self.assertIn("item_thumbnails", tables)
+
+
+class ThumbnailTests(unittest.TestCase):
+    def test_source_thumbnail_is_cached_and_placeholder_is_available(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "thumbnail.db"
+            cache_root = root / "cache"
+            initialize(path)
+            now = utc_now()
+            with transaction(path) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO items(
+                        id, canonical_key, title, url, summary, first_seen_at, last_seen_at,
+                        topics_json, event_type
+                    ) VALUES (1, 'with-image', 'NVIDIA chip news', 'https://example.com/a',
+                              '', ?, ?, '[\"AI产业链\"]', '一般动态')
+                    """,
+                    (now, now),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO items(
+                        id, canonical_key, title, url, summary, first_seen_at, last_seen_at,
+                        topics_json, event_type
+                    ) VALUES (2, 'without-image', 'Gold market news', 'https://example.com/b',
+                              '', ?, ?, '[\"黄金\"]', '价格/市场')
+                    """,
+                    (now, now),
+                )
+                register_thumbnail_candidate(connection, 1, "https://images.example.com/chip.png")
+
+            calls: list[str] = []
+
+            def fake_fetcher(url: str) -> DownloadedImage:
+                calls.append(url)
+                return DownloadedImage(b"\x89PNG\r\n\x1a\nthumbnail", "image/png")
+
+            first = get_thumbnail(1, path=path, cache_root=cache_root, fetcher=fake_fetcher)
+            second = get_thumbnail(1, path=path, cache_root=cache_root, fetcher=fake_fetcher)
+            placeholder = get_thumbnail(2, path=path, cache_root=cache_root, fetcher=fake_fetcher)
+
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+            self.assertIsNotNone(placeholder)
+            self.assertEqual(first.kind, "source")
+            self.assertEqual(second.kind, "source")
+            self.assertEqual(placeholder.kind, "placeholder")
+            self.assertEqual(placeholder.mime_type, "image/svg+xml")
+            self.assertEqual(calls, ["https://images.example.com/chip.png"])
 
 
 class TranslationTests(unittest.TestCase):

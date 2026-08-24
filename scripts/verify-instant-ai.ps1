@@ -27,8 +27,8 @@ $health = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/health' -TimeoutSec
 if (-not $health.ok) {
     throw '即时 AI 健康检查失败。'
 }
-if ($health.version -ne '0.4.0') {
-    throw "即时 AI 版本不符合汉化版本: $($health.version)"
+if ($health.version -ne '0.5.0') {
+    throw "即时 AI 版本不符合白色缩略图版本: $($health.version)"
 }
 
 $status = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/status' -TimeoutSec 5
@@ -44,6 +44,16 @@ if (-not $aiStatus.contract_version) {
 $translationStatus = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/translation/status' -TimeoutSec 5
 if (-not $translationStatus.enabled -or -not $translationStatus.target_language) {
     throw '标题汉化接口状态缺失。'
+}
+
+$sampleItems = @(Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/items?limit=1' -TimeoutSec 5)
+if ($sampleItems.Count -ne 1 -or -not $sampleItems[0].thumbnail_url) {
+    throw '新闻缩略图地址缺失。'
+}
+$thumbnail = Invoke-WebRequest -Uri ("http://127.0.0.1:18765" + $sampleItems[0].thumbnail_url) -TimeoutSec 15
+$thumbnailContentType = [string]$thumbnail.Headers.'Content-Type'
+if (-not $thumbnailContentType.StartsWith('image/')) {
+    throw '新闻缩略图接口没有返回图片。'
 }
 
 $notifications = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/notifications' -TimeoutSec 5

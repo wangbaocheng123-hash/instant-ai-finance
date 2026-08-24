@@ -18,6 +18,7 @@ $requiredFiles = @(
     'docs/decisions/ADR-0003-single-user-no-account-layer.md',
     'docs/decisions/ADR-0005-worldmonitor-presentation-fork.md',
     'docs/decisions/ADR-0006-cached-headline-translation.md',
+    'docs/decisions/ADR-0007-light-ui-thumbnail-cache.md',
     'research/REUSE_DECISION.md',
     'research/MVP_BLUEPRINT.md',
     'research/WORLDMONITOR_FINANCE_FORK.md',
