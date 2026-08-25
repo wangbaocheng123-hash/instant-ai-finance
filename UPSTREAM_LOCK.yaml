@@ -109,6 +109,6 @@ presentation_forks:
     upstream_clone_path: "upstream/WorldMonitor"
     fork_path: "forks/InstantAI-WorldMonitor"
     fork_branch: "codex/instant-ai-finance"
-    fork_commit: "80ed6a0d8ae68efa57ff676ea48fec02641c5b7f"
+    fork_commit: "09bac45749ed38aa201f089a81c3a9a2f24232c6"
     integration_role: "LICENSE_ISOLATED_PRESENTATION_FORK_ONLY"
     runtime_status: "AUTOMATIC_GLOBAL_NEWS_FRONTEND_WITH_ARTICLE_IMAGE_CACHE_AND_WINDOWED_DESKTOP_VERIFIED"
