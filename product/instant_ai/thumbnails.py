@@ -26,8 +26,11 @@ THUMBNAIL_CACHE_ROOT = CACHE_ROOT / "thumbnails"
 MAX_IMAGE_BYTES = 1_250_000
 MAX_ARTICLE_HTML_BYTES = 650_000
 MAX_GOOGLE_NEWS_HTML_BYTES = 5_000_000
-FAILED_RETRY_AFTER = timedelta(hours=24)
-GOOGLE_INDEX_TTL = timedelta(hours=6)
+FAILED_RETRY_AFTER = timedelta(minutes=5)
+GOOGLE_INDEX_TTL = timedelta(minutes=5)
+GOOGLE_INDEX_MISS_REFRESH_AFTER = timedelta(minutes=1)
+THUMBNAIL_BROWSER_CACHE_VERSION = "2"
+NO_ORIGINAL_CACHE_SECONDS = 60
 DOWNLOAD_SEMAPHORE = threading.BoundedSemaphore(3)
 DISCOVERY_SEMAPHORE = threading.BoundedSemaphore(2)
 LOCK_GUARD = threading.Lock()
@@ -350,6 +353,16 @@ def _google_search_url(value: str) -> str:
     return urllib.parse.urlunparse(parsed._replace(path="/search"))
 
 
+def invalidate_google_news_image_index(feed_url: str) -> None:
+    """Drop a stale preview index after its RSS source yields new stories."""
+
+    search_url = _google_search_url(feed_url)
+    if not search_url:
+        return
+    with _google_index_lock(search_url):
+        GOOGLE_INDEX_CACHE.pop(search_url, None)
+
+
 def _extract_google_news_images(html_text: str) -> dict[str, str]:
     """Map Google News article IDs to its publisher-derived lead-image previews."""
 
@@ -372,18 +385,27 @@ def _extract_google_news_images(html_text: str) -> dict[str, str]:
     return images
 
 
-def _google_news_image_index(feed_url: str) -> dict[str, str]:
+def _google_news_image_index(feed_url: str, expected_article_id: str = "") -> dict[str, str]:
     search_url = _google_search_url(feed_url)
     if not search_url:
         return {}
     now = datetime.now(UTC)
     cached = GOOGLE_INDEX_CACHE.get(search_url)
-    if cached and now - cached[0] < GOOGLE_INDEX_TTL:
+    if cached and now - cached[0] < GOOGLE_INDEX_TTL and (
+        not expected_article_id
+        or expected_article_id in cached[1]
+        or now - cached[0] < GOOGLE_INDEX_MISS_REFRESH_AFTER
+    ):
         return cached[1]
 
     with _google_index_lock(search_url):
         cached = GOOGLE_INDEX_CACHE.get(search_url)
-        if cached and now - cached[0] < GOOGLE_INDEX_TTL:
+        now = datetime.now(UTC)
+        if cached and now - cached[0] < GOOGLE_INDEX_TTL and (
+            not expected_article_id
+            or expected_article_id in cached[1]
+            or now - cached[0] < GOOGLE_INDEX_MISS_REFRESH_AFTER
+        ):
             return cached[1]
         document = _download_html(search_url, MAX_GOOGLE_NEWS_HTML_BYTES)
         images = _extract_google_news_images(document.text)
@@ -396,7 +418,7 @@ def _discover_image(article_url: str, feed_urls: list[str]) -> str | None:
     if article_id:
         for feed_url in feed_urls:
             try:
-                candidate = _google_news_image_index(feed_url).get(article_id)
+                candidate = _google_news_image_index(feed_url, article_id).get(article_id)
             except (OSError, ValueError, http.client.HTTPException):
                 continue
             if candidate:
@@ -568,7 +590,7 @@ def get_thumbnail(
         return ThumbnailResult(
             content,
             "image/svg+xml",
-            5 * 60,
+            NO_ORIGINAL_CACHE_SECONDS,
             hashlib.sha256(content).hexdigest(),
             "no-original",
         )

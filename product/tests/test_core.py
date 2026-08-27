@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
+from instant_ai import thumbnails
 from instant_ai.collectors import parse_feed
 from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources, transaction, utc_now
 from instant_ai.launch import client_window_bounds
 from instant_ai.rules import analyze, canonical_key, normalized_url
 from instant_ai.thumbnails import (
     DownloadedImage,
+    DownloadedHtml,
     _article_image_candidates,
     _extract_google_news_images,
+    _google_news_image_index,
+    invalidate_google_news_image_index,
     get_thumbnail,
     register_thumbnail_candidate,
 )
@@ -200,6 +206,41 @@ class ThumbnailTests(unittest.TestCase):
             previews[article_id],
             "https://news.google.com/api/attachments/preview-w400-h224-p-df",
         )
+
+    def test_google_preview_cache_is_refreshed_for_new_collection_items(self) -> None:
+        feed_url = (
+            "https://news.google.com/rss/search?q=markets"
+            "&hl=en-US&gl=US&ceid=US:en"
+        )
+        first_html = """
+        <c-wiz jsdata="oM6qxc;first-story;1"><img
+          src="/api/attachments/first-w400-h224-p-df"></c-wiz>
+        """
+        second_html = """
+        <c-wiz jsdata="oM6qxc;second-story;1"><img
+          src="/api/attachments/second-w400-h224-p-df"></c-wiz>
+        """
+        thumbnails.GOOGLE_INDEX_CACHE.clear()
+        with patch.object(
+            thumbnails,
+            "_download_html",
+            side_effect=[
+                DownloadedHtml(first_html, "https://news.google.com/search?q=markets"),
+                DownloadedHtml(second_html, "https://news.google.com/search?q=markets"),
+            ],
+        ) as downloader:
+            first = _google_news_image_index(feed_url)
+            cached = _google_news_image_index(feed_url)
+            invalidate_google_news_image_index(feed_url)
+            refreshed = _google_news_image_index(feed_url)
+
+        self.assertIn("first-story", first)
+        self.assertEqual(first, cached)
+        self.assertIn("second-story", refreshed)
+        self.assertEqual(downloader.call_count, 2)
+        self.assertEqual(thumbnails.GOOGLE_INDEX_TTL, timedelta(minutes=5))
+        self.assertEqual(thumbnails.FAILED_RETRY_AFTER, timedelta(minutes=5))
+        thumbnails.GOOGLE_INDEX_CACHE.clear()
 
 
 class TranslationTests(unittest.TestCase):

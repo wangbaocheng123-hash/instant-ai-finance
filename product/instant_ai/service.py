@@ -12,7 +12,11 @@ from .collectors import Entry, Source, collect_source
 from .database import connect, transaction, utc_now
 from .paths import BACKUPS_ROOT, DATABASE_PATH, EVIDENCE_ROOT, EXPORTS_ROOT, LIBRARY_ROOT, RAW_ROOT
 from .rules import analyze, canonical_key
-from .thumbnails import register_thumbnail_candidate
+from .thumbnails import (
+    THUMBNAIL_BROWSER_CACHE_VERSION,
+    invalidate_google_news_image_index,
+    register_thumbnail_candidate,
+)
 
 
 def _source_from_row(row: sqlite3.Row) -> Source:
@@ -236,6 +240,8 @@ def run_collection() -> dict[str, Any]:
             totals["fetched_count"] += len(entries)
             totals["new_count"] += new_count
             totals["updated_count"] += updated_count
+            if new_count:
+                invalidate_google_news_image_index(source.url)
             source_detail.update(status="ok", items=len(entries), new=new_count, updated=updated_count)
         except Exception as error:  # source isolation is intentional
             totals["error_count"] += 1
@@ -286,7 +292,9 @@ def _decode_item(row: sqlite3.Row) -> dict[str, Any]:
     item["entities"] = json.loads(item.pop("entities_json"))
     item["is_saved"] = bool(item["is_saved"])
     item["is_read"] = bool(item["is_read"])
-    item["thumbnail_url"] = f"/api/items/{item['id']}/thumbnail"
+    item["thumbnail_url"] = (
+        f"/api/items/{item['id']}/thumbnail?v={THUMBNAIL_BROWSER_CACHE_VERSION}"
+    )
     return item
 
 
