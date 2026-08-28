@@ -47,10 +47,14 @@ sed "s/__SERVER_NAME__/${PUBLIC_HOST}/g" "${REPOSITORY_ROOT}/deploy/aliyun/caddy
   echo "import ${STAGING}/instant-ai.caddy"
 } > "${STAGING}/Caddyfile.validate"
 
-set -a
-# This existing environment file is read only; no values are printed or copied.
-source /etc/time-compass/caddy.env
-set +a
+# Read the existing systemd EnvironmentFile literally. In particular, a bcrypt
+# hash can contain dollar signs and must never be evaluated as shell syntax.
+while IFS= read -r environment_line; do
+  [[ -z "${environment_line}" || "${environment_line}" == \#* ]] && continue
+  environment_key="${environment_line%%=*}"
+  environment_value="${environment_line#*=}"
+  export "${environment_key}=${environment_value}"
+done < /etc/time-compass/caddy.env
 caddy validate --config "${STAGING}/Caddyfile.validate"
 
 /usr/bin/python3 -m unittest discover -s "${REPOSITORY_ROOT}/product/tests" -v
