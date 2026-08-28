@@ -25,7 +25,7 @@
 - `client/instant-ai` 已完成 0.9.1 生产构建，`npm audit --audit-level=high` 为 0；产品 18 项单元测试、API、缩略图、移动外壳、标题/摘要翻译接口和本机运行验收全部通过。测试显式禁止 `urllib.request.urlopen` 并证明摘要备用不会下载原文。
 - 已新增根目录 README、AGPL-3.0 LICENSE、ADR-0010 和阿里云 Git 拉取更新脚本；部署目标固定为 `/opt/instant-ai/repository`，运行数据固定为 `/var/lib/instant-ai`。
 - 阿里云新加坡轻量应用服务器 `47.236.175.118` 已按只新增方式上线。正式手机入口为 <https://grandpaamu.com/>，`www.grandpaamu.com` 永久跳转根域名；<https://instant-ai.47-236-175-118.sslip.io/> 继续作为应急入口。新增 `/opt/instant-ai`、`/var/lib/instant-ai`、独立 systemd 服务和 Caddy 导入配置；原 `/etc/caddy/Caddyfile` 与既有 Time Compass 系统未覆盖，重启后 Time Compass 本机健康状态仍为 200。
-- 云端 `instant-ai.service` 和 `caddy.service` 均为 active；Git 工作区干净，正式域名和应急域名的 `/api/health` 均返回 `0.9.0`。公网首页、API、manifest、Service Worker、JPEG 缩略图和中文阅读均通过外部验收。
+- 云端正式域名和应急域名的 `/api/health` 均健康返回 `0.9.0`。2026-08-28 18:45:26 的第 52 次自动采集成功：20 个来源、抓取 655 条、新增 54 条、错误 0；自动模式和 300 秒周期正常。翻译目标仍为 `zh-CN`；AI 证据契约为 `evidence-v1`，真实模型尚未配置，采集、证据、规则评分和阅读不受影响。
 - 云端真实英文样本 1034 首次按需中文阅读成功：受限正文自动回退 98 字符 Feed 摘要，生成完整中文译文；第二次请求命中短期缓存且不重复消耗额度。翻译后匿名额度剩余 1,526 字符。
 - 用户取消云端账户和访问密码，ADR-0011 已采纳。公网入口无登录、无 Basic Auth、无 `WWW-Authenticate`；因此任何知道地址的人都可访问，但没有上传 H 盘资料或本机个人数据。
 - API 明确使用 `no-store`，PWA 不缓存 API，每 60 秒刷新，并在 iPhone 恢复前台、重新联网或重新打开时立即刷新；云端采集周期为 300 秒。
@@ -36,7 +36,7 @@
 ## 当前阻塞
 
 - 本机 0.9.1 与 GitHub 无运行阻塞，可继续自动采集、标题汉化、浏览器原文翻译和摘要备用。正式域名与应急域名均已复核仍健康返回 0.9.0。
-- 0.9.1 云端更新暂时受桌面控制故障阻塞：Alibaba Cloud Client 已准确定位，但窗口状态连续两次返回 `SetIsBorderRequired failed: 不支持此接口 (0x80004002)`。永久规则禁止回退网页控制台，Computer Use 安全规则禁止自动操作远程终端，因此未猜测点击、未改原系统、未执行客户端外 SSH。
+- 用户确认桌面 Alibaba Cloud Client 已重新打开后再次复核：客户端进程和唯一窗口均可准确定位，但可访问性文字为空，窗口截图连续两次仍返回 `SetIsBorderRequired failed: 不支持此接口 (0x80004002)`。永久规则禁止回退网页控制台，Computer Use 安全规则禁止自动操作远程终端，因此未猜测点击、未改原系统、未执行客户端外 SSH。该故障只阻塞 0.9.1 代码部署，不影响云端 0.9.0 持续采集新消息。
 - 自有域名和旧 sslip.io 应急入口均已上线，当前没有域名或 HTTPS 阻塞。只要云服务器公网 IP 不变，两类入口即可继续使用；若 IP 改变，需同步更新 `grandpaamu.com` 的两条 A 记录。
 - Reuters、Bloomberg、FT、WSJ 与投行内容只使用合法公开 Feed/标题发现和原文回链，不绕过付费墙，也不声称拥有专业终端授权全文。
 - 新闻原图依赖公开 Feed、发布方页面元数据或公开预览；来源无图或拒绝访问时显示“暂无新闻原图”。
