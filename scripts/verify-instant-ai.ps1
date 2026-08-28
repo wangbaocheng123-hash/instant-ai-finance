@@ -27,7 +27,7 @@ $health = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/health' -TimeoutSec
 if (-not $health.ok) {
     throw '即时 AI 健康检查失败。'
 }
-if ($health.version -ne '0.7.0') {
+if ($health.version -ne '0.7.1') {
     throw "即时 AI 版本不符合手机版与个人云端准备版本: $($health.version)"
 }
 
@@ -44,6 +44,11 @@ $staticText = Get-Content -LiteralPath $staticApp -Raw -Encoding UTF8
 if ($staticText.Contains('立即采集') -or -not $staticText.Contains('自动实时采集')) {
     throw '客户端仍存在手动采集入口，或自动采集状态缺失。'
 }
+if (-not $staticText.Contains('当前频道内容') -or
+    -not $staticText.Contains('aria-current') -or
+    -not $staticText.Contains('behavior:"auto"')) {
+    throw '频道整页直切逻辑缺失。'
+}
 
 $staticIndex = Get-Content -LiteralPath (Join-Path $productRoot 'instant_ai\static\index.html') -Raw -Encoding UTF8
 $staticStyles = Get-Content -LiteralPath (Join-Path $productRoot 'instant_ai\static\styles.css') -Raw -Encoding UTF8
@@ -51,6 +56,9 @@ $staticManifest = Join-Path $productRoot 'instant_ai\static\manifest.webmanifest
 $staticWorker = Join-Path $productRoot 'instant_ai\static\sw.js'
 if (-not $staticIndex.Contains('manifest.webmanifest') -or -not $staticStyles.Contains('mobile-dock')) {
     throw '手机版入口或底部快捷频道缺失。'
+}
+if (-not $staticStyles.Contains('header-tools') -or -not $staticStyles.Contains('.finance-panel[hidden]')) {
+    throw '紧凑状态工具条或单频道页面样式缺失。'
 }
 if (-not (Test-Path -LiteralPath $staticManifest -PathType Leaf) -or -not (Test-Path -LiteralPath $staticWorker -PathType Leaf)) {
     throw '可添加到手机主屏的清单或离线外壳缺失。'

@@ -2,7 +2,7 @@
 
 状态：`LOCAL_MVP_USABLE / CONTINUING_DEVELOPMENT`。
 
-当前 0.7.0 版本以 Windows 本地桌面为正式端：Python 标准库提供 localhost 服务，SQLite/WAL 保存正式元数据，Edge 应用窗口提供桌面界面；同时已加入手机响应式布局和可添加到主屏幕的 Web App 外壳。没有产品账户层，也不需要姓名或邮箱。
+当前 0.7.1 版本以 Windows 本地桌面为正式端：Python 标准库提供 localhost 服务，SQLite/WAL 保存正式元数据，Edge 应用窗口提供桌面界面；同时已加入手机响应式布局和可添加到主屏幕的 Web App 外壳。没有产品账户层，也不需要姓名或邮箱。顶部状态工具已压缩为单行小控件，情报频道采用单页直切，不再通过平滑滚动定位栏目。
 
 启动入口：
 

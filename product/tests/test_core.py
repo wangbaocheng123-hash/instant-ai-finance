@@ -304,12 +304,18 @@ class TranslationTests(unittest.TestCase):
 class MobileShellTests(unittest.TestCase):
     def test_mobile_shell_is_installable_and_keeps_api_online_only(self) -> None:
         index = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
+        app = (STATIC_ROOT / "app.js").read_text(encoding="utf-8")
         styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
         worker = (STATIC_ROOT / "sw.js").read_text(encoding="utf-8")
         manifest = json.loads((STATIC_ROOT / "manifest.webmanifest").read_text(encoding="utf-8"))
 
         self.assertIn("manifest.webmanifest", index)
         self.assertIn("mobile-dock", styles)
+        self.assertIn("header-tools", styles)
+        self.assertIn(".finance-panel[hidden]", styles)
+        self.assertIn("当前频道内容", app)
+        self.assertIn("aria-current", app)
+        self.assertIn('behavior:"auto"', app)
         self.assertEqual(manifest["display"], "standalone")
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
