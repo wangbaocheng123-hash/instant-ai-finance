@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
 from .database import utc_now
+from .date_hints import infer_embedded_published_at
 from .paths import RAW_ROOT
 from .rules import clean_text, normalized_url
 
@@ -185,6 +186,8 @@ def parse_feed(body: bytes, max_entries: int = 50) -> list[Entry]:
         identifier = _first_text(element, {"guid", "id"}) or link or title
         summary = clean_text(_first_text(element, {"description", "summary", "content", "encoded"}))
         published = parse_date(_first_text(element, {"pubdate", "published", "updated", "date"}))
+        if not published:
+            published = infer_embedded_published_at(title, summary)
         if not title or not link:
             continue
         normalized_link = normalized_url(link)
@@ -271,7 +274,16 @@ def parse_html_links(source: Source, body: bytes) -> list[Entry]:
         if normalized.startswith(("javascript:", "mailto:")):
             continue
         seen.add(normalized)
-        entries.append(Entry(normalized, title[:500], normalized, "", None, image_url))
+        entries.append(
+            Entry(
+                normalized,
+                title[:500],
+                normalized,
+                "",
+                infer_embedded_published_at(title),
+                image_url,
+            )
+        )
         if len(entries) >= max_entries:
             break
     return entries

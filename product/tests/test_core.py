@@ -93,6 +93,16 @@ class FeedTests(unittest.TestCase):
         self.assertTrue(entries[0].published_at.startswith("2026-08-23"))
         self.assertEqual(entries[0].image_url, "https://images.example.com/copper.jpg")
 
+    def test_missing_feed_date_is_inferred_only_from_a_trailing_date(self) -> None:
+        body = b"""<?xml version='1.0' encoding='UTF-8'?>
+        <rss version='2.0'><channel><item>
+          <title>Archived official release 2017/12/25</title>
+          <link>https://example.com/archive</link><guid>archive-1</guid>
+          <description>Historical entry 2017/12/25</description>
+        </item></channel></rss>"""
+        entry = parse_feed(body)[0]
+        self.assertEqual(entry.published_at, "2017-12-25T00:00:00+00:00")
+
 
 class DatabaseTests(unittest.TestCase):
     def test_schema_and_source_seed(self) -> None:
@@ -168,6 +178,16 @@ class RetentionTests(unittest.TestCase):
                         "INSERT INTO item_evidence(item_id, evidence_id) VALUES (?, ?)",
                         (item_id, evidence_id),
                     )
+                connection.execute(
+                    """
+                    INSERT INTO items(
+                        id, canonical_key, title, url, first_seen_at, last_seen_at,
+                        published_at, importance_score
+                    ) VALUES (4, 'embedded-old', 'Archived release 2017/12/25',
+                              'https://example.com/4', ?, ?, NULL, 95)
+                    """,
+                    (recent, recent),
+                )
 
             preview = retention_preview(path=path, now=current)
             self.assertEqual(preview["would_remove"]["items"], 2)
@@ -184,7 +204,8 @@ class RetentionTests(unittest.TestCase):
                 evidence_count = connection.execute("SELECT COUNT(*) FROM evidence").fetchone()[0]
             self.assertEqual(remaining, [3])
             self.assertEqual(evidence_count, 1)
-            self.assertEqual(result["removed"]["items"], 2)
+            self.assertEqual(result["removed"]["items"], 3)
+            self.assertEqual(result["removed"]["corrected_embedded_dates"], 1)
             self.assertFalse(raw_old.exists())
             self.assertTrue(raw_recent.exists())
 
@@ -404,7 +425,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.8.1", worker)
+        self.assertIn("instant-ai-shell-v0.8.2", worker)
 
 
 if __name__ == "__main__":

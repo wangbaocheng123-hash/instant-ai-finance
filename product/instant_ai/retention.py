@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .database import connect, transaction, utc_now
+from .date_hints import infer_embedded_published_at
 from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, RAW_ROOT
 
 
@@ -55,6 +56,19 @@ def _expired_where() -> str:
         f"(importance_score < 85 AND {anchor} < :important) OR "
         f"(importance_score < 70 AND {anchor} < :ordinary))"
     )
+
+
+def _apply_missing_embedded_dates(connection: sqlite3.Connection, now: datetime | None = None) -> int:
+    updated = 0
+    rows = connection.execute(
+        "SELECT id, title, summary FROM items WHERE published_at IS NULL"
+    ).fetchall()
+    for row in rows:
+        inferred = infer_embedded_published_at(row[1] or "", row[2] or "", now=now)
+        if inferred:
+            connection.execute("UPDATE items SET published_at=? WHERE id=?", (inferred, row[0]))
+            updated += 1
+    return updated
 
 
 def _safe_files(root: Path, values: list[str]) -> list[Path]:
@@ -160,6 +174,7 @@ def run_retention_cleanup(
     expired_thumbnail_paths: list[str] = []
 
     with transaction(database_path) as connection:
+        corrected_embedded_dates = _apply_missing_embedded_dates(connection, now)
         expired_thumbnail_paths = [
             str(row[0] or "")
             for row in connection.execute(
@@ -288,6 +303,7 @@ def run_retention_cleanup(
             "runs": max(0, old_runs),
             "files": removed_files,
             "backup_files": removed_backups,
+            "corrected_embedded_dates": corrected_embedded_dates,
         },
         "policy": retention_preview(path=database_path, now=now)["policy"],
     }
