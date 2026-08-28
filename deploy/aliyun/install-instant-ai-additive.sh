@@ -57,7 +57,10 @@ while IFS= read -r environment_line; do
 done < /etc/time-compass/caddy.env
 caddy validate --config "${STAGING}/Caddyfile.validate"
 
-/usr/bin/python3 -m unittest discover -s "${REPOSITORY_ROOT}/product/tests" -v
+(
+  cd "${REPOSITORY_ROOT}/product"
+  /usr/bin/python3 -m unittest discover -s tests -v
+)
 useradd --system --home-dir "${DATA_ROOT}" --create-home --shell /usr/sbin/nologin instantai
 install -d -o instantai -g instantai -m 0750 "${DATA_ROOT}"
 install -m 0644 "${REPOSITORY_ROOT}/deploy/aliyun/instant-ai.service" "${SERVICE_FILE}"
