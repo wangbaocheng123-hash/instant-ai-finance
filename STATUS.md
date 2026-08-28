@@ -2,7 +2,7 @@
 
 - 最后更新：2026-08-28
 - 当前阶段：`P2/P3 — 短周期热点雷达、统一 Git 版本源与阿里云发布`
-- 阶段状态：`LOCAL_0_9_2_VERIFIED / GITHUB_SYNC_PENDING / GRANDPAAMU_0_9_1_LIVE`
+- 阶段状态：`LOCAL_0_9_2_VERIFIED / GITHUB_MAIN_SYNCED / GRANDPAAMU_0_9_1_LIVE`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`，按 ADR-0010 自动淘汰，不是长期档案
@@ -21,7 +21,7 @@
 - Windows 与手机界面继续保留白底黑字、左图右文、中英双标题、12 个财经频道、即时热点、当前证据和轻量浏览器入口；不包含 YouTube、直播或大流量媒体模块。
 - 0.9.2 修复 iPhone 原文翻译需要二次选择 Chrome 的流程：主按钮通过 Chrome 官方 `googlechromes://` / `googlechrome://` scheme 直接切换到 Chrome，并保留“普通浏览器备用打开”；其他设备仍使用普通 HTTPS。即时 AI 不抓取正文；“中文摘要（备用）”只翻译来源现有摘要，见 ADR-0014 与 ADR-0015。
 - 可提交的正式前端源码已统一放在 `client/instant-ai/`；运行构建复制到 `product/instant_ai/static/`。原始上游与独立研究分叉不混入根仓库。
-- GitHub 公开统一仓库已上线：<https://github.com/wangbaocheng123-hash/instant-ai-finance>；唯一部署分支 `main` 已包含 0.9.1，产品提交为 `7352522`、决策与发布提交为 `4a2eb41`，`v0.9.1` 标签已推送。
+- GitHub 公开统一仓库已上线：<https://github.com/wangbaocheng123-hash/instant-ai-finance>；唯一部署分支 `main` 已包含 0.9.2 提交 `a94a92a`，`v0.9.2` 标签已推送。本仓库继续与原罗盘系统仓库完全分开。
 - `client/instant-ai` 已完成 0.9.2 生产构建，`npm audit --audit-level=high` 为 0；产品 18 项单元测试、API、缩略图、移动外壳、Chrome 直达与备用入口、标题/摘要翻译接口和本机运行验收全部通过。本机 `/api/health` 返回 0.9.2；测试显式禁止 `urllib.request.urlopen` 并证明摘要备用不会下载原文。
 - 已新增根目录 README、AGPL-3.0 LICENSE、ADR-0010 和阿里云 Git 拉取更新脚本；部署目标固定为 `/opt/instant-ai/repository`，运行数据固定为 `/var/lib/instant-ai`。
 - 阿里云新加坡轻量应用服务器 `47.236.175.118` 已按只新增方式上线。正式手机入口为 <https://grandpaamu.com/>，`www.grandpaamu.com` 永久跳转根域名；<https://instant-ai.47-236-175-118.sslip.io/> 继续作为应急入口。新增 `/opt/instant-ai`、`/var/lib/instant-ai`、独立 systemd 服务和 Caddy 导入配置；原 `/etc/caddy/Caddyfile` 与既有 Time Compass 系统未覆盖，重启后 Time Compass 本机健康状态仍为 200。
@@ -35,8 +35,9 @@
 
 ## 当前阻塞
 
-- 本机 0.9.2 已验证；GitHub、正式域名和应急域名暂时仍为 0.9.1，等待本轮提交、推送和 Alibaba Cloud Client 增量发布。服务器原有文件、Caddy 和罗盘系统不在本次修改范围。
+- 本机与 GitHub 已同步 0.9.2；正式域名和应急域名复核仍健康返回 0.9.1，等待 Alibaba Cloud Client 增量发布。服务器原有文件、Caddy 和罗盘系统不在本次修改范围。
 - Alibaba Cloud Client 的 `SetIsBorderRequired failed (0x80004002)` 窗口捕获兼容性问题仍存在，但用户针对本次明确授权只通过 SSH 更新 `47.236.175.118` 上的 `/opt/instant-ai`。该一次性例外已使用完毕，现恢复“阿里云操作只使用桌面客户端”的默认规则。
+- 本轮再次对唯一 Alibaba Cloud Client 窗口执行一次常规捕获和一次重新枚举后的恢复重试，均返回相同 `0x80004002`。Computer Use 安全规则禁止自动操控远程终端；因此未输入命令、未读取客户端凭据、未回退浏览器，也未擅自复用上次已结束的 SSH 授权。
 - 自有域名和旧 sslip.io 应急入口均已上线，当前没有域名或 HTTPS 阻塞。只要云服务器公网 IP 不变，两类入口即可继续使用；若 IP 改变，需同步更新 `grandpaamu.com` 的两条 A 记录。
 - Reuters、Bloomberg、FT、WSJ 与投行内容只使用合法公开 Feed/标题发现和原文回链，不绕过付费墙，也不声称拥有专业终端授权全文。
 - 新闻原图依赖公开 Feed、发布方页面元数据或公开预览；来源无图或拒绝访问时显示“暂无新闻原图”。
@@ -44,7 +45,7 @@
 
 ## 需要用户批准的事项
 
-- 0.9.2 不需要新增账户、域名、端口或云产品；本轮云端发布仍只能通过桌面 Alibaba Cloud Client 及其服务器连接执行。
+- 0.9.2 不需要新增账户、域名、端口或云产品。由于 Alibaba Cloud Client 捕获失败且不能自动操控远程终端，若用户希望本轮立即发布，需要重新明确授权一次仅限 `47.236.175.118` 上 `/opt/instant-ai` 的窄范围 SSH 增量更新；授权不得扩展到其他文件、站点或后续任务。
 - 若以后需要购买实例、改变已有站点、开放新公网端口、替换证书或再次操作网页控制台，仍需在确认具体目标后重新批准。
 - 安装 Docker、WSL、全局运行时或大型依赖仍需单独批准；当前部署方案不需要这些组件。
 
