@@ -27,7 +27,7 @@ $health = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/health' -TimeoutSec
 if (-not $health.ok) {
     throw '即时 AI 健康检查失败。'
 }
-if ($health.version -ne '0.7.1') {
+if ($health.version -ne '0.7.2') {
     throw "即时 AI 版本不符合手机版与个人云端准备版本: $($health.version)"
 }
 
@@ -48,6 +48,11 @@ if (-not $staticText.Contains('当前频道内容') -or
     -not $staticText.Contains('aria-current') -or
     -not $staticText.Contains('behavior:"auto"')) {
     throw '频道整页直切逻辑缺失。'
+}
+if (-not $staticText.Contains('即时热点') -or
+    $staticText.Contains('全球热点') -or
+    $staticText.Contains('hotspotTrack')) {
+    throw '顶部即时与热点仍未合并为单一即时热点栏。'
 }
 
 $staticIndex = Get-Content -LiteralPath (Join-Path $productRoot 'instant_ai\static\index.html') -Raw -Encoding UTF8
