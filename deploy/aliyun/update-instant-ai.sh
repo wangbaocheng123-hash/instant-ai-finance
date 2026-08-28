@@ -19,7 +19,10 @@ git fetch --prune origin "${BRANCH}"
 git checkout "${BRANCH}"
 git pull --ff-only origin "${BRANCH}"
 
-/usr/bin/python3 -m unittest discover -s product/tests -v
+(
+  cd product
+  /usr/bin/python3 -m unittest discover -s tests -v
+)
 systemctl restart instant-ai.service
 systemctl is-active --quiet instant-ai.service
 curl --fail --silent --show-error http://127.0.0.1:18765/api/health
