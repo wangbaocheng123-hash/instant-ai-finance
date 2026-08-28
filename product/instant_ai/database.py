@@ -12,7 +12,7 @@ from urllib.parse import quote_plus
 from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensure_layout
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -389,7 +389,10 @@ def initialize(path: Path | str | None = None) -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_items_published ON items(published_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_items_activity ON items(last_seen_at DESC, importance_score DESC);
             CREATE INDEX IF NOT EXISTS idx_items_score ON items(importance_score DESC);
+            CREATE INDEX IF NOT EXISTS idx_item_evidence_item ON item_evidence(item_id, evidence_id);
+            CREATE INDEX IF NOT EXISTS idx_item_evidence_evidence ON item_evidence(evidence_id, item_id);
             CREATE INDEX IF NOT EXISTS idx_evidence_source ON evidence(source_id, fetched_at DESC);
             CREATE INDEX IF NOT EXISTS idx_runs_started ON collection_runs(started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_ai_jobs_item ON ai_jobs(item_id, id DESC);
@@ -485,6 +488,9 @@ def create_backup(force: bool = False) -> Path | None:
         source.close()
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
     target.with_suffix(".db.sha256").write_text(f"{digest}  {target.name}\n", encoding="ascii")
+    from .retention import prune_backups
+
+    prune_backups()
     return target
 
 

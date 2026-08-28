@@ -1,0 +1,20 @@
+{
+  "name": "即时 AI · 全球财经情报",
+  "short_name": "即时 AI",
+  "description": "个人使用的全球财经即时资讯与证据阅读器",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

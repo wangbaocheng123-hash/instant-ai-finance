@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +13,7 @@ from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sourc
 from instant_ai.launch import client_window_bounds, mobile_preview_window_bounds
 from instant_ai.paths import STATIC_ROOT
 from instant_ai.rules import analyze, canonical_key, normalized_url
+from instant_ai.retention import published_within_hard_limit, retention_preview, run_retention_cleanup
 from instant_ai.thumbnails import (
     DownloadedImage,
     DownloadedHtml,
@@ -103,7 +104,7 @@ class DatabaseTests(unittest.TestCase):
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             self.assertEqual(source_count, len(DEFAULT_SOURCES))
-            self.assertEqual(version, "4")
+            self.assertEqual(version, "5")
             with connect(path) as connection:
                 tables = {
                     row[0]
@@ -116,6 +117,81 @@ class DatabaseTests(unittest.TestCase):
             self.assertIn("item_translations", tables)
             self.assertIn("translation_usage", tables)
             self.assertIn("item_thumbnails", tables)
+
+
+class RetentionTests(unittest.TestCase):
+    def test_old_items_and_orphan_files_are_removed_without_a_permanent_exception(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "retention.db"
+            raw_root = root / "raw"
+            cache_root = root / "cache"
+            evidence_root = root / "evidence"
+            backups_root = root / "backups"
+            for folder in (raw_root, cache_root / "thumbnails", evidence_root / "runs", backups_root):
+                folder.mkdir(parents=True, exist_ok=True)
+            initialize(path)
+            seed_sources(path)
+            current = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
+            recent = (current - timedelta(hours=2)).isoformat()
+            ordinary_old = (current - timedelta(days=4)).isoformat()
+            critical_old = (current - timedelta(days=8)).isoformat()
+            raw_old = raw_root / "old.xml"
+            raw_recent = raw_root / "recent.xml"
+            raw_old.write_text("old", encoding="utf-8")
+            raw_recent.write_text("recent", encoding="utf-8")
+
+            with transaction(path) as connection:
+                source_id = connection.execute("SELECT id FROM sources ORDER BY id LIMIT 1").fetchone()[0]
+                for item_id, stamp, score in ((1, ordinary_old, 50), (2, critical_old, 95), (3, recent, 50)):
+                    connection.execute(
+                        """
+                        INSERT INTO items(
+                            id, canonical_key, title, url, first_seen_at, last_seen_at,
+                            published_at, importance_score
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (item_id, f"item-{item_id}", f"Item {item_id}", f"https://example.com/{item_id}", stamp, stamp, stamp, score),
+                    )
+                    raw_path = raw_recent if item_id == 3 else raw_old
+                    evidence_id = f"evidence-{item_id}"
+                    connection.execute(
+                        """
+                        INSERT INTO evidence(
+                            id, source_id, url, title, fetched_at, content_hash,
+                            raw_path, mime_type, http_status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'application/xml', 200)
+                        """,
+                        (evidence_id, source_id, f"https://example.com/{item_id}", f"Item {item_id}", stamp, evidence_id, str(raw_path)),
+                    )
+                    connection.execute(
+                        "INSERT INTO item_evidence(item_id, evidence_id) VALUES (?, ?)",
+                        (item_id, evidence_id),
+                    )
+
+            preview = retention_preview(path=path, now=current)
+            self.assertEqual(preview["would_remove"]["items"], 2)
+            result = run_retention_cleanup(
+                path=path,
+                raw_root=raw_root,
+                cache_root=cache_root,
+                evidence_root=evidence_root,
+                backups_root=backups_root,
+                now=current,
+            )
+            with connect(path) as connection:
+                remaining = [row[0] for row in connection.execute("SELECT id FROM items ORDER BY id")]
+                evidence_count = connection.execute("SELECT COUNT(*) FROM evidence").fetchone()[0]
+            self.assertEqual(remaining, [3])
+            self.assertEqual(evidence_count, 1)
+            self.assertEqual(result["removed"]["items"], 2)
+            self.assertFalse(raw_old.exists())
+            self.assertTrue(raw_recent.exists())
+
+    def test_ingestion_rejects_items_beyond_the_absolute_window(self) -> None:
+        current = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
+        self.assertTrue(published_within_hard_limit((current - timedelta(days=6)).isoformat(), current))
+        self.assertFalse(published_within_hard_limit((current - timedelta(days=8)).isoformat(), current))
 
 
 class ThumbnailTests(unittest.TestCase):
@@ -317,6 +393,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("aria-current", app)
         self.assertIn('behavior:"auto"', app)
         self.assertIn("即时热点", app)
+        self.assertIn("临时置顶", app)
         self.assertNotIn("全球热点", app)
         self.assertNotIn("hotspotTrack", app)
         self.assertEqual(manifest["display"], "standalone")

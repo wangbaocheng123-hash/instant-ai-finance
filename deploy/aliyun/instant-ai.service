@@ -7,9 +7,9 @@ After=network-online.target
 Type=simple
 User=instantai
 Group=instantai
-WorkingDirectory=/opt/instant-ai/product
+WorkingDirectory=/opt/instant-ai/repository/product
 Environment=PYTHONUNBUFFERED=1
-Environment=PYTHONPATH=/opt/instant-ai/product
+Environment=PYTHONPATH=/opt/instant-ai/repository/product
 Environment=INSTANT_AI_LIBRARY_ROOT=/var/lib/instant-ai
 ExecStart=/usr/bin/python3 -c "from instant_ai.server import run_server; run_server()"
 Restart=on-failure

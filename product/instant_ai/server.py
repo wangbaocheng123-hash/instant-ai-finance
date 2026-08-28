@@ -15,10 +15,10 @@ from .paths import STATIC_ROOT, ensure_layout
 from .service import (
     backfill_notifications,
     dismiss_notification,
-    export_csv,
     get_item,
     list_notifications,
     list_sources,
+    query_hot_items,
     query_items,
     raw_evidence,
     reclassify_items,
@@ -28,6 +28,7 @@ from .service import (
     stats,
     toggle_source,
 )
+from .retention import run_retention_cleanup
 from .translation import translate_items, translation_status
 from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 
@@ -130,6 +131,8 @@ class InstantAIHandler(BaseHTTPRequestHandler):
                     offset=int(query.get("offset", ["0"])[0]),
                 )
             )
+        elif path == "/api/hot":
+            self._json(query_hot_items(limit=int(query.get("limit", ["40"])[0])))
         elif path.startswith("/api/items/") and path.endswith("/thumbnail"):
             parts = path.strip("/").split("/")
             if len(parts) != 4:
@@ -199,9 +202,6 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Security-Policy", "sandbox; default-src 'none'")
             self.end_headers()
             self.wfile.write(content)
-        elif path == "/api/export":
-            target = export_csv()
-            self._json({"ok": True, "path": str(target)})
         elif path.startswith("/api/"):
             self._not_found()
         else:
@@ -292,6 +292,7 @@ def create_server() -> ThreadingHTTPServer:
     create_backup()
     initialize()
     seed_sources()
+    run_retention_cleanup()
     reclassify_items()
     backfill_thumbnail_candidates()
     backfill_notifications()

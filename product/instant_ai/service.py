@@ -4,7 +4,7 @@ import csv
 import hashlib
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +12,7 @@ from .collectors import Entry, Source, collect_source
 from .database import connect, transaction, utc_now
 from .paths import BACKUPS_ROOT, DATABASE_PATH, EVIDENCE_ROOT, EXPORTS_ROOT, LIBRARY_ROOT, RAW_ROOT
 from .rules import analyze, canonical_key
+from .retention import published_within_hard_limit, run_retention_cleanup
 from .thumbnails import (
     THUMBNAIL_BROWSER_CACHE_VERSION,
     invalidate_google_news_image_index,
@@ -144,7 +145,11 @@ def _upsert_entry(
     if entry.image_url:
         register_thumbnail_candidate(connection, item_id, entry.image_url)
 
-    evidence_basis = f"{source.key}\n{entry.source_item_id}\n{content_hash}\n{entry.url}"
+    entry_basis = "\n".join(
+        (entry.source_item_id, entry.url, entry.title, entry.summary, entry.published_at or "", entry.image_url)
+    )
+    entry_content_hash = hashlib.sha256(entry_basis.encode("utf-8")).hexdigest()
+    evidence_basis = f"{source.key}\n{entry.source_item_id}\n{entry_content_hash}\n{entry.url}"
     evidence_id = hashlib.sha256(evidence_basis.encode("utf-8")).hexdigest()
     connection.execute(
         """
@@ -161,12 +166,16 @@ def _upsert_entry(
             entry.title,
             now,
             entry.published_at,
-            content_hash,
+            entry_content_hash,
             raw_path,
             mime_type,
             http_status,
             json.dumps(
-                {"source_key": source.key, "image_url": entry.image_url or None},
+                {
+                    "source_key": source.key,
+                    "image_url": entry.image_url or None,
+                    "feed_content_hash": content_hash,
+                },
                 ensure_ascii=False,
             ),
         ),
@@ -219,6 +228,8 @@ def run_collection() -> dict[str, Any]:
             updated_count = 0
             with transaction() as connection:
                 for entry in entries:
+                    if not published_within_hard_limit(entry.published_at):
+                        continue
                     is_new, is_updated = _upsert_entry(
                         connection,
                         source,
@@ -280,6 +291,7 @@ def run_collection() -> dict[str, Any]:
     manifest_root = EVIDENCE_ROOT / "runs"
     manifest_root.mkdir(parents=True, exist_ok=True)
     manifest_path = manifest_root / f"run-{run_id:06d}.json"
+    manifest["retention"] = run_retention_cleanup()
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifest
 
@@ -314,22 +326,59 @@ def query_items(
         conditions.append("i.is_saved=1")
     values.extend([min(max(limit, 1), 250), max(offset, 0)])
     sql = f"""
-        SELECT i.*, t.translated_title, t.provider AS translation_provider,
-               GROUP_CONCAT(DISTINCT s.name) AS source_names
-        FROM items i
-        LEFT JOIN item_translations t
-          ON t.item_id=i.id AND t.target_language='zh-CN' AND t.original_title=i.title
-        LEFT JOIN item_evidence ie ON ie.item_id=i.id
+        WITH selected AS (
+            SELECT i.*, t.translated_title, t.provider AS translation_provider
+            FROM items i
+            LEFT JOIN item_translations t
+              ON t.item_id=i.id AND t.target_language='zh-CN' AND t.original_title=i.title
+            WHERE {' AND '.join(conditions)}
+            ORDER BY COALESCE(i.published_at, i.first_seen_at) DESC, i.importance_score DESC
+            LIMIT ? OFFSET ?
+        )
+        SELECT selected.*, GROUP_CONCAT(DISTINCT s.name) AS source_names
+        FROM selected
+        LEFT JOIN item_evidence ie ON ie.item_id=selected.id
         LEFT JOIN evidence e ON e.id=ie.evidence_id
         LEFT JOIN sources s ON s.id=e.source_id
-        WHERE {' AND '.join(conditions)}
-        GROUP BY i.id
-        ORDER BY COALESCE(i.published_at, i.first_seen_at) DESC, i.importance_score DESC
-        LIMIT ? OFFSET ?
+        GROUP BY selected.id
+        ORDER BY COALESCE(selected.published_at, selected.first_seen_at) DESC,
+                 selected.importance_score DESC
     """
     with connect() as connection:
         rows = connection.execute(sql, values).fetchall()
     return [_decode_item(row) for row in rows]
+
+
+def query_hot_items(limit: int = 40) -> list[dict[str, Any]]:
+    cutoff = (datetime.now(UTC) - timedelta(hours=72)).replace(microsecond=0).isoformat()
+    sql = """
+        WITH selected AS (
+            SELECT i.*, t.translated_title, t.provider AS translation_provider,
+                   (i.importance_score + MIN(i.source_count, 5) * 24) AS hot_score
+            FROM items i
+            LEFT JOIN item_translations t
+              ON t.item_id=i.id AND t.target_language='zh-CN' AND t.original_title=i.title
+            WHERE COALESCE(i.published_at, i.first_seen_at) >= ?
+            ORDER BY hot_score DESC, COALESCE(i.published_at, i.first_seen_at) DESC
+            LIMIT ?
+        )
+        SELECT selected.*, GROUP_CONCAT(DISTINCT s.name) AS source_names
+        FROM selected
+        LEFT JOIN item_evidence ie ON ie.item_id=selected.id
+        LEFT JOIN evidence e ON e.id=ie.evidence_id
+        LEFT JOIN sources s ON s.id=e.source_id
+        GROUP BY selected.id
+        ORDER BY selected.hot_score DESC,
+                 COALESCE(selected.published_at, selected.first_seen_at) DESC
+    """
+    with connect() as connection:
+        rows = connection.execute(sql, (cutoff, min(max(limit, 1), 100))).fetchall()
+    result = []
+    for row in rows:
+        item = _decode_item(row)
+        item.pop("hot_score", None)
+        result.append(item)
+    return result
 
 
 def reclassify_items() -> int:
@@ -546,6 +595,12 @@ def stats() -> dict[str, Any]:
         "latest_backup": str(backups[0]) if backups else None,
         "notifications": {"pending": pending_notifications},
         "ai_jobs": ai_jobs,
+        "retention": {
+            "ordinary_hours": 72,
+            "important_days": 5,
+            "critical_days": 7,
+            "archive_enabled": False,
+        },
     }
 
 

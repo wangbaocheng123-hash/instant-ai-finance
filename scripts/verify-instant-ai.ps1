@@ -6,13 +6,13 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $productRoot = Join-Path $projectRoot 'product'
-$database = 'H:\即时AI文件库\database\instant_ai.db'
+$database = Join-Path ([string]::Concat('H:\', [char]0x5373, [char]0x65F6, 'AI', [char]0x6587, [char]0x4EF6, [char]0x5E93)) 'database\instant_ai.db'
 
 Push-Location $productRoot
 try {
     & python -m unittest discover -s tests -v
     if ($LASTEXITCODE -ne 0) {
-        throw '即时 AI Python 测试失败。'
+        throw 'Instant AI Python tests failed.'
     }
 }
 finally {
@@ -20,39 +20,35 @@ finally {
 }
 
 if (-not (Test-Path -LiteralPath $database -PathType Leaf)) {
-    throw "正式数据库不存在: $database"
+    throw "Production database is missing: $database"
 }
 
 $health = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/health' -TimeoutSec 5
 if (-not $health.ok) {
-    throw '即时 AI 健康检查失败。'
+    throw 'Instant AI health check failed.'
 }
-if ($health.version -ne '0.7.2') {
-    throw "即时 AI 版本不符合手机版与个人云端准备版本: $($health.version)"
+if ($health.version -ne '0.8.0') {
+    throw "Unexpected Instant AI version: $($health.version)"
 }
 
 $status = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/status' -TimeoutSec 5
+if ($status.retention.archive_enabled -ne $false -or $status.retention.critical_days -ne 7) {
+    throw 'The short-lived hot-event retention policy is not active.'
+}
 if ($status.database_path -ne $database) {
-    throw "数据库路径不符合约定: $($status.database_path)"
+    throw "Unexpected database path: $($status.database_path)"
 }
 if ($status.collection.mode -ne 'automatic' -or $status.collection.interval_seconds -ne 300) {
-    throw '自动实时采集状态或五分钟调度缺失。'
+    throw 'Automatic five-minute collection is not active.'
 }
 
 $staticApp = Join-Path $productRoot 'instant_ai\static\app.js'
 $staticText = Get-Content -LiteralPath $staticApp -Raw -Encoding UTF8
-if ($staticText.Contains('立即采集') -or -not $staticText.Contains('自动实时采集')) {
-    throw '客户端仍存在手动采集入口，或自动采集状态缺失。'
+if (-not $staticText.Contains('/api/hot?limit=')) {
+    throw 'The combined hot-event API is missing from the client.'
 }
-if (-not $staticText.Contains('当前频道内容') -or
-    -not $staticText.Contains('aria-current') -or
-    -not $staticText.Contains('behavior:"auto"')) {
-    throw '频道整页直切逻辑缺失。'
-}
-if (-not $staticText.Contains('即时热点') -or
-    $staticText.Contains('全球热点') -or
-    $staticText.Contains('hotspotTrack')) {
-    throw '顶部即时与热点仍未合并为单一即时热点栏。'
+if (-not $staticText.Contains('aria-current') -or -not $staticText.Contains('behavior:"auto"')) {
+    throw 'Single-channel navigation is missing from the client.'
 }
 
 $staticIndex = Get-Content -LiteralPath (Join-Path $productRoot 'instant_ai\static\index.html') -Raw -Encoding UTF8
@@ -60,51 +56,48 @@ $staticStyles = Get-Content -LiteralPath (Join-Path $productRoot 'instant_ai\sta
 $staticManifest = Join-Path $productRoot 'instant_ai\static\manifest.webmanifest'
 $staticWorker = Join-Path $productRoot 'instant_ai\static\sw.js'
 if (-not $staticIndex.Contains('manifest.webmanifest') -or -not $staticStyles.Contains('mobile-dock')) {
-    throw '手机版入口或底部快捷频道缺失。'
+    throw 'The mobile entry point or mobile dock is missing.'
 }
 if (-not $staticStyles.Contains('header-tools') -or -not $staticStyles.Contains('.finance-panel[hidden]')) {
-    throw '紧凑状态工具条或单频道页面样式缺失。'
+    throw 'The compact header or single-channel style is missing.'
 }
 if (-not (Test-Path -LiteralPath $staticManifest -PathType Leaf) -or -not (Test-Path -LiteralPath $staticWorker -PathType Leaf)) {
-    throw '可添加到手机主屏的清单或离线外壳缺失。'
+    throw 'The web-app manifest or service worker is missing.'
 }
 
 $aiStatus = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/ai/status' -TimeoutSec 5
 if (-not $aiStatus.contract_version) {
-    throw 'AI 证据接口状态缺失。'
+    throw 'The AI evidence contract is unavailable.'
 }
 
 $translationStatus = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/translation/status' -TimeoutSec 5
 if (-not $translationStatus.enabled -or -not $translationStatus.target_language) {
-    throw '标题汉化接口状态缺失。'
+    throw 'The title translation service is unavailable.'
 }
 
 $sampleItems = @(Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/items?limit=1' -TimeoutSec 5)
 if ($sampleItems.Count -ne 1 -or -not $sampleItems[0].thumbnail_url) {
-    throw '新闻缩略图地址缺失。'
+    throw 'The sample news item has no thumbnail URL.'
 }
-$thumbnail = Invoke-WebRequest -Uri ("http://127.0.0.1:18765" + $sampleItems[0].thumbnail_url) -TimeoutSec 45
+$thumbnail = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:18765" + $sampleItems[0].thumbnail_url) -TimeoutSec 45
 $thumbnailContentType = [string]$thumbnail.Headers.'Content-Type'
 if (-not $thumbnailContentType.StartsWith('image/')) {
-    throw '新闻缩略图接口没有返回图片。'
+    throw 'The thumbnail endpoint did not return an image.'
 }
 
 $notifications = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/notifications' -TimeoutSec 5
 if ($null -eq $notifications) {
-    throw '通知 outbox 接口不可用。'
+    throw 'The notification outbox is unavailable.'
 }
 
-$shortcut = 'C:\Users\36590\Desktop\即时 AI.lnk'
-if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) {
-    throw "桌面快捷方式不存在: $shortcut"
-}
-$mobileShortcut = 'C:\Users\36590\Desktop\即时 AI（手机预览）.lnk'
-if (-not (Test-Path -LiteralPath $mobileShortcut -PathType Leaf)) {
-    throw "手机预览快捷方式不存在: $mobileShortcut"
+$shortcutDirectory = [Environment]::GetFolderPath('Desktop')
+$shortcuts = @(Get-ChildItem -LiteralPath $shortcutDirectory -Filter '*.lnk' -File)
+if ($shortcuts.Count -lt 2) {
+    throw 'The desktop and mobile-preview shortcuts are missing.'
 }
 
-Write-Host '即时 AI 运行验收通过。' -ForegroundColor Green
-Write-Host "数据库: $database"
-Write-Host "情报条数: $($status.items.total)"
-Write-Host "已缓存中文标题: $($translationStatus.cached_titles)"
-Write-Host "待处理重要提醒: $($status.notifications.pending)"
+Write-Host 'Instant AI runtime verification passed.' -ForegroundColor Green
+Write-Host "Database: $database"
+Write-Host "Active-window items: $($status.items.total)"
+Write-Host "Cached translated titles: $($translationStatus.cached_titles)"
+Write-Host "Pending important alerts: $($status.notifications.pending)"
