@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from datetime import timedelta
@@ -10,6 +11,7 @@ from instant_ai import thumbnails
 from instant_ai.collectors import parse_feed
 from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources, transaction, utc_now
 from instant_ai.launch import client_window_bounds
+from instant_ai.paths import STATIC_ROOT
 from instant_ai.rules import analyze, canonical_key, normalized_url
 from instant_ai.thumbnails import (
     DownloadedImage,
@@ -288,6 +290,21 @@ class TranslationTests(unittest.TestCase):
             self.assertEqual(second["translated_count"], 0)
             self.assertEqual(second["cached_count"], 1)
             self.assertEqual(second["translations"]["1"], "测试译文：Gold prices rise before the Fed decision")
+
+
+class MobileShellTests(unittest.TestCase):
+    def test_mobile_shell_is_installable_and_keeps_api_online_only(self) -> None:
+        index = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
+        styles = (STATIC_ROOT / "styles.css").read_text(encoding="utf-8")
+        worker = (STATIC_ROOT / "sw.js").read_text(encoding="utf-8")
+        manifest = json.loads((STATIC_ROOT / "manifest.webmanifest").read_text(encoding="utf-8"))
+
+        self.assertIn("manifest.webmanifest", index)
+        self.assertIn("mobile-dock", styles)
+        self.assertEqual(manifest["display"], "standalone")
+        self.assertEqual(manifest["orientation"], "portrait-primary")
+        self.assertIn("url.pathname.startsWith('/api/')", worker)
+        self.assertIn("fetch(request)", worker)
 
 
 if __name__ == "__main__":

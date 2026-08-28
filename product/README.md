@@ -2,7 +2,7 @@
 
 状态：`LOCAL_MVP_USABLE / CONTINUING_DEVELOPMENT`。
 
-当前版本是 Windows 本地桌面 MVP：Python 标准库提供 localhost 服务，SQLite/WAL 保存正式元数据，Edge 应用窗口提供桌面界面。没有账户层，也不需要姓名或邮箱。
+当前 0.7.0 版本以 Windows 本地桌面为正式端：Python 标准库提供 localhost 服务，SQLite/WAL 保存正式元数据，Edge 应用窗口提供桌面界面；同时已加入手机响应式布局和可添加到主屏幕的 Web App 外壳。没有产品账户层，也不需要姓名或邮箱。
 
 启动入口：
 
@@ -31,3 +31,5 @@ scripts\verify-instant-ai.ps1
 ```
 
 代码、测试和静态界面保留在本目录；数据库、原始证据、缓存和日志不会进入 Git。
+
+阿里云手机伴随入口使用独立数据根目录，不上传 H 盘正式资料。部署边界和模板见 `deploy/aliyun/` 与 ADR-0009；公网入口必须经过 HTTPS 和服务器级个人访问口令，不能直接开放 Python 的 `18765` 端口。

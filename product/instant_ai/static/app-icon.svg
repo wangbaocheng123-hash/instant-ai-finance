@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="g" x1="80" y1="48" x2="432" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2f73ec"/>
+      <stop offset="1" stop-color="#174db7"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="120" fill="url(#g)"/>
+  <path d="M132 156h248v46H132zm0 78h248v46H132zm0 78h150v46H132z" fill="#fff" opacity=".24"/>
+  <text x="256" y="343" fill="#fff" font-family="Microsoft YaHei UI, PingFang SC, sans-serif" font-size="238" font-weight="700" text-anchor="middle">即</text>
+</svg>

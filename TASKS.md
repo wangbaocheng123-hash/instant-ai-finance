@@ -35,6 +35,8 @@
 | P2-AI-01 | IN_PROGRESS | 建立可选 AI 后处理接口、证据引用和离线降级 | 未配置密钥时不得阻断入库或冒充 AI 结果 |
 | P2-NOTIFY-01 | IN_PROGRESS | 建立低噪声通知 outbox 和 Windows 通知 | 站内 outbox/确认已完成；系统级通知待实现；仅规则阈值触发、无交易动作 |
 | P3-RESTORE-01 | DONE | 完成备份恢复演练 | schema 2 带校验备份在 H 盘隔离恢复，`integrity_check=ok`，112 条/6 来源一致，报告留证 |
+| P3-MOBILE-01 | DONE | 把即时 AI 展示层调整为个人手机版并提供可安装 Web App 外壳 | 分叉提交 `f3fad86eb4ec75983c6b24830f14120a4cb84606`；0.7.0 生产构建；390×844 实测单列新闻、原图、全屏详情、五个底部快捷频道；13 项单元测试 |
+| P3-CLOUD-01 | IN_PROGRESS | 部署到用户既有阿里云实例并提供手机即时打开入口 | `deploy/aliyun/`、ADR-0009 已完成；待 ECS/SWAS 实例列表、域名与 HTTPS 入口确认后完成远程部署和手机主屏验收 |
 | P3-UPGRADE-01 | NOT_STARTED | 建立升级、迁移回滚和独立 EXE 评估 | 升级不删除 H 盘业务库，失败可回退 |
 
 ## 当前依赖说明
