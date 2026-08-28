@@ -41,7 +41,7 @@
 | P3-MOBILE-01 | DONE | 把即时 AI 展示层调整为个人手机版并提供可安装 Web App 外壳 | 分叉提交 `f3fad86eb4ec75983c6b24830f14120a4cb84606`、预览标题提交 `f182777560cfc5bedc856e9971af0e174ce09a52`；0.7.0 生产构建；390×844 实测单列新闻、原图、全屏详情、五个底部快捷频道；电脑端手机预览启动器与桌面快捷方式；14 项单元测试 |
 | P3-GIT-01 | DONE | 建立公开 Git 统一版本源并供本机与云端共同更新 | <https://github.com/wangbaocheng123-hash/instant-ai-finance>；`main` 已推送，`v0.7.1` 至 `v0.8.2` 标签已同步；产品发布提交 `d216995`，部署脚本检查点 `fd21dfc` |
 | P3-CLOUD-01 | DONE | 部署到用户既有阿里云实例并提供手机即时打开入口 | ADR-0011；<https://instant-ai.47-236-175-118.sslip.io/> 返回 0.8.2；独立目录/数据/service/Caddy 导入均已上线，原 Caddyfile 与 Time Compass 保持；无账户密码，API 不缓存，60 秒页面刷新和前台/联网即时刷新通过验收 |
-| P3-DOMAIN-01 | BLOCKED | 通过用户指定的阿里云客户端为即时 AI 绑定自有子域名 | 目标 `news.amuyeye.com`；本机 Alibaba Cloud Client 2.3.6 的安装包与功能模块不存在 AliDNS 增删查改接口；按用户永久规则禁止浏览器、网页控制台和客户端令牌提取，因此 DNS 尚未创建，现有 sslip.io HTTPS 地址继续可用 |
+| P3-DOMAIN-01 | DONE | 为即时 AI 绑定用户选定的空闲自有域名 | 用户一次性明确授权后，仅在 AliDNS 当前页面把 `grandpaamu.com` 的 `@` 与 `www` A 记录改为 `47.236.175.118`；根域名 HTTPS 返回 0.8.2，`www` 301 跳转根域名，旧 sslip.io 地址和原 Time Compass 均保持可用；ADR-0012 |
 | P3-UPGRADE-01 | NOT_STARTED | 建立升级、迁移回滚和独立 EXE 评估 | 升级不删除 H 盘业务库，失败可回退 |
 
 ## 当前依赖说明

@@ -4,6 +4,9 @@
 
 ## 2026-08-28
 
+- 用户在知悉客户端没有 AliDNS 记录管理能力后，针对当前 `grandpaamu.com` DNS 页面作出一次性明确授权；操作范围严格限于把该空闲域名的 `@` 与 `www` A 记录改为即时 AI 云服务器 `47.236.175.118`，没有控制其他浏览器页面或账户。完成后恢复 Alibaba Cloud Client 优先的永久规则。
+- 正式手机入口切换为 <https://grandpaamu.com/>；Caddy 已自动签发根域名与 `www` 的 HTTPS 证书，`www` 永久跳转根域名。原 <https://instant-ai.47-236-175-118.sslip.io/> 继续作为应急地址；原 Caddyfile、Time Compass、即时 AI 回环端口和短周期云端数据均未覆盖。
+- 自有域名上线验收通过：首页、`/api/health`、`/api/status`、manifest 与 Service Worker 均为 HTTPS 200，API 为 `no-store`，版本 0.8.2、20 个来源启用、来源错误 0、自动采集间隔 300 秒；新增 ADR-0012 和可复现的生产 Caddy 域名配置。
 - 用户明确纠正并固化阿里云操作入口：今后只使用桌面 `Alibaba Cloud Client` 及其服务器连接，禁止使用或控制浏览器、阿里云网页控制台，也不要求用户通过网页代操作；客户端不支持的功能必须停止并报告。`news.amuyeye.com` 尚未创建解析。
 - 只读核验本机 Alibaba Cloud Client 2.3.6：客户端安装模块包含轻量服务器、ECS、OSS、容器和远程终端，但没有 AliDNS 的 `AddDomainRecord`、`UpdateDomainRecord`、`DeleteDomainRecord`、`DescribeDomainRecords` 或 AliDNS 服务端点；`P3-DOMAIN-01` 因客户端能力边界转为阻塞，未盲点界面、未读取令牌、未修改 DNS。
 - 正式发布 `0.8.2` 到阿里云新加坡轻量应用服务器，手机 HTTPS 入口为 <https://instant-ai.47-236-175-118.sslip.io/>。入口无注册、账户或访问密码；云端 20/20 来源健康、来源错误 0，采集每 5 分钟执行，页面每 60 秒及恢复前台/网络时刷新。

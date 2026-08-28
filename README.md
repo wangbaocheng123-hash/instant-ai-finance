@@ -16,10 +16,11 @@
 
 ## 手机即时入口
 
-- 在线地址：<https://instant-ai.47-236-175-118.sslip.io/>
+- 正式在线地址：<https://grandpaamu.com/>
+- 应急备用地址：<https://instant-ai.47-236-175-118.sslip.io/>
 - 统一代码仓库：<https://github.com/wangbaocheng123-hash/instant-ai-finance>
 - 本入口没有注册、账户或访问密码。它是公开地址，任何知道地址的人都可以访问，但云端不包含本机 H 盘资料。
-- iPhone 用 Safari 打开在线地址，点“分享”→“添加到主屏幕”→“添加”，以后可像普通 App 一样直接打开。
+- iPhone 用 Safari 打开正式在线地址，点“分享”→“添加到主屏幕”→“添加”，以后可像普通 App 一样直接打开。`www.grandpaamu.com` 会自动跳转到正式根域名。
 - 云端每 5 分钟自动采集；已打开的页面每 60 秒自动刷新，重新打开、回到前台或恢复网络时立即刷新。API 明确禁止缓存，主屏幕版本不会把旧接口数据离线缓存起来。
 
 阿里云部署采用只新增方式：程序位于 `/opt/instant-ai/repository`，独立运行数据位于 `/var/lib/instant-ai`；没有覆盖服务器原有站点或原有 Caddy 配置文件。

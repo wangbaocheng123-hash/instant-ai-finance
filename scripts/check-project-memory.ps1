@@ -28,6 +28,7 @@ $requiredFiles = @(
     'docs/decisions/ADR-0008-automatic-collection-article-images-client-window.md',
     'docs/decisions/ADR-0010-ephemeral-hot-event-radar.md',
     'docs/decisions/ADR-0011-public-passwordless-additive-cloud-entry.md',
+    'docs/decisions/ADR-0012-grandpaamu-custom-domain.md',
     'research/REUSE_DECISION.md',
     'research/MVP_BLUEPRINT.md',
     'research/WORLDMONITOR_FINANCE_FORK.md',
@@ -54,6 +55,7 @@ $requiredMemoryRules = @(
     @{ Path = 'docs/decisions/ADR-0003-single-user-no-account-layer.md'; Text = ConvertFrom-Utf8Base64 '5LiN5bu656uL55So5oi36KGo44CB55So5oi35YGP5aW95Lit5b+D5oiW5aSa56ef5oi35pWw5o2u6ZqU56a75oq96LGh' },
     @{ Path = 'research/MVP_BLUEPRINT.md'; Text = ConvertFrom-Utf8Base64 '5LiN5Li66L+Z5Lqb6IO95Yqb6aKE55WZIHNjaGVtYS9BUEk=' },
     @{ Path = 'STATUS.md'; Text = 'LOCAL_0_8_2_VERIFIED' },
+    @{ Path = 'STATUS.md'; Text = 'https://grandpaamu.com/' },
     @{ Path = 'PROJECT_CHARTER.md'; Text = 'ADR-0010' },
     @{ Path = 'AGENTS.md'; Text = ConvertFrom-Utf8Base64 '5LiN5b6X5omT5byA5oiW5o6n5Yi2IENocm9tZeOAgUVkZ2XjgIHlhoXnva7mtY/op4jlmajmiJbpmL/ph4zkupHnvZHpobXmjqfliLblj7A=' }
 )
