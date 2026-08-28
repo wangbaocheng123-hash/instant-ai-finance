@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import re
-import urllib.error
-from html.parser import HTMLParser
 from pathlib import Path
-from typing import Callable
 
 from .database import connect, transaction, utc_now
-from .thumbnails import DownloadedHtml, download_public_html
 from .translation import (
     TARGET_LANGUAGE,
     TranslationProvider,
@@ -18,110 +14,15 @@ from .translation import (
 )
 
 
-MAX_READER_HTML_BYTES = 650_000
-MAX_READER_SOURCE_CHARACTERS = 3_600
-MIN_ARTICLE_CHARACTERS = 280
-BLOCKED_TAGS = {"script", "style", "noscript", "svg", "nav", "footer", "header", "aside", "form"}
-BOILERPLATE_MARKERS = (
-    "subscribe",
-    "sign up",
-    "newsletter",
-    "all rights reserved",
-    "accept cookies",
-    "privacy policy",
-    "terms of use",
-    "advertisement",
-)
-
-
-class _ArticleParagraphParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self._stack: list[str] = []
-        self._paragraph_parts: list[str] | None = None
-        self._paragraph_primary = False
-        self.primary: list[str] = []
-        self.fallback: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        normalized = tag.lower()
-        self._stack.append(normalized)
-        if normalized == "p":
-            self._paragraph_parts = []
-            self._paragraph_primary = any(entry in {"article", "main"} for entry in self._stack)
-
-    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        return
-
-    def handle_data(self, data: str) -> None:
-        if self._paragraph_parts is None or any(tag in BLOCKED_TAGS for tag in self._stack):
-            return
-        self._paragraph_parts.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        normalized = tag.lower()
-        if normalized == "p" and self._paragraph_parts is not None:
-            paragraph = _clean_prose(" ".join(self._paragraph_parts))
-            self._paragraph_parts = None
-            if _useful_paragraph(paragraph):
-                self.fallback.append(paragraph)
-                if self._paragraph_primary:
-                    self.primary.append(paragraph)
-        for index in range(len(self._stack) - 1, -1, -1):
-            if self._stack[index] == normalized:
-                del self._stack[index:]
-                break
-
-
 def _clean_prose(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def _useful_paragraph(value: str) -> bool:
-    if len(value) < 45:
-        return False
-    lowered = value.casefold()
-    if any(marker in lowered for marker in BOILERPLATE_MARKERS) and len(value) < 500:
-        return False
-    return sum(character.isalpha() for character in value) >= 25
-
-
-def _deduplicate(paragraphs: list[str]) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for paragraph in paragraphs:
-        key = re.sub(r"\W+", "", paragraph).casefold()[:500]
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        result.append(paragraph)
-    return result
-
-
-def extract_article_text(
-    html_text: str,
-    *,
-    max_characters: int = MAX_READER_SOURCE_CHARACTERS,
-) -> tuple[str, bool]:
-    """Extract a bounded article/main paragraph excerpt without page chrome."""
-
-    parser = _ArticleParagraphParser()
-    parser.feed(html_text)
-    primary = _deduplicate(parser.primary)
-    fallback = _deduplicate(parser.fallback)
-    paragraphs = primary if len(" ".join(primary)) >= MIN_ARTICLE_CHARACTERS else fallback
-    combined = "\n\n".join(paragraphs).strip()
-    if len(combined) <= max_characters:
-        return combined, False
-    excerpt = combined[:max_characters]
-    boundary = max(excerpt.rfind("\n\n"), excerpt.rfind(". "), excerpt.rfind("。"))
-    if boundary >= max_characters // 2:
-        excerpt = excerpt[: boundary + 1]
-    return excerpt.strip(), True
-
-
 def _item_fingerprint(url: str, summary: str) -> str:
-    return hashlib.sha256(f"{url}\n{summary}".encode("utf-8")).hexdigest()
+    # The policy marker invalidates legacy article-excerpt caches.  From 0.9.1
+    # onward this endpoint is deliberately summary-only; the original page is
+    # translated by the user's browser and is never downloaded by Instant AI.
+    return hashlib.sha256(f"summary-only-v1\n{url}\n{summary}".encode("utf-8")).hexdigest()
 
 
 def _requires_translation(text: str) -> bool:
@@ -154,9 +55,8 @@ def translate_reader_item(
     *,
     path: Path | str | None = None,
     provider: TranslationProvider | None = None,
-    fetcher: Callable[[str, int], DownloadedHtml] = download_public_html,
 ) -> dict[str, object]:
-    """Translate a public article excerpt on demand, falling back to its feed summary."""
+    """Translate only the stored feed summary; never download the original article."""
 
     selected_provider = provider or active_provider()
     with connect(path) as connection:
@@ -179,31 +79,14 @@ def translate_reader_item(
         )
 
     source_url = str(item["url"])
-    summary = _clean_prose(str(item["summary"] or ""))
-    source_text = ""
+    source_text = _clean_prose(str(item["summary"] or ""))
     source_kind = "summary"
     source_truncated = False
-    fetch_error = ""
-    try:
-        document = fetcher(source_url, MAX_READER_HTML_BYTES)
-        extracted, source_truncated = extract_article_text(document.text)
-        if len(extracted) >= MIN_ARTICLE_CHARACTERS:
-            source_text = extracted
-            source_url = document.final_url
-            source_kind = "article_excerpt"
-    except (OSError, ValueError, UnicodeError, urllib.error.URLError) as error:
-        fetch_error = type(error).__name__
-
-    if not source_text:
-        source_text = summary
-        source_kind = "summary"
-        source_truncated = False
     if not source_text:
         return {
             "ok": False,
             "item_id": int(item_id),
             "error": "no_public_text",
-            "fetch_error": fetch_error,
             "status": translation_status(path, selected_provider),
         }
 
@@ -235,7 +118,6 @@ def translate_reader_item(
             "quota_exhausted": quota_exhausted,
             "errors": errors,
             "error": "translation_unavailable",
-            "fetch_error": fetch_error,
             "status": status,
         }
 
@@ -272,5 +154,4 @@ def translate_reader_item(
     response = _response_from_row(row, cached=False, status=status)
     response["quota_exhausted"] = quota_exhausted
     response["errors"] = errors
-    response["fetch_error"] = fetch_error
     return response

@@ -426,17 +426,23 @@ export class InstantFinanceApp {
       const translateReader = document.createElement('button');
       translateReader.type = 'button';
       translateReader.dataset.action = 'reader-translation';
-      translateReader.textContent = '中文阅读';
+      translateReader.textContent = '中文摘要（备用）';
+      translateReader.title = '只翻译资讯源已经提供的摘要，不抓取新闻全文';
       const original = document.createElement('a');
       original.href = this.safeUrl(item.url);
       original.target = '_blank';
       original.rel = 'noopener noreferrer';
-      original.textContent = '打开原文';
+      original.referrerPolicy = 'no-referrer';
+      original.textContent = '浏览器翻译原文';
+      original.title = '在默认浏览器的新标签页打开，使用 Chrome 的网页翻译';
       const save = document.createElement('button');
       save.type = 'button';
       save.dataset.action = 'save-item';
       save.textContent = item.is_saved ? '取消置顶' : '临时置顶';
-      actions.append(translateReader, original, save);
+      actions.append(original, translateReader, save);
+      const browserTranslationTip = document.createElement('p');
+      browserTranslationTip.className = 'browser-translation-tip';
+      browserTranslationTip.textContent = '原文将在默认浏览器的新标签页打开；Chrome 可开启“始终翻译英语”。';
       const readerTranslation = document.createElement('section');
       readerTranslation.id = 'readerTranslation';
       readerTranslation.className = 'reader-translation hidden';
@@ -453,7 +459,7 @@ export class InstantFinanceApp {
         row.append(name, info);
         evidence.append(row);
       });
-      card.append(close, detailHeader, summary, actions, readerTranslation, evidenceTitle, evidence);
+      card.append(close, detailHeader, summary, actions, browserTranslationTip, readerTranslation, evidenceTitle, evidence);
       this.required('#overlay').classList.remove('hidden');
     } catch (error) {
       this.toast(error instanceof Error ? error.message : '详情读取失败', true);
@@ -471,7 +477,7 @@ export class InstantFinanceApp {
     container.replaceChildren();
     const loading = document.createElement('p');
     loading.className = 'reader-loading';
-    loading.textContent = '正在读取公开正文；若来源限制访问，将自动翻译现有摘要。';
+    loading.textContent = '正在翻译资讯源已经提供的摘要；即时 AI 不抓取新闻全文。';
     container.append(loading);
     try {
       const result = await instantApi.readerTranslation(itemId);
@@ -481,21 +487,21 @@ export class InstantFinanceApp {
       }
       if (!result.ok || !result.translated_text) {
         const message = result.quota_exhausted
-          ? '今日免费正文翻译额度已用完；英文原文仍可正常打开。'
+          ? '今日免费摘要翻译额度已用完；仍可用浏览器打开并翻译原文。'
           : result.error === 'no_public_text'
-            ? '该来源没有提供可安全读取的正文或摘要，请打开原文查看。'
-            : '中文阅读暂时不可用，请稍后再试或打开英文原文。';
+            ? '该资讯源没有提供摘要，请使用“浏览器翻译原文”。'
+            : '中文摘要暂时不可用，请使用“浏览器翻译原文”。';
         loading.textContent = message;
         loading.classList.add('error');
-        button.textContent = '重试中文阅读';
+        button.textContent = '重试中文摘要';
         return;
       }
       this.renderReaderTranslation(container, result);
-      button.textContent = result.cached ? '已显示中文' : '中文已生成';
+      button.textContent = result.cached ? '已显示中文摘要' : '中文摘要已生成';
     } catch (error) {
-      loading.textContent = error instanceof Error ? error.message : '中文阅读生成失败';
+      loading.textContent = error instanceof Error ? error.message : '中文摘要生成失败';
       loading.classList.add('error');
-      button.textContent = '重试中文阅读';
+      button.textContent = '重试中文摘要';
     } finally {
       button.disabled = false;
     }
@@ -506,10 +512,9 @@ export class InstantFinanceApp {
     const heading = document.createElement('div');
     heading.className = 'reader-heading';
     const title = document.createElement('h2');
-    title.textContent = '中文阅读';
+    title.textContent = '中文摘要（备用）';
     const source = document.createElement('span');
-    const sourceLabel = result.source_kind === 'article_excerpt' ? '公开正文摘录' : '来源摘要';
-    source.textContent = `${sourceLabel} · ${result.cached ? '短期缓存' : '刚刚生成'}`;
+    source.textContent = `来源摘要 · ${result.cached ? '短期缓存' : '刚刚生成'}`;
     heading.append(title, source);
 
     const chinese = document.createElement('div');
@@ -521,9 +526,8 @@ export class InstantFinanceApp {
     });
 
     const notes: string[] = [];
-    if (result.source_truncated) notes.push('公开正文较长，本次只读取前段内容');
     if (result.translation_partial) notes.push('受免费翻译额度限制，本次为部分译文');
-    if (result.source_kind === 'summary') notes.push('来源正文不可安全读取，已自动降级为摘要翻译');
+    notes.push('即时 AI 不抓取新闻全文；完整内容请使用浏览器翻译原文');
     if (notes.length) {
       const note = document.createElement('p');
       note.className = 'reader-note';
@@ -537,7 +541,7 @@ export class InstantFinanceApp {
       const original = document.createElement('details');
       original.className = 'reader-original';
       const summary = document.createElement('summary');
-      summary.textContent = '查看英文摘录';
+      summary.textContent = '查看英文摘要';
       const body = document.createElement('div');
       result.original_excerpt.split(/\n{2,}/u).filter(Boolean).forEach((paragraph) => {
         const line = document.createElement('p');

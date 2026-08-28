@@ -12,7 +12,7 @@ from instant_ai.collectors import parse_feed
 from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources, transaction, utc_now
 from instant_ai.launch import client_window_bounds, mobile_preview_window_bounds
 from instant_ai.paths import STATIC_ROOT
-from instant_ai.reader_translation import extract_article_text, translate_reader_item
+from instant_ai.reader_translation import translate_reader_item
 from instant_ai.rules import analyze, canonical_key, normalized_url
 from instant_ai.retention import published_within_hard_limit, retention_preview, run_retention_cleanup
 from instant_ai.thumbnails import (
@@ -410,21 +410,7 @@ class TranslationTests(unittest.TestCase):
 
 
 class ReaderTranslationTests(unittest.TestCase):
-    def test_public_article_excerpt_is_translated_and_cached(self) -> None:
-        html = """
-        <html><body><nav><p>Navigation that should never appear in the reader.</p></nav>
-        <article>
-          <p>Global markets advanced after central bank officials signaled that inflation was easing while economic growth remained resilient across major regions.</p>
-          <p>Technology and mining shares led the gains as investors assessed demand for artificial intelligence infrastructure, copper, and gold.</p>
-          <p>Analysts said the next policy meeting and upcoming corporate earnings would determine whether the rally could continue through the quarter.</p>
-        </article><footer><p>Subscribe to our newsletter for more stories and updates.</p></footer>
-        </body></html>
-        """
-        extracted, truncated = extract_article_text(html)
-        self.assertIn("Global markets advanced", extracted)
-        self.assertNotIn("Subscribe", extracted)
-        self.assertFalse(truncated)
-
+    def test_feed_summary_is_translated_and_cached_without_fetching_article(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "reader.db"
             initialize(path)
@@ -441,28 +427,23 @@ class ReaderTranslationTests(unittest.TestCase):
                     (now, now),
                 )
 
-            fetch_calls: list[str] = []
-
-            def fake_fetcher(url: str, max_bytes: int) -> DownloadedHtml:
-                fetch_calls.append(url)
-                self.assertEqual(max_bytes, 650_000)
-                return DownloadedHtml(html, url)
-
             provider = TranslationProvider(
                 name="unit-test-reader",
                 external=False,
                 daily_limit=None,
                 translate=lambda text: f"中文译文：{text}",
             )
-            first = translate_reader_item(1, path=path, provider=provider, fetcher=fake_fetcher)
-            second = translate_reader_item(1, path=path, provider=provider, fetcher=fake_fetcher)
+            with patch("urllib.request.urlopen", side_effect=AssertionError("article fetch is forbidden")) as urlopen:
+                first = translate_reader_item(1, path=path, provider=provider)
+                second = translate_reader_item(1, path=path, provider=provider)
 
             self.assertTrue(first["ok"])
-            self.assertEqual(first["source_kind"], "article_excerpt")
+            self.assertEqual(first["source_kind"], "summary")
+            self.assertEqual(first["original_excerpt"], "Markets advanced after the policy signal.")
             self.assertIn("中文译文", first["translated_text"])
             self.assertFalse(first["cached"])
             self.assertTrue(second["cached"])
-            self.assertEqual(fetch_calls, ["https://publisher.example.com/story"])
+            urlopen.assert_not_called()
 
             with transaction(path) as connection:
                 connection.execute(
@@ -476,13 +457,9 @@ class ReaderTranslationTests(unittest.TestCase):
                     (now, now),
                 )
 
-            def blocked_fetcher(url: str, max_bytes: int) -> DownloadedHtml:
-                raise OSError("publisher blocked automated article access")
-
-            fallback = translate_reader_item(2, path=path, provider=provider, fetcher=blocked_fetcher)
+            fallback = translate_reader_item(2, path=path, provider=provider)
             self.assertTrue(fallback["ok"])
             self.assertEqual(fallback["source_kind"], "summary")
-            self.assertEqual(fallback["fetch_error"], "OSError")
             self.assertIn("中文译文", fallback["translated_text"])
 
             with transaction(path) as connection:
@@ -511,18 +488,20 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn('behavior:"auto"', app)
         self.assertIn("即时热点", app)
         self.assertIn("临时置顶", app)
-        self.assertIn("中文阅读", app)
+        self.assertIn("浏览器翻译原文", app)
+        self.assertIn("中文摘要（备用）", app)
+        self.assertNotIn("正在读取公开正文", app)
         self.assertIn('cache:"no-store"', app)
         self.assertIn("visibilitychange", app)
         self.assertIn("pageshow", app)
         self.assertIn("online", app)
         self.assertNotIn("全球热点", app)
         self.assertNotIn("hotspotTrack", app)
-        self.assertEqual(manifest["display"], "standalone")
+        self.assertEqual(manifest["display"], "browser")
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.9.0", worker)
+        self.assertIn("instant-ai-shell-v0.9.1", worker)
 
 
 if __name__ == "__main__":

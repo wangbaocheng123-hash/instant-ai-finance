@@ -27,7 +27,7 @@ $health = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/health' -TimeoutSec
 if (-not $health.ok) {
     throw 'Instant AI health check failed.'
 }
-if ($health.version -ne '0.9.0') {
+if ($health.version -ne '0.9.1') {
     throw "Unexpected Instant AI version: $($health.version)"
 }
 
@@ -47,8 +47,8 @@ $staticText = Get-Content -LiteralPath $staticApp -Raw -Encoding UTF8
 if (-not $staticText.Contains('/api/hot?limit=')) {
     throw 'The combined hot-event API is missing from the client.'
 }
-if (-not $staticText.Contains('reader-translation') -or -not $staticText.Contains('reader-original')) {
-    throw 'The on-demand Chinese reader is missing from the client.'
+if (-not $staticText.Contains('浏览器翻译原文') -or -not $staticText.Contains('中文摘要（备用）')) {
+    throw 'The browser translation handoff and summary-only fallback are missing from the client.'
 }
 if (-not $staticText.Contains('aria-current') -or -not $staticText.Contains('behavior:"auto"')) {
     throw 'Single-channel navigation is missing from the client.'
