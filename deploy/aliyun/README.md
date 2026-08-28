@@ -44,4 +44,4 @@ sudo /opt/instant-ai/repository/deploy/aliyun/install-instant-ai-additive.sh <HT
 
 安装器先在临时目录验证“原 Caddyfile + 新站点”的组合，再新增独立文件并原子 reload；同时比较原 Time Compass 本地健康状态，目标已存在时拒绝覆盖。
 
-部署完成后，在手机浏览器打开 HTTPS 地址并完成一次访问验证；随后可使用“添加到主屏幕”，得到独立的“即时 AI”图标。API 不进入离线缓存；页面每 60 秒读取最新数据，并在 iPhone 从后台恢复、重新联网或重新打开时立即刷新；后端每 5 分钟采集新消息。
+部署完成后，在 iPhone 默认 Chrome 中打开 HTTPS 地址并完成一次访问验证；随后可使用“添加到主屏幕”。若系统显示“作为网页 App 打开 / Open as Web App”，关闭该选项，使入口以浏览器模式运行并可使用 Chrome 翻译；旧 standalone 图标必须删除后重新添加。API 不进入离线缓存；页面每 60 秒读取最新数据，并在 iPhone 从后台恢复、重新联网或重新打开时立即刷新；后端每 5 分钟采集新消息。完整原文只由默认浏览器打开和翻译，云端即时 AI 不抓取正文，只保留短期摘要备用。

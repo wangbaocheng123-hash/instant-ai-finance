@@ -2,7 +2,7 @@
 
 `即时 AI` 是个人使用的全球财经即时热点跟踪客户端。它持续采集公开财经文字来源，按最新程度、来源可信度、多来源关注和重要度展示全球、华尔街、中国与亚洲、黄金矿业、AI 产业链、宏观和地缘事件。
 
-英文新闻详情支持按需“中文阅读”：优先翻译公开页面的有界正文节选，页面受限时回退到 Feed 摘要，同时保留英文摘录和原文链接。它不绕过登录或付费墙；译文与新闻使用相同的短期自动淘汰周期。
+英文新闻详情以“浏览器翻译原文”为主：原站在默认浏览器的新标签页打开，由 Chrome 等浏览器翻译完整页面；即时 AI 不抓取或保存新闻正文。产品内只保留“中文摘要（备用）”，翻译资讯源已经提供的短摘要，并与新闻使用相同的短期自动淘汰周期。
 
 本项目不建立长期新闻档案：普通消息保留 72 小时，重要消息保留 5 天，最高重要度消息最多保留 7 天；新闻、临时证据、原始抓取响应、翻译和图片随后自动清理。没有产品注册、邮箱、团队、多用户权限、自动交易、视频直播或付费墙绕过。
 
@@ -22,7 +22,8 @@
 - 应急备用地址：<https://instant-ai.47-236-175-118.sslip.io/>
 - 统一代码仓库：<https://github.com/wangbaocheng123-hash/instant-ai-finance>
 - 本入口没有注册、账户或访问密码。它是公开地址，任何知道地址的人都可以访问，但云端不包含本机 H 盘资料。
-- iPhone 用 Safari 打开正式在线地址，点“分享”→“添加到主屏幕”→“添加”，以后可像普通 App 一样直接打开。`www.grandpaamu.com` 会自动跳转到正式根域名。
+- iPhone 把 Chrome 设为默认浏览器后，用 Chrome 打开正式在线地址，再点“分享”→“添加到主屏幕”。若出现“作为网页 App 打开 / Open as Web App”，请关闭该选项；这样从主屏幕进入后仍保留 Chrome 页面翻译。0.9.0 及更早建立的旧图标需要先删除再重新添加一次。`www.grandpaamu.com` 会自动跳转到正式根域名。
+- 点击“浏览器翻译原文”后，在 Chrome 对英文页面选择“翻译”，并可开启“始终翻译英语”；来源登录、付费墙和地区限制仍由原站决定。
 - 云端每 5 分钟自动采集；已打开的页面每 60 秒自动刷新，重新打开、回到前台或恢复网络时立即刷新。API 明确禁止缓存，主屏幕版本不会把旧接口数据离线缓存起来。
 
 阿里云部署采用只新增方式：程序位于 `/opt/instant-ai/repository`，独立运行数据位于 `/var/lib/instant-ai`；没有覆盖服务器原有站点或原有 Caddy 配置文件。
@@ -34,9 +35,12 @@ cd client\instant-ai
 npm ci
 npm run build
 cd ..\..
-Copy-Item client\instant-ai\dist\app.js product\instant_ai\static\app.js -Force
-Copy-Item client\instant-ai\dist\styles.css product\instant_ai\static\styles.css -Force
-python -m unittest discover -s product\tests -v
+@('app.js','styles.css','index.html','manifest.webmanifest','sw.js','app-icon.svg') | ForEach-Object {
+  Copy-Item (Join-Path 'client\instant-ai\dist' $_) (Join-Path 'product\instant_ai\static' $_) -Force
+}
+Push-Location product
+python -m unittest discover -s tests -v
+Pop-Location
 ```
 
 桌面客户端启动：
