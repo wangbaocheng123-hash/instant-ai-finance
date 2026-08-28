@@ -29,6 +29,7 @@
 | P2-I18N-01 | DONE | 在桌面客户端内置英文标题汉化与本机缓存 | 分叉提交 `867a4acbfbbce3b587a4ed5eb61fc062289e7fbb`；SQLite schema 3、MyMemory 安全额度、中英双标题、开关和重复请求缓存经 API/浏览器验证 |
 | P2-I18N-02 | DONE | 增加新闻详情按需中文阅读与短期译文缓存 | ADR-0013；0.9.0；公开正文有界提取、Feed 摘要回退、共享安全额度、SQLite schema 6 级联缓存；18 项测试、生产构建和 390×844 手机界面验证通过 |
 | P2-I18N-03 | DONE | 把完整原文翻译交给默认浏览器，并把产品内翻译收缩为摘要备用 | ADR-0014；0.9.1；提交 `7352522`；manifest `display=browser`；旧正文缓存策略失效；测试证明没有正文网络请求；18 项测试、生产构建、npm audit 和本机运行验收通过 |
+| P2-I18N-04 | DONE | 让 iPhone 的原文翻译按钮直接切换到 Chrome | ADR-0015；0.9.2；使用 `googlechromes://` / `googlechrome://` 并保留普通 HTTPS 备用入口；18 项测试、生产构建、npm audit 和本机运行验收通过 |
 | P2-UI-03 | DONE | 改为白底黑字并实现左图右文的新闻缩略图 | 初始分叉提交 `a4b5b11b7bde888c51c958e807a54d5ad7a3f20e`；可读性增强提交 `09bac45749ed38aa201f089a81c3a9a2f24232c6` 将新闻标题放大至 15px、来源/发布时间放大至 11px；schema 4、H 盘按需图片缓存、生产构建和本机资源验证通过 |
 | P2-UI-04 | DONE | 在“即时消息”旁新增全球热点栏 | 分叉提交 `f7884a12adae6385ea1930c9a20bebb23ba682a5`；从近期已采集全球信息按多来源数、重要度和新鲜度排序，双栏滚动、响应式叠放、生产构建及本机浏览器无错误验证通过 |
 | P2-UI-05 | DONE | 压缩顶部状态项并把频道导航改为整页直切 | 分叉提交 `daa3b2eb5cd6e301284c6b4bef4c5fd9877a893e`；0.7.1 生产构建；顶部工具条实测 32×209px；桌面华尔街/黄金与手机华尔街直切只保留一个可见频道，页首位置为 0；14 项测试及运行验收通过 |
@@ -44,6 +45,7 @@
 | P3-GIT-01 | DONE | 建立公开 Git 统一版本源并供本机与云端共同更新 | <https://github.com/wangbaocheng123-hash/instant-ai-finance>；`main` 已推送，`v0.7.1` 至 `v0.9.1` 标签已同步；0.9.1 产品提交 `7352522`、发布记录提交 `4a2eb41` |
 | P3-CLOUD-01 | DONE | 部署到用户既有阿里云实例并提供手机即时打开入口 | ADR-0011；正式域名与应急地址均返回 0.9.0；独立目录/数据/service/Caddy 导入保持，原 Caddyfile 与 Time Compass 未动；无账户密码，API 不缓存，中文阅读真实样本与短期缓存通过验收 |
 | P3-CLOUD-02 | DONE | 把云端从 0.9.0 增量更新到 0.9.1 并验证手机浏览器原文翻译入口 | 客户端捕获持续报 `0x80004002` 后，用户一次性窄范围授权 SSH；服务器 clean main 通过项目更新脚本快进至 `8de1605`，18 项测试通过；正式/应急地址均返回 0.9.1，manifest browser、SW 0.9.1 和新按钮上线；第 54 次采集 20 来源、681 条、新增 56、错误 0；Caddy active，原罗盘健康 200；例外授权已结束 |
+| P3-CLOUD-03 | IN_PROGRESS | 把 iPhone Chrome 直达修复统一发布到 GitHub 与阿里云 | 本机 0.9.2 已构建并通过 18 项测试、npm audit 和完整运行验收；等待 Git 推送、Alibaba Cloud Client 增量更新及正式域名核验 |
 | P3-DOMAIN-01 | DONE | 为即时 AI 绑定用户选定的空闲自有域名 | 用户一次性明确授权后，仅在 AliDNS 当前页面把 `grandpaamu.com` 的 `@` 与 `www` A 记录改为 `47.236.175.118`；根域名 HTTPS 返回 0.8.2，`www` 301 跳转根域名，旧 sslip.io 地址和原 Time Compass 均保持可用；ADR-0012 |
 | P3-UPGRADE-01 | NOT_STARTED | 建立升级、迁移回滚和独立 EXE 评估 | 升级不删除 H 盘业务库，失败可回退 |
 

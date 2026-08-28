@@ -489,6 +489,9 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("即时热点", app)
         self.assertIn("临时置顶", app)
         self.assertIn("浏览器翻译原文", app)
+        self.assertIn("googlechromes://", app)
+        self.assertIn("googlechrome://", app)
+        self.assertIn("普通浏览器备用打开", app)
         self.assertIn("中文摘要（备用）", app)
         self.assertNotIn("正在读取公开正文", app)
         self.assertIn('cache:"no-store"', app)
@@ -501,7 +504,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.9.1", worker)
+        self.assertIn("instant-ai-shell-v0.9.2", worker)
 
 
 if __name__ == "__main__":

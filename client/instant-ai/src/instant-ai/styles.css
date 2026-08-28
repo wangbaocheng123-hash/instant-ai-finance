@@ -272,6 +272,7 @@ img { display: block; }
 .detail-actions a, .detail-actions button { padding: 8px 14px; border: 1px solid #cdd6e0; border-radius: 6px; background: #fff; color: #344054; cursor: pointer; text-decoration: none; font-size: 11px; }
 .detail-actions a { border-color: var(--blue); background: var(--blue); color: #fff; font-weight: 600; }
 .browser-translation-tip { margin: -8px 0 16px; color: #667085; font-size: 12px; line-height: 1.6; }
+.browser-fallback-link { margin: 0 3px; color: #175cd3; font-weight: 600; text-underline-offset: 2px; }
 .reader-translation { margin: 18px 0 8px; padding: 18px; border: 1px solid #cfe0f6; border-radius: 10px; background: #fbfdff; }
 .reader-translation.hidden { display: none; }
 .reader-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }

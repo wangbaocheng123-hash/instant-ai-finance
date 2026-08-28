@@ -27,7 +27,7 @@ $health = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/health' -TimeoutSec
 if (-not $health.ok) {
     throw 'Instant AI health check failed.'
 }
-if ($health.version -ne '0.9.1') {
+if ($health.version -ne '0.9.2') {
     throw "Unexpected Instant AI version: $($health.version)"
 }
 
@@ -49,6 +49,9 @@ if (-not $staticText.Contains('/api/hot?limit=')) {
 }
 if (-not $staticText.Contains('浏览器翻译原文') -or -not $staticText.Contains('中文摘要（备用）')) {
     throw 'The browser translation handoff and summary-only fallback are missing from the client.'
+}
+if (-not $staticText.Contains('googlechromes://') -or -not $staticText.Contains('googlechrome://') -or -not $staticText.Contains('普通浏览器备用打开')) {
+    throw 'The direct iPhone Chrome handoff or ordinary-browser fallback is missing from the client.'
 }
 if (-not $staticText.Contains('aria-current') -or -not $staticText.Contains('behavior:"auto"')) {
     throw 'Single-channel navigation is missing from the client.'

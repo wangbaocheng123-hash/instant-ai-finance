@@ -429,12 +429,16 @@ export class InstantFinanceApp {
       translateReader.textContent = '中文摘要（备用）';
       translateReader.title = '只翻译资讯源已经提供的摘要，不抓取新闻全文';
       const original = document.createElement('a');
-      original.href = this.safeUrl(item.url);
-      original.target = '_blank';
+      const safeOriginalUrl = this.safeUrl(item.url);
+      const chromeOriginalUrl = this.chromeUrl(safeOriginalUrl);
+      original.href = chromeOriginalUrl || safeOriginalUrl;
+      if (!chromeOriginalUrl) original.target = '_blank';
       original.rel = 'noopener noreferrer';
       original.referrerPolicy = 'no-referrer';
       original.textContent = '浏览器翻译原文';
-      original.title = '在默认浏览器的新标签页打开，使用 Chrome 的网页翻译';
+      original.title = chromeOriginalUrl
+        ? '直接切换到 iPhone Chrome 打开原文，再使用网页翻译'
+        : '在默认浏览器的新标签页打开，使用浏览器网页翻译';
       const save = document.createElement('button');
       save.type = 'button';
       save.dataset.action = 'save-item';
@@ -442,7 +446,22 @@ export class InstantFinanceApp {
       actions.append(original, translateReader, save);
       const browserTranslationTip = document.createElement('p');
       browserTranslationTip.className = 'browser-translation-tip';
-      browserTranslationTip.textContent = '原文将在默认浏览器的新标签页打开；Chrome 可开启“始终翻译英语”。';
+      if (chromeOriginalUrl) {
+        const fallback = document.createElement('a');
+        fallback.className = 'browser-fallback-link';
+        fallback.href = safeOriginalUrl;
+        fallback.target = '_blank';
+        fallback.rel = 'noopener noreferrer';
+        fallback.referrerPolicy = 'no-referrer';
+        fallback.textContent = '普通浏览器备用打开';
+        browserTranslationTip.append(
+          'iPhone 将直接切换到 Chrome；进入后使用“翻译”，并可开启“始终翻译英语”。如果没有跳转，可',
+          fallback,
+          '。',
+        );
+      } else {
+        browserTranslationTip.textContent = '原文将在默认浏览器的新标签页打开；Chrome 可开启“始终翻译英语”。';
+      }
       const readerTranslation = document.createElement('section');
       readerTranslation.id = 'readerTranslation';
       readerTranslation.className = 'reader-translation hidden';
@@ -729,6 +748,16 @@ export class InstantFinanceApp {
     } catch {
       return '#';
     }
+  }
+
+  private chromeUrl(value: string): string | null {
+    const userAgent = navigator.userAgent || '';
+    const isIos = /iPad|iPhone|iPod/u.test(userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (!isIos || value === '#') return null;
+    if (value.startsWith('https://')) return `googlechromes://${value.slice('https://'.length)}`;
+    if (value.startsWith('http://')) return `googlechrome://${value.slice('http://'.length)}`;
+    return null;
   }
 
   private required<T extends Element = HTMLElement>(selector: string): T {
