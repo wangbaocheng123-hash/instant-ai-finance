@@ -394,12 +394,17 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn('behavior:"auto"', app)
         self.assertIn("即时热点", app)
         self.assertIn("临时置顶", app)
+        self.assertIn('cache:"no-store"', app)
+        self.assertIn("visibilitychange", app)
+        self.assertIn("pageshow", app)
+        self.assertIn("online", app)
         self.assertNotIn("全球热点", app)
         self.assertNotIn("hotspotTrack", app)
         self.assertEqual(manifest["display"], "standalone")
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
+        self.assertIn("instant-ai-shell-v0.8.1", worker)
 
 
 if __name__ == "__main__":

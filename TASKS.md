@@ -39,8 +39,8 @@
 | P2-NOTIFY-01 | IN_PROGRESS | 建立低噪声通知 outbox 和 Windows 通知 | 站内 outbox/确认已完成；系统级通知待实现；仅规则阈值触发、无交易动作 |
 | P3-RESTORE-01 | DONE | 完成备份恢复演练 | schema 2 带校验备份在 H 盘隔离恢复，`integrity_check=ok`，112 条/6 来源一致，报告留证 |
 | P3-MOBILE-01 | DONE | 把即时 AI 展示层调整为个人手机版并提供可安装 Web App 外壳 | 分叉提交 `f3fad86eb4ec75983c6b24830f14120a4cb84606`、预览标题提交 `f182777560cfc5bedc856e9971af0e174ce09a52`；0.7.0 生产构建；390×844 实测单列新闻、原图、全屏详情、五个底部快捷频道；电脑端手机预览启动器与桌面快捷方式；14 项单元测试 |
-| P3-GIT-01 | IN_PROGRESS | 建立公开 Git 统一版本源并供本机与云端共同更新 | 本地 `main` 发布提交 `d8adc42` 与 `v0.8.0` 标签已建立；根仓库 README/LICENSE、正式客户端源码目录和云端拉取更新脚本已就绪；等待用户确认公开创建后推送 |
-| P3-CLOUD-01 | IN_PROGRESS | 部署到用户既有阿里云实例并提供手机即时打开入口 | 用户已恢复部署；桌面 Alibaba Cloud Client 已确认新加坡区域有 1 台轻量服务器；等待用户打开实例详情以读取连接信息，不使用阿里云浏览器下载流程 |
+| P3-GIT-01 | IN_PROGRESS | 建立公开 Git 统一版本源并供本机与云端共同更新 | 公开仓库 `wangbaocheng123-hash/instant-ai-finance` 已创建；本地 `main`、README/LICENSE、正式客户端源码和更新脚本已就绪，待推送 0.8.1 |
+| P3-CLOUD-01 | IN_PROGRESS | 部署到用户既有阿里云实例并提供手机即时打开入口 | ADR-0011；桌面 Alibaba Cloud Client 已确认新加坡区域有 1 台轻量服务器；部署必须只新增不覆盖，无账户无密码，PWA 恢复前台/联网即刷新 |
 | P3-UPGRADE-01 | NOT_STARTED | 建立升级、迁移回滚和独立 EXE 评估 | 升级不删除 H 盘业务库，失败可回退 |
 
 ## 当前依赖说明

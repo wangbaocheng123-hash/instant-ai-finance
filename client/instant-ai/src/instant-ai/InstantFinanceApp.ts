@@ -38,6 +38,7 @@ export class InstantFinanceApp {
   private translationEnabled = true;
   private translationInFlight = false;
   private translationStatus: TranslationStatus | null = null;
+  private lastRefreshStartedAt = 0;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -140,6 +141,14 @@ export class InstantFinanceApp {
   }
 
   private bindEvents(): void {
+    const refreshOnResume = (): void => {
+      if (document.visibilityState === 'hidden' || Date.now() - this.lastRefreshStartedAt < 5_000) return;
+      void this.refresh(false);
+    };
+    document.addEventListener('visibilitychange', refreshOnResume);
+    window.addEventListener('pageshow', refreshOnResume);
+    window.addEventListener('online', refreshOnResume);
+
     this.root.addEventListener('click', (event) => {
       const target = event.target as HTMLElement;
       const itemButton = target.closest<HTMLElement>('[data-item-id]');
@@ -199,6 +208,7 @@ export class InstantFinanceApp {
   }
 
   private async refresh(showErrors = true): Promise<void> {
+    this.lastRefreshStartedAt = Date.now();
     try {
       const [status, latest, hot, translationStatus] = await Promise.all([
         instantApi.status(), instantApi.items('', '', 120), instantApi.hot(40), instantApi.translationStatus(),

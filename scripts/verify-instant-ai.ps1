@@ -27,7 +27,7 @@ $health = Invoke-RestMethod -Uri 'http://127.0.0.1:18765/api/health' -TimeoutSec
 if (-not $health.ok) {
     throw 'Instant AI health check failed.'
 }
-if ($health.version -ne '0.8.0') {
+if ($health.version -ne '0.8.1') {
     throw "Unexpected Instant AI version: $($health.version)"
 }
 

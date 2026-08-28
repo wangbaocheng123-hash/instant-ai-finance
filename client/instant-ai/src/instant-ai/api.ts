@@ -8,7 +8,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set('Content-Type', 'application/json');
     headers.set('X-Instant-AI', '1');
   }
-  const response = await fetch(path, { ...init, headers });
+  const response = await fetch(path, { ...init, headers, cache: 'no-store' });
   if (!response.ok) {
     throw new Error(`资讯接口请求失败 (${response.status})`);
   }
