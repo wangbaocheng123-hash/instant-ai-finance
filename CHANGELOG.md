@@ -4,6 +4,7 @@
 
 ## 2026-08-28
 
+- 用户明确纠正并固化阿里云操作入口：今后只使用桌面 `Alibaba Cloud Client` 及其服务器连接，禁止使用或控制浏览器、阿里云网页控制台，也不要求用户通过网页代操作；客户端不支持的功能必须停止并报告。`news.amuyeye.com` 尚未创建解析。
 - 正式发布 `0.8.2` 到阿里云新加坡轻量应用服务器，手机 HTTPS 入口为 <https://instant-ai.47-236-175-118.sslip.io/>。入口无注册、账户或访问密码；云端 20/20 来源健康、来源错误 0，采集每 5 分钟执行，页面每 60 秒及恢复前台/网络时刷新。
 - 部署严格采用只新增方式：新增 `/opt/instant-ai/repository`、`/var/lib/instant-ai`、`instant-ai.service`、独立 Caddy 站点与服务 drop-in；原 `/etc/caddy/Caddyfile` 未修改，既有 Time Compass 在 Caddy 受控重启前后保持可用。
 - GitHub 公开统一仓库 <https://github.com/wangbaocheng123-hash/instant-ai-finance> 已创建并推送 `main` 与 `v0.7.1` 至 `v0.8.2` 标签；家中电脑、云端和其他 Codex 环境统一以 `main` 作为版本源。
