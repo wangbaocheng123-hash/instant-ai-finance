@@ -20,6 +20,7 @@
 - 公网 API 已移除 CSV 长期导出入口；客户端“收藏”语义改为会随消息到期的“临时置顶”。
 - Windows 与手机界面继续保留白底黑字、左图右文、中英双标题、12 个财经频道、即时热点、当前证据和轻量 Web App 外壳；不包含 YouTube、直播或大流量媒体模块。
 - 可提交的正式前端源码已统一放在 `client/instant-ai/`；运行构建复制到 `product/instant_ai/static/`。原始上游与独立研究分叉不混入根仓库。
+- 本地统一版本线已改为 `main`；`0.8.0` 发布提交为 `d8adc42`，标签为 `v0.8.0`，提交后工作区无未提交内容。
 - `client/instant-ai` 已完成生产构建，`npm audit --audit-level=high` 为 0；产品 16 项单元测试、API、缩略图、移动外壳、翻译接口和运行验收全部通过。
 - 已新增根目录 README、AGPL-3.0 LICENSE、ADR-0010 和阿里云 Git 拉取更新脚本；部署目标固定为 `/opt/instant-ai/repository`，运行数据固定为 `/var/lib/instant-ai`。
 - 阿里云桌面客户端已确认新加坡区域有 1 台轻量应用服务器。用户已恢复部署，并明确要求直接使用桌面 Alibaba Cloud Client，不通过浏览器下载或操作阿里云。
