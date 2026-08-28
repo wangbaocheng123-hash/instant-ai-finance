@@ -271,6 +271,19 @@ img { display: block; }
 .detail-actions { display: flex; gap: 8px; margin: 16px 0; }
 .detail-actions a, .detail-actions button { padding: 8px 14px; border: 1px solid #cdd6e0; border-radius: 6px; background: #fff; color: #344054; cursor: pointer; text-decoration: none; font-size: 11px; }
 .detail-actions a { border-color: var(--blue); background: var(--blue); color: #fff; font-weight: 600; }
+.reader-translation { margin: 18px 0 8px; padding: 18px; border: 1px solid #cfe0f6; border-radius: 10px; background: #fbfdff; }
+.reader-translation.hidden { display: none; }
+.reader-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.reader-heading h2 { margin: 0; color: #174ea6; font-size: 18px; }
+.reader-heading span { color: #7b8794; font-size: 11px; }
+.reader-chinese p, .reader-original p { margin: 0 0 13px; color: #25364d; font-size: 16px; line-height: 1.9; }
+.reader-chinese p:last-child, .reader-original p:last-child { margin-bottom: 0; }
+.reader-note, .reader-loading { margin: 13px 0 0; padding: 10px 12px; border-radius: 6px; background: #fff7e8; color: #8b5a16; font-size: 12px; line-height: 1.6; }
+.reader-loading.error { background: #fff3f4; color: #b52a34; }
+.reader-original { margin-top: 15px; padding-top: 13px; border-top: 1px solid #dce6f2; }
+.reader-original summary { color: #52677f; cursor: pointer; font-size: 12px; font-weight: 600; }
+.reader-original div { margin-top: 12px; padding: 13px; border-radius: 7px; background: #f4f6f8; }
+.reader-original p { color: #5d6b7b; font-size: 13px; line-height: 1.75; }
 .evidence-list, .source-list { display: flex; flex-direction: column; gap: 6px; }
 .evidence-list > div, .source-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 11px; border: 1px solid #e2e7ec; border-radius: 6px; background: #fbfcfd; }
 .evidence-list b, .source-row b { color: #344054; font-size: 10px; }
@@ -369,6 +382,9 @@ img { display: block; }
   .detail-thumbnail { width: 100%; height: min(230px, 56vw); }
   .overlay-card h1 { font-size: 24px; }
   .detail-summary { font-size: 16px; line-height: 1.75; }
+  .reader-translation { margin-top: 14px; padding: 15px 13px; }
+  .reader-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .reader-chinese p { font-size: 17px; line-height: 1.85; }
   .detail-actions { position: sticky; bottom: 0; padding: 9px 0; background: rgba(255,255,255,.96); }
   .detail-actions a, .detail-actions button { min-height: 44px; display: grid; place-items: center; flex: 1; font-size: 14px; }
   .mobile-dock {

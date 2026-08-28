@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import threading
 import urllib.error
 import urllib.parse
@@ -47,6 +48,34 @@ def utf8_prefix(text: str, max_bytes: int = MAX_TITLE_BYTES) -> str:
     if len(encoded) <= max_bytes:
         return text
     return encoded[:max_bytes].decode("utf-8", errors="ignore").rstrip()
+
+
+def split_utf8_chunks(text: str, max_bytes: int = MAX_TITLE_BYTES) -> list[str]:
+    """Split prose without exceeding the smallest supported provider request."""
+
+    normalized = re.sub(r"[ \t]+", " ", text.replace("\r\n", "\n").replace("\r", "\n"))
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip()
+    chunks: list[str] = []
+    remaining = normalized
+    while remaining:
+        candidate = utf8_prefix(remaining, max_bytes)
+        if not candidate:
+            break
+        if len(candidate) < len(remaining):
+            minimum_break = max(60, len(candidate) // 2)
+            break_at = -1
+            for marker in ("\n\n", ". ", "! ", "? ", "; ", ", ", " "):
+                position = candidate.rfind(marker)
+                if position >= minimum_break:
+                    break_at = max(break_at, position + len(marker))
+            if break_at > 0:
+                candidate = candidate[:break_at]
+        candidate = candidate.strip()
+        if not candidate:
+            break
+        chunks.append(candidate)
+        remaining = remaining[len(candidate):].lstrip()
+    return chunks
 
 
 def _request_json(request: urllib.request.Request, timeout: float = 12) -> dict[str, object]:
@@ -152,6 +181,67 @@ def translation_status(
         "remaining_characters_today": max(0, limit - used) if limit is not None else None,
         "official_public_limit": MYMEMORY_PUBLIC_LIMIT if provider.name == MYMEMORY_PROVIDER else None,
         "target_language": TARGET_LANGUAGE,
+    }
+
+
+def translate_text(
+    text: str,
+    *,
+    path: Path | str | None = None,
+    provider: TranslationProvider | None = None,
+) -> dict[str, object]:
+    """Translate ordered prose chunks and account for the shared daily quota."""
+
+    selected_provider = provider or active_provider()
+    chunks = split_utf8_chunks(text)
+    translated_chunks: list[str] = []
+    translated_source_characters = 0
+    requested_characters = 0
+    quota_exhausted = False
+    errors: list[str] = []
+
+    with TRANSLATION_LOCK:
+        used = _used_characters(selected_provider.name, path)
+        for chunk in chunks:
+            cost = len(chunk)
+            if selected_provider.daily_limit is not None and used + requested_characters + cost > selected_provider.daily_limit:
+                quota_exhausted = True
+                break
+            requested_characters += cost
+            try:
+                translated = selected_provider.translate(chunk).strip()
+                if translated:
+                    translated_chunks.append(translated)
+                    translated_source_characters += cost
+            except (OSError, ValueError, RuntimeError, urllib.error.URLError) as error:
+                errors.append(f"{type(error).__name__}: {error}"[:300])
+                break
+
+        if requested_characters:
+            now = utc_now()
+            with transaction(path) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO translation_usage(usage_date, provider, character_count, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(usage_date, provider) DO UPDATE SET
+                        character_count=translation_usage.character_count + excluded.character_count,
+                        updated_at=excluded.updated_at
+                    """,
+                    (_usage_date(), selected_provider.name, requested_characters, now),
+                )
+
+    return {
+        "translated_text": "\n\n".join(translated_chunks),
+        "provider": selected_provider.name,
+        "translated_source_characters": translated_source_characters,
+        "requested_characters": requested_characters,
+        "source_chunk_count": len(chunks),
+        "translated_chunk_count": len(translated_chunks),
+        "partial": len(translated_chunks) < len(chunks),
+        "quota_exhausted": quota_exhausted,
+        "errors": errors,
+        "status": translation_status(path, selected_provider),
     }
 
 

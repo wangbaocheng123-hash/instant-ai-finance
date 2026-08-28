@@ -29,6 +29,7 @@ from .service import (
     toggle_source,
 )
 from .retention import run_retention_cleanup
+from .reader_translation import translate_reader_item
 from .translation import translate_items, translation_status
 from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 
@@ -244,6 +245,15 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             return
 
         parts = path.strip("/").split("/")
+        if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "reader-translation":
+            try:
+                item_id = int(parts[2])
+            except ValueError:
+                self._not_found()
+                return
+            self._json(translate_reader_item(item_id))
+            return
+
         if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] in {"save", "read"}:
             try:
                 item_id = int(parts[2])

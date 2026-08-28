@@ -1,5 +1,6 @@
 import type {
-  AppStatus, FinanceItem, FinanceItemDetail, SourceStatus, TranslationBatchResult, TranslationStatus,
+  AppStatus, FinanceItem, FinanceItemDetail, ReaderTranslationResult, SourceStatus,
+  TranslationBatchResult, TranslationStatus,
 } from './types';
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -30,6 +31,10 @@ export const instantApi = {
   translate: (itemIds: number[], maxNew = 12) => request<TranslationBatchResult>('/api/translate', {
     method: 'POST',
     body: JSON.stringify({ item_ids: itemIds, max_new: maxNew }),
+  }),
+  readerTranslation: (id: number) => request<ReaderTranslationResult>(`/api/items/${id}/reader-translation`, {
+    method: 'POST',
+    body: JSON.stringify({}),
   }),
   save: (id: number, value: boolean) => request<{ ok: boolean }>(`/api/items/${id}/save`, {
     method: 'POST',

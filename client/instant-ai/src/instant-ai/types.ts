@@ -89,6 +89,25 @@ export interface TranslationBatchResult {
   status: TranslationStatus;
 }
 
+export interface ReaderTranslationResult {
+  ok: boolean;
+  item_id: number;
+  source_url?: string;
+  source_kind?: 'article_excerpt' | 'summary';
+  original_excerpt?: string;
+  translated_text?: string;
+  provider?: string;
+  source_truncated?: boolean;
+  translation_partial?: boolean;
+  cached?: boolean;
+  updated_at?: string;
+  quota_exhausted?: boolean;
+  errors?: string[];
+  error?: string;
+  fetch_error?: string;
+  status?: TranslationStatus;
+}
+
 export interface SectionDefinition {
   id: string;
   title: string;

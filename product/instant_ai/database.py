@@ -12,7 +12,7 @@ from urllib.parse import quote_plus
 from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensure_layout
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -370,6 +370,22 @@ def initialize(path: Path | str | None = None) -> None:
                 PRIMARY KEY (item_id, target_language)
             );
 
+            CREATE TABLE IF NOT EXISTS reader_translations (
+                item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                target_language TEXT NOT NULL DEFAULT 'zh-CN',
+                item_fingerprint TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                original_excerpt TEXT NOT NULL,
+                translated_text TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                source_truncated INTEGER NOT NULL DEFAULT 0,
+                translation_partial INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (item_id, target_language)
+            );
+
             CREATE TABLE IF NOT EXISTS translation_usage (
                 usage_date TEXT NOT NULL,
                 provider TEXT NOT NULL,
@@ -398,6 +414,7 @@ def initialize(path: Path | str | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_ai_jobs_item ON ai_jobs(item_id, id DESC);
             CREATE INDEX IF NOT EXISTS idx_outbox_status ON notification_outbox(status, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_item_translations_provider ON item_translations(provider, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_reader_translations_provider ON reader_translations(provider, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_item_thumbnails_status ON item_thumbnails(status, checked_at DESC);
             """
         )

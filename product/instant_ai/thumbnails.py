@@ -332,6 +332,12 @@ def _download_html(source_url: str, max_bytes: int = MAX_ARTICLE_HTML_BYTES) -> 
     return DownloadedHtml(content.decode(charset, errors="replace"), final_url)
 
 
+def download_public_html(source_url: str, max_bytes: int = MAX_ARTICLE_HTML_BYTES) -> DownloadedHtml:
+    """Fetch bounded public HTML with the same SSRF and redirect checks as thumbnails."""
+
+    return _download_html(source_url, max_bytes)
+
+
 def _discover_article_image(article_url: str) -> str | None:
     document = _download_html(article_url)
     candidates = _article_image_candidates(document.text, document.final_url)

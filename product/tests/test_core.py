@@ -12,6 +12,7 @@ from instant_ai.collectors import parse_feed
 from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources, transaction, utc_now
 from instant_ai.launch import client_window_bounds, mobile_preview_window_bounds
 from instant_ai.paths import STATIC_ROOT
+from instant_ai.reader_translation import extract_article_text, translate_reader_item
 from instant_ai.rules import analyze, canonical_key, normalized_url
 from instant_ai.retention import published_within_hard_limit, retention_preview, run_retention_cleanup
 from instant_ai.thumbnails import (
@@ -24,7 +25,13 @@ from instant_ai.thumbnails import (
     get_thumbnail,
     register_thumbnail_candidate,
 )
-from instant_ai.translation import TranslationProvider, needs_translation, translate_items, utf8_prefix
+from instant_ai.translation import (
+    TranslationProvider,
+    needs_translation,
+    split_utf8_chunks,
+    translate_items,
+    utf8_prefix,
+)
 
 
 RSS_SAMPLE = b"""<?xml version="1.0" encoding="UTF-8"?>
@@ -114,7 +121,7 @@ class DatabaseTests(unittest.TestCase):
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             self.assertEqual(source_count, len(DEFAULT_SOURCES))
-            self.assertEqual(version, "5")
+            self.assertEqual(version, "6")
             with connect(path) as connection:
                 tables = {
                     row[0]
@@ -125,6 +132,7 @@ class DatabaseTests(unittest.TestCase):
             self.assertIn("ai_jobs", tables)
             self.assertIn("notification_outbox", tables)
             self.assertIn("item_translations", tables)
+            self.assertIn("reader_translations", tables)
             self.assertIn("translation_usage", tables)
             self.assertIn("item_thumbnails", tables)
 
@@ -356,6 +364,9 @@ class TranslationTests(unittest.TestCase):
         self.assertTrue(needs_translation("Gold prices rise before the Fed decision"))
         self.assertFalse(needs_translation("黄金价格上涨，市场等待美联储决定"))
         self.assertLessEqual(len(utf8_prefix("黄金" * 400).encode("utf-8")), 480)
+        chunks = split_utf8_chunks("Markets moved after the Fed decision. " * 80)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk.encode("utf-8")) <= 480 for chunk in chunks))
 
     def test_translation_is_cached_in_database(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -398,6 +409,91 @@ class TranslationTests(unittest.TestCase):
             self.assertEqual(second["translations"]["1"], "测试译文：Gold prices rise before the Fed decision")
 
 
+class ReaderTranslationTests(unittest.TestCase):
+    def test_public_article_excerpt_is_translated_and_cached(self) -> None:
+        html = """
+        <html><body><nav><p>Navigation that should never appear in the reader.</p></nav>
+        <article>
+          <p>Global markets advanced after central bank officials signaled that inflation was easing while economic growth remained resilient across major regions.</p>
+          <p>Technology and mining shares led the gains as investors assessed demand for artificial intelligence infrastructure, copper, and gold.</p>
+          <p>Analysts said the next policy meeting and upcoming corporate earnings would determine whether the rally could continue through the quarter.</p>
+        </article><footer><p>Subscribe to our newsletter for more stories and updates.</p></footer>
+        </body></html>
+        """
+        extracted, truncated = extract_article_text(html)
+        self.assertIn("Global markets advanced", extracted)
+        self.assertNotIn("Subscribe", extracted)
+        self.assertFalse(truncated)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reader.db"
+            initialize(path)
+            now = utc_now()
+            with transaction(path) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO items(
+                        id, canonical_key, title, url, summary, first_seen_at, last_seen_at
+                    ) VALUES (1, 'reader-item', 'Global markets advance',
+                              'https://publisher.example.com/story',
+                              'Markets advanced after the policy signal.', ?, ?)
+                    """,
+                    (now, now),
+                )
+
+            fetch_calls: list[str] = []
+
+            def fake_fetcher(url: str, max_bytes: int) -> DownloadedHtml:
+                fetch_calls.append(url)
+                self.assertEqual(max_bytes, 650_000)
+                return DownloadedHtml(html, url)
+
+            provider = TranslationProvider(
+                name="unit-test-reader",
+                external=False,
+                daily_limit=None,
+                translate=lambda text: f"中文译文：{text}",
+            )
+            first = translate_reader_item(1, path=path, provider=provider, fetcher=fake_fetcher)
+            second = translate_reader_item(1, path=path, provider=provider, fetcher=fake_fetcher)
+
+            self.assertTrue(first["ok"])
+            self.assertEqual(first["source_kind"], "article_excerpt")
+            self.assertIn("中文译文", first["translated_text"])
+            self.assertFalse(first["cached"])
+            self.assertTrue(second["cached"])
+            self.assertEqual(fetch_calls, ["https://publisher.example.com/story"])
+
+            with transaction(path) as connection:
+                connection.execute(
+                    """
+                    INSERT INTO items(
+                        id, canonical_key, title, url, summary, first_seen_at, last_seen_at
+                    ) VALUES (2, 'reader-summary-item', 'Central bank policy outlook',
+                              'https://publisher.example.com/restricted',
+                              'Central bank officials discussed inflation, rates, and the global economic outlook for investors.', ?, ?)
+                    """,
+                    (now, now),
+                )
+
+            def blocked_fetcher(url: str, max_bytes: int) -> DownloadedHtml:
+                raise OSError("publisher blocked automated article access")
+
+            fallback = translate_reader_item(2, path=path, provider=provider, fetcher=blocked_fetcher)
+            self.assertTrue(fallback["ok"])
+            self.assertEqual(fallback["source_kind"], "summary")
+            self.assertEqual(fallback["fetch_error"], "OSError")
+            self.assertIn("中文译文", fallback["translated_text"])
+
+            with transaction(path) as connection:
+                connection.execute("DELETE FROM items WHERE id=1")
+            with connect(path) as connection:
+                cached_count = connection.execute(
+                    "SELECT COUNT(*) FROM reader_translations WHERE item_id=1"
+                ).fetchone()[0]
+            self.assertEqual(cached_count, 0)
+
+
 class MobileShellTests(unittest.TestCase):
     def test_mobile_shell_is_installable_and_keeps_api_online_only(self) -> None:
         index = (STATIC_ROOT / "index.html").read_text(encoding="utf-8")
@@ -415,6 +511,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn('behavior:"auto"', app)
         self.assertIn("即时热点", app)
         self.assertIn("临时置顶", app)
+        self.assertIn("中文阅读", app)
         self.assertIn('cache:"no-store"', app)
         self.assertIn("visibilitychange", app)
         self.assertIn("pageshow", app)
@@ -425,7 +522,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.8.2", worker)
+        self.assertIn("instant-ai-shell-v0.9.0", worker)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import { instantApi } from './api';
 import { FinancePanel } from './FinancePanel';
 import type {
-  AppStatus, FinanceItem, FinanceItemDetail, SectionDefinition, SourceStatus,
+  AppStatus, FinanceItem, FinanceItemDetail, ReaderTranslationResult, SectionDefinition, SourceStatus,
   TranslationBatchResult, TranslationStatus,
 } from './types';
 
@@ -173,6 +173,7 @@ export class InstantFinanceApp {
       if (action === 'sources') void this.openSources();
       if (action === 'close-overlay') this.closeOverlay();
       if (action === 'save-item' && this.activeDetail) void this.toggleSave();
+      if (action === 'reader-translation' && this.activeDetail) void this.openReaderTranslation();
       if (action === 'clear-search') this.clearSearch();
     });
 
@@ -422,6 +423,10 @@ export class InstantFinanceApp {
       summary.textContent = item.summary || '来源只提供了标题；临时抓取证据会随热点窗口自动清理。';
       const actions = document.createElement('div');
       actions.className = 'detail-actions';
+      const translateReader = document.createElement('button');
+      translateReader.type = 'button';
+      translateReader.dataset.action = 'reader-translation';
+      translateReader.textContent = '中文阅读';
       const original = document.createElement('a');
       original.href = this.safeUrl(item.url);
       original.target = '_blank';
@@ -431,7 +436,10 @@ export class InstantFinanceApp {
       save.type = 'button';
       save.dataset.action = 'save-item';
       save.textContent = item.is_saved ? '取消置顶' : '临时置顶';
-      actions.append(original, save);
+      actions.append(translateReader, original, save);
+      const readerTranslation = document.createElement('section');
+      readerTranslation.id = 'readerTranslation';
+      readerTranslation.className = 'reader-translation hidden';
       const evidenceTitle = document.createElement('h2');
       evidenceTitle.textContent = `当前证据（${item.evidence.length}）`;
       const evidence = document.createElement('div');
@@ -445,10 +453,99 @@ export class InstantFinanceApp {
         row.append(name, info);
         evidence.append(row);
       });
-      card.append(close, detailHeader, summary, actions, evidenceTitle, evidence);
+      card.append(close, detailHeader, summary, actions, readerTranslation, evidenceTitle, evidence);
       this.required('#overlay').classList.remove('hidden');
     } catch (error) {
       this.toast(error instanceof Error ? error.message : '详情读取失败', true);
+    }
+  }
+
+  private async openReaderTranslation(): Promise<void> {
+    if (!this.activeDetail) return;
+    const itemId = this.activeDetail.id;
+    const button = this.required<HTMLButtonElement>('[data-action="reader-translation"]');
+    const container = this.required<HTMLElement>('#readerTranslation');
+    button.disabled = true;
+    button.textContent = '翻译中…';
+    container.classList.remove('hidden');
+    container.replaceChildren();
+    const loading = document.createElement('p');
+    loading.className = 'reader-loading';
+    loading.textContent = '正在读取公开正文；若来源限制访问，将自动翻译现有摘要。';
+    container.append(loading);
+    try {
+      const result = await instantApi.readerTranslation(itemId);
+      if (result.status) {
+        this.translationStatus = result.status;
+        this.updateTranslationButton();
+      }
+      if (!result.ok || !result.translated_text) {
+        const message = result.quota_exhausted
+          ? '今日免费正文翻译额度已用完；英文原文仍可正常打开。'
+          : result.error === 'no_public_text'
+            ? '该来源没有提供可安全读取的正文或摘要，请打开原文查看。'
+            : '中文阅读暂时不可用，请稍后再试或打开英文原文。';
+        loading.textContent = message;
+        loading.classList.add('error');
+        button.textContent = '重试中文阅读';
+        return;
+      }
+      this.renderReaderTranslation(container, result);
+      button.textContent = result.cached ? '已显示中文' : '中文已生成';
+    } catch (error) {
+      loading.textContent = error instanceof Error ? error.message : '中文阅读生成失败';
+      loading.classList.add('error');
+      button.textContent = '重试中文阅读';
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  private renderReaderTranslation(container: HTMLElement, result: ReaderTranslationResult): void {
+    container.replaceChildren();
+    const heading = document.createElement('div');
+    heading.className = 'reader-heading';
+    const title = document.createElement('h2');
+    title.textContent = '中文阅读';
+    const source = document.createElement('span');
+    const sourceLabel = result.source_kind === 'article_excerpt' ? '公开正文摘录' : '来源摘要';
+    source.textContent = `${sourceLabel} · ${result.cached ? '短期缓存' : '刚刚生成'}`;
+    heading.append(title, source);
+
+    const chinese = document.createElement('div');
+    chinese.className = 'reader-chinese';
+    (result.translated_text || '').split(/\n{2,}/u).filter(Boolean).forEach((paragraph) => {
+      const line = document.createElement('p');
+      line.textContent = paragraph;
+      chinese.append(line);
+    });
+
+    const notes: string[] = [];
+    if (result.source_truncated) notes.push('公开正文较长，本次只读取前段内容');
+    if (result.translation_partial) notes.push('受免费翻译额度限制，本次为部分译文');
+    if (result.source_kind === 'summary') notes.push('来源正文不可安全读取，已自动降级为摘要翻译');
+    if (notes.length) {
+      const note = document.createElement('p');
+      note.className = 'reader-note';
+      note.textContent = notes.join('；') + '。';
+      container.append(heading, chinese, note);
+    } else {
+      container.append(heading, chinese);
+    }
+
+    if (result.original_excerpt) {
+      const original = document.createElement('details');
+      original.className = 'reader-original';
+      const summary = document.createElement('summary');
+      summary.textContent = '查看英文摘录';
+      const body = document.createElement('div');
+      result.original_excerpt.split(/\n{2,}/u).filter(Boolean).forEach((paragraph) => {
+        const line = document.createElement('p');
+        line.textContent = paragraph;
+        body.append(line);
+      });
+      original.append(summary, body);
+      container.append(original);
     }
   }
 
