@@ -2,7 +2,7 @@
 
 - 最后更新：2026-08-28
 - 当前阶段：`P2/P3 — 短周期热点雷达、统一 Git 版本源与阿里云发布`
-- 阶段状态：`LOCAL_0_9_0_VERIFIED / CLOUD_0_8_2_LIVE / GITHUB_SYNC_PENDING`
+- 阶段状态：`LOCAL_0_9_0_VERIFIED / GITHUB_MAIN_SYNCED / GRANDPAAMU_0_9_0_LIVE`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`，按 ADR-0010 自动淘汰，不是长期档案
@@ -11,7 +11,7 @@
 ## 当前检查点
 
 - R0 已结束；六个正式上游仓库和许可证证据继续作为历史基线。
-- 本机正式端已升级并验证 `0.9.0`，阿里云端当前仍为 `0.8.2`，等待本轮 Git 同步后滚动更新；本机 Python 服务监听 `127.0.0.1:18765`，桌面快捷方式和手机预览快捷方式均存在。
+- 本机正式端和阿里云端均已发布并验证 `0.9.0`；本机 Python 服务监听 `127.0.0.1:18765`，桌面快捷方式和手机预览快捷方式均存在。
 - 产品已从“长期资料库”调整为“全球财经即时热点雷达”：普通消息保留 72 小时，70–84 分重要消息保留 5 天，85 分及以上消息最多保留 7 天；不存在永久收藏或永久例外。
 - 每条消息最多保留 5 份不同来源证据；过期消息会级联清理关联证据、原始 Feed、图片、运行清单和孤儿文件；数据库备份最多保留 3 份。
 - SQLite schema 已升至 6；`reader_translations` 只缓存用户实际打开的中文阅读结果，并在消息到期时级联删除。首次正式清理把约 3,758 条累积消息缩减到约 2,317 条当前窗口消息，把 173,806 份重复证据缩减到 2,328 份，`VACUUM` 后数据库由约 268 MiB 缩减到约 8 MiB，`integrity_check=ok`。
@@ -21,11 +21,12 @@
 - Windows 与手机界面继续保留白底黑字、左图右文、中英双标题、12 个财经频道、即时热点、当前证据和轻量 Web App 外壳；不包含 YouTube、直播或大流量媒体模块。
 - 详情页新增按需“中文阅读”：优先安全读取公开正文的有界节选，受限页面回退 Feed 摘要，保留英文摘录和原文入口；不带 Cookie、不登录、不绕过付费墙，见 ADR-0013。
 - 可提交的正式前端源码已统一放在 `client/instant-ai/`；运行构建复制到 `product/instant_ai/static/`。原始上游与独立研究分叉不混入根仓库。
-- GitHub 公开统一仓库已上线：<https://github.com/wangbaocheng123-hash/instant-ai-finance>；唯一部署分支为 `main`，`v0.8.2` 标签指向产品发布提交 `d216995`，部署脚本修正后的 `main` 检查点为 `fd21dfc`。
+- GitHub 公开统一仓库已上线：<https://github.com/wangbaocheng123-hash/instant-ai-finance>；唯一部署分支为 `main`，`v0.9.0` 标签指向中文阅读产品发布提交 `acafde9`。
 - `client/instant-ai` 已完成 0.9.0 生产构建，`npm audit --audit-level=high` 为 0；产品 18 项单元测试、API、缩略图、移动外壳、标题/正文翻译接口和运行验收全部通过。
 - 已新增根目录 README、AGPL-3.0 LICENSE、ADR-0010 和阿里云 Git 拉取更新脚本；部署目标固定为 `/opt/instant-ai/repository`，运行数据固定为 `/var/lib/instant-ai`。
 - 阿里云新加坡轻量应用服务器 `47.236.175.118` 已按只新增方式上线。正式手机入口为 <https://grandpaamu.com/>，`www.grandpaamu.com` 永久跳转根域名；<https://instant-ai.47-236-175-118.sslip.io/> 继续作为应急入口。新增 `/opt/instant-ai`、`/var/lib/instant-ai`、独立 systemd 服务和 Caddy 导入配置；原 `/etc/caddy/Caddyfile` 与既有 Time Compass 系统未覆盖，重启后 Time Compass 本机健康状态仍为 200。
-- 云端 `instant-ai.service` 和 `caddy.service` 均为 active；Git 工作区干净，`/api/health` 返回 `0.8.2`。公网首页、API、manifest、Service Worker 和 JPEG 缩略图均通过外部验收。
+- 云端 `instant-ai.service` 和 `caddy.service` 均为 active；Git 工作区干净，正式域名和应急域名的 `/api/health` 均返回 `0.9.0`。公网首页、API、manifest、Service Worker、JPEG 缩略图和中文阅读均通过外部验收。
+- 云端真实英文样本 1034 首次按需中文阅读成功：受限正文自动回退 98 字符 Feed 摘要，生成完整中文译文；第二次请求命中短期缓存且不重复消耗额度。翻译后匿名额度剩余 1,526 字符。
 - 用户取消云端账户和访问密码，ADR-0011 已采纳。公网入口无登录、无 Basic Auth、无 `WWW-Authenticate`；因此任何知道地址的人都可访问，但没有上传 H 盘资料或本机个人数据。
 - API 明确使用 `no-store`，PWA 不缓存 API，每 60 秒刷新，并在 iPhone 恢复前台、重新联网或重新打开时立即刷新；云端采集周期为 300 秒。
 - 修复缺少标准发布时间的历史 Feed 可能被首次发现时间误判为新消息的问题：从标题/摘要中的尾部日期回填发布时间，并在保留清理前修正既有空日期项。公网查询 `2017/12/25` 和 `2011/07/27` 均返回空数组。
@@ -34,7 +35,7 @@
 
 ## 当前阻塞
 
-- 本机 `0.9.0` 没有运行阻塞；阿里云仍在运行 `0.8.2`，本轮代码尚未同步发布。
+- 本机与阿里云 `0.9.0` 均没有运行阻塞，可继续自动采集、标题汉化和按需中文阅读。
 - 自有域名和旧 sslip.io 应急入口均已上线，当前没有域名或 HTTPS 阻塞。只要云服务器公网 IP 不变，两类入口即可继续使用；若 IP 改变，需同步更新 `grandpaamu.com` 的两条 A 记录。
 - Reuters、Bloomberg、FT、WSJ 与投行内容只使用合法公开 Feed/标题发现和原文回链，不绕过付费墙，也不声称拥有专业终端授权全文。
 - 新闻原图依赖公开 Feed、发布方页面元数据或公开预览；来源无图或拒绝访问时显示“暂无新闻原图”。
