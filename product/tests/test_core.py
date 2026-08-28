@@ -10,7 +10,7 @@ from unittest.mock import patch
 from instant_ai import thumbnails
 from instant_ai.collectors import parse_feed
 from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources, transaction, utc_now
-from instant_ai.launch import client_window_bounds
+from instant_ai.launch import client_window_bounds, mobile_preview_window_bounds
 from instant_ai.paths import STATIC_ROOT
 from instant_ai.rules import analyze, canonical_key, normalized_url
 from instant_ai.thumbnails import (
@@ -70,6 +70,15 @@ class RuleTests(unittest.TestCase):
         self.assertGreaterEqual(height, 560)
         self.assertLessEqual(width, 1240)
         self.assertLessEqual(height, 820)
+
+    def test_mobile_preview_window_is_phone_sized(self) -> None:
+        width, height, left, top = mobile_preview_window_bounds()
+        self.assertGreaterEqual(width, 400)
+        self.assertLessEqual(width, 460)
+        self.assertGreaterEqual(height, 620)
+        self.assertLessEqual(height, 900)
+        self.assertGreaterEqual(left, 0)
+        self.assertGreaterEqual(top, 0)
         self.assertGreaterEqual(left, 0)
         self.assertGreaterEqual(top, 0)
 

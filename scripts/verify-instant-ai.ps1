@@ -85,6 +85,10 @@ $shortcut = 'C:\Users\36590\Desktop\即时 AI.lnk'
 if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) {
     throw "桌面快捷方式不存在: $shortcut"
 }
+$mobileShortcut = 'C:\Users\36590\Desktop\即时 AI（手机预览）.lnk'
+if (-not (Test-Path -LiteralPath $mobileShortcut -PathType Leaf)) {
+    throw "手机预览快捷方式不存在: $mobileShortcut"
+}
 
 Write-Host '即时 AI 运行验收通过。' -ForegroundColor Green
 Write-Host "数据库: $database"
