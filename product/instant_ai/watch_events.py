@@ -4,13 +4,14 @@ import json
 import os
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from .database import connect, transaction, utc_now
+from .official_monitor import monitor_official_channels, validate_official_url
 
 
 DEFAULT_COMPASS_EVENTS_URL = "http://127.0.0.1:32180/api/v1/watch-events"
@@ -68,6 +69,73 @@ def _valid_https_url(value: object) -> str:
     candidate = str(value or "").strip()
     parsed = urlparse(candidate)
     return candidate if parsed.scheme == "https" and bool(parsed.netloc) else ""
+
+
+def _normalized_monitoring(raw: object) -> dict[str, Any]:
+    if not isinstance(raw, dict) or raw.get("coverage") != "verified":
+        return {
+            "contractVersion": 1,
+            "coverage": "unverified",
+            "verifiedAt": "",
+            "publisher": {"name": "待核验", "url": ""},
+            "release": {
+                "timeStatus": "unverified", "scheduledAt": None, "timeZone": "Asia/Shanghai",
+                "label": "尚未建立官方发布监测卡", "windowStart": "", "windowEnd": "",
+            },
+            "channels": [],
+            "expectedTerms": [],
+        }
+    release_raw = raw.get("release") if isinstance(raw.get("release"), dict) else {}
+    time_status = str(release_raw.get("timeStatus") or "unverified")
+    if time_status not in {"confirmed", "date-only", "tentative"}:
+        time_status = "unverified"
+    window_start = str(release_raw.get("windowStart") or "")[:50]
+    window_end = str(release_raw.get("windowEnd") or "")[:50]
+    channels: list[dict[str, Any]] = []
+    for channel_raw in raw.get("channels", []) if isinstance(raw.get("channels"), list) else []:
+        if not isinstance(channel_raw, dict):
+            continue
+        try:
+            url = validate_official_url(channel_raw.get("url"), resolve_dns=False)
+        except ValueError:
+            continue
+        key = str(channel_raw.get("key") or "").strip()[:100]
+        if not key or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", key):
+            continue
+        terms = [str(term).strip()[:120] for term in channel_raw.get("expectedTerms", []) if str(term).strip()][:24]
+        channels.append({
+            "key": key,
+            "publisher": str(channel_raw.get("publisher") or "官方发布方").strip()[:200],
+            "name": str(channel_raw.get("name") or "官方渠道").strip()[:200],
+            "url": url,
+            "type": str(channel_raw.get("type") or "html").strip()[:30],
+            "role": str(channel_raw.get("role") or "official-release").strip()[:50],
+            "verifiedAt": str(channel_raw.get("verifiedAt") or "").strip()[:20],
+            "expectedTerms": terms,
+        })
+    publisher_raw = raw.get("publisher") if isinstance(raw.get("publisher"), dict) else {}
+    publisher_url = _valid_https_url(publisher_raw.get("url"))
+    publisher_name = str(publisher_raw.get("name") or (channels[0]["publisher"] if channels else "待核验"))
+    expected_terms = [str(term).strip()[:120] for term in raw.get("expectedTerms", []) if str(term).strip()][:24]
+    return {
+        "contractVersion": int(raw.get("contractVersion") or 1),
+        "coverage": "verified" if channels and window_start and window_end else "unverified",
+        "verifiedAt": str(raw.get("verifiedAt") or "").strip()[:20],
+        "publisher": {
+            "name": publisher_name.strip()[:200],
+            "url": publisher_url or (channels[0]["url"] if channels else ""),
+        },
+        "release": {
+            "timeStatus": time_status,
+            "scheduledAt": str(release_raw.get("scheduledAt") or "")[:50] or None,
+            "timeZone": "Asia/Shanghai",
+            "label": str(release_raw.get("label") or "").strip()[:300],
+            "windowStart": window_start,
+            "windowEnd": window_end,
+        },
+        "channels": channels,
+        "expectedTerms": expected_terms,
+    }
 
 
 def _derive_monitor_terms(event: dict[str, Any]) -> list[str]:
@@ -167,6 +235,7 @@ def _normalized_event(raw: object) -> dict[str, Any] | None:
         "event_status": str(raw.get("status") or "planned").strip()[:50],
         "note": str(raw.get("note") or "").strip()[:4000],
         "sources": sources,
+        "monitoring": _normalized_monitoring(raw.get("monitoring")),
         "source_updated_at": str(raw.get("updatedAt") or "").strip()[:100],
     }
     normalized["monitor_terms"] = _derive_monitor_terms(normalized)
@@ -185,14 +254,16 @@ def sync_watch_events(
         events = [event for event in events if event is not None]
         with transaction(path) as connection:
             connection.execute("UPDATE watch_events SET is_active=0")
+            connection.execute("UPDATE watch_event_channels SET is_active=0")
+            official_channel_count = 0
             for event in events:
                 connection.execute(
                     """
                     INSERT INTO watch_events(
                         event_key, scope, source_kind, source_event_id, title, event_date,
                         event_time, category, importance, event_status, note, sources_json,
-                        monitor_terms_json, source_updated_at, is_active, last_synced_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                        monitoring_json, monitor_terms_json, source_updated_at, is_active, last_synced_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                     ON CONFLICT(event_key) DO UPDATE SET
                         scope=excluded.scope, source_kind=excluded.source_kind,
                         source_event_id=excluded.source_event_id, title=excluded.title,
@@ -200,6 +271,7 @@ def sync_watch_events(
                         category=excluded.category, importance=excluded.importance,
                         event_status=excluded.event_status, note=excluded.note,
                         sources_json=excluded.sources_json,
+                        monitoring_json=excluded.monitoring_json,
                         monitor_terms_json=excluded.monitor_terms_json,
                         source_updated_at=excluded.source_updated_at,
                         is_active=1, last_synced_at=excluded.last_synced_at
@@ -209,9 +281,76 @@ def sync_watch_events(
                         event["title"], event["event_date"], event["event_time"], event["category"],
                         event["importance"], event["event_status"], event["note"],
                         json.dumps(event["sources"], ensure_ascii=False),
+                        json.dumps(event["monitoring"], ensure_ascii=False),
                         json.dumps(event["monitor_terms"], ensure_ascii=False), event["source_updated_at"], attempted_at,
                     ),
                 )
+                release = event["monitoring"]["release"]
+                for channel in event["monitoring"]["channels"]:
+                    connection.execute(
+                        """
+                        INSERT INTO watch_event_channels(
+                            event_key, channel_key, publisher, name, channel_type, channel_role,
+                            url, verified_at, expected_terms_json, time_status,
+                            window_start, window_end, is_active
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                        ON CONFLICT(event_key, channel_key) DO UPDATE SET
+                            publisher=excluded.publisher, name=excluded.name,
+                            channel_type=excluded.channel_type, channel_role=excluded.channel_role,
+                            verified_at=excluded.verified_at,
+                            time_status=excluded.time_status,
+                            window_start=excluded.window_start, window_end=excluded.window_end,
+                            content_hash=CASE
+                                WHEN watch_event_channels.url<>excluded.url
+                                  OR watch_event_channels.expected_terms_json<>excluded.expected_terms_json
+                                THEN NULL ELSE watch_event_channels.content_hash END,
+                            etag=CASE
+                                WHEN watch_event_channels.url<>excluded.url
+                                  OR watch_event_channels.expected_terms_json<>excluded.expected_terms_json
+                                THEN NULL ELSE watch_event_channels.etag END,
+                            last_modified=CASE
+                                WHEN watch_event_channels.url<>excluded.url
+                                  OR watch_event_channels.expected_terms_json<>excluded.expected_terms_json
+                                THEN NULL ELSE watch_event_channels.last_modified END,
+                            last_checked_at=CASE
+                                WHEN watch_event_channels.url<>excluded.url
+                                  OR watch_event_channels.expected_terms_json<>excluded.expected_terms_json
+                                THEN NULL ELSE watch_event_channels.last_checked_at END,
+                            last_success_at=CASE
+                                WHEN watch_event_channels.url<>excluded.url
+                                  OR watch_event_channels.expected_terms_json<>excluded.expected_terms_json
+                                THEN NULL ELSE watch_event_channels.last_success_at END,
+                            last_changed_at=CASE
+                                WHEN watch_event_channels.url<>excluded.url
+                                  OR watch_event_channels.expected_terms_json<>excluded.expected_terms_json
+                                THEN NULL ELSE watch_event_channels.last_changed_at END,
+                            next_check_at=CASE
+                                WHEN watch_event_channels.url<>excluded.url
+                                  OR watch_event_channels.expected_terms_json<>excluded.expected_terms_json
+                                THEN NULL ELSE watch_event_channels.next_check_at END,
+                            http_status=CASE
+                                WHEN watch_event_channels.url<>excluded.url
+                                  OR watch_event_channels.expected_terms_json<>excluded.expected_terms_json
+                                THEN NULL ELSE watch_event_channels.http_status END,
+                            signal_found=CASE
+                                WHEN watch_event_channels.url<>excluded.url
+                                  OR watch_event_channels.expected_terms_json<>excluded.expected_terms_json
+                                THEN 0 ELSE watch_event_channels.signal_found END,
+                            last_error=CASE
+                                WHEN watch_event_channels.url<>excluded.url
+                                  OR watch_event_channels.expected_terms_json<>excluded.expected_terms_json
+                                THEN NULL ELSE watch_event_channels.last_error END,
+                            expected_terms_json=excluded.expected_terms_json,
+                            url=excluded.url, is_active=1
+                        """,
+                        (
+                            event["event_key"], channel["key"], channel["publisher"], channel["name"],
+                            channel["type"], channel["role"], channel["url"], channel["verifiedAt"],
+                            json.dumps(channel["expectedTerms"], ensure_ascii=False), release["timeStatus"],
+                            release["windowStart"], release["windowEnd"],
+                        ),
+                    )
+                    official_channel_count += 1
             connection.execute(
                 """
                 INSERT INTO watch_sync_state(id, source_url, last_attempt_at, last_success_at, last_error, source_revision, event_count)
@@ -222,7 +361,10 @@ def sync_watch_events(
                 """,
                 (url, attempted_at, attempted_at, payload.get("revision"), len(events)),
             )
-        return {"ok": True, "synced": len(events), "revision": payload.get("revision"), "warnings": payload.get("warnings", [])}
+        return {
+            "ok": True, "synced": len(events), "official_channels": official_channel_count,
+            "revision": payload.get("revision"), "warnings": payload.get("warnings", []),
+        }
     except Exception as error:
         message = f"{type(error).__name__}: {error}"[:1000]
         with transaction(path) as connection:
@@ -278,8 +420,22 @@ def scan_watch_events(*, path: object = None) -> dict[str, Any]:
 
 def refresh_watch_events(*, path: object = None) -> dict[str, Any]:
     sync = sync_watch_events(path=path)
+    official = monitor_official_channels(path=path)
     scan = scan_watch_events(path=path)
-    return {"sync": sync, "scan": scan}
+    return {"sync": sync, "official": official, "scan": scan}
+
+
+def _recent_change(value: object, *, now: datetime) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=now.tzinfo)
+        age = now - parsed
+        return timedelta(0) <= age <= timedelta(hours=24)
+    except ValueError:
+        return False
 
 
 def list_watch_events(*, path: object = None) -> dict[str, Any]:
@@ -301,6 +457,7 @@ def list_watch_events(*, path: object = None) -> dict[str, Any]:
         for row in rows:
             event = dict(row)
             event["sources"] = json.loads(event.pop("sources_json") or "[]")
+            event["monitoring"] = json.loads(event.pop("monitoring_json") or "{}")
             event.pop("monitor_terms_json", None)
             event["is_active"] = bool(event["is_active"])
             match_rows = connection.execute(
@@ -323,18 +480,55 @@ def list_watch_events(*, path: object = None) -> dict[str, Any]:
                 match = dict(match_row)
                 match["matched_terms"] = json.loads(match.pop("matched_terms_json") or "[]")
                 event["latest_matches"].append(match)
+            channel_rows = connection.execute(
+                """
+                SELECT channel_key, publisher, name, channel_type, channel_role, url,
+                       verified_at, time_status, window_start, window_end,
+                       last_checked_at, last_success_at, last_changed_at, next_check_at,
+                       http_status, signal_found, last_error
+                FROM watch_event_channels
+                WHERE event_key=? AND is_active=1
+                ORDER BY channel_role, name
+                """,
+                (event["event_key"],),
+            ).fetchall()
+            event["official_channels"] = []
+            for channel_row in channel_rows:
+                channel = dict(channel_row)
+                channel["signal_found"] = bool(channel["signal_found"])
+                event["official_channels"].append(channel)
             events.append(event)
 
     today = datetime.now(SHANGHAI).date().isoformat()
+    now_utc = datetime.now(ZoneInfo("UTC"))
     for event in events:
-        if event["match_count"]:
-            event["monitor_status"] = "有相关消息"
-        elif event["event_date"] == today:
-            event["monitor_status"] = "今日重点"
-        elif event["event_status"] == "tentative":
-            event["monitor_status"] = "持续监测（日期待确认）"
+        channels = event["official_channels"]
+        changed = any(_recent_change(channel["last_changed_at"], now=now_utc) for channel in channels)
+        reachable = any(channel["last_success_at"] for channel in channels)
+        all_error = bool(channels) and all(channel["last_error"] for channel in channels)
+        if changed:
+            event["official_status"] = "changed"
+            event["monitor_status"] = "官方渠道有变化"
+        elif all_error:
+            event["official_status"] = "error"
+            event["monitor_status"] = "官方渠道待恢复"
+        elif reachable:
+            event["official_status"] = "reachable"
+            event["monitor_status"] = "官方监测中"
+        elif channels:
+            event["official_status"] = "pending"
+            event["monitor_status"] = "等待首次官方检查"
         else:
-            event["monitor_status"] = "监测中"
+            event["official_status"] = "unconfigured"
+            event["monitor_status"] = "官方渠道待核验"
+        if event["event_date"] == today and event["official_status"] not in {"changed", "error"}:
+            event["monitor_status"] = "今日重点"
+        elif event["event_status"] == "tentative" and event["official_status"] not in {"changed", "error"}:
+            event["monitor_status"] = "持续监测（日期待确认）"
+        if event["match_count"] and not changed:
+            event["candidate_status"] = "有相关消息（待官方确认）"
+        else:
+            event["candidate_status"] = ""
     return {
         "events": events,
         "counts": {
@@ -342,6 +536,10 @@ def list_watch_events(*, path: object = None) -> dict[str, Any]:
             "home": sum(event["scope"] == "home" for event in events),
             "zijin": sum(event["scope"] == "zijin" for event in events),
             "matched": sum(bool(event["match_count"]) for event in events),
+            "configured": sum(bool(event["official_channels"]) for event in events),
+            "official_reachable": sum(any(channel["last_success_at"] for channel in event["official_channels"]) for event in events),
+            "official_changed": sum(event["official_status"] == "changed" for event in events),
+            "official_errors": sum(event["official_status"] == "error" for event in events),
         },
         "sync": dict(sync_row) if sync_row else None,
         "time_zone": "Asia/Shanghai",

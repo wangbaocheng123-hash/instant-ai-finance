@@ -234,19 +234,37 @@ img { display: block; }
 .watch-event-card { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 12px; padding: 13px; border: 1px solid #e0e5eb; border-left: 4px solid #6b7d98; border-radius: 9px; background: #fff; box-shadow: 0 2px 7px rgba(24, 39, 58, .035); }
 .watch-event-card.scope-zijin { border-left-color: #c48732; }
 .watch-event-card.has-match { border-color: #e3b2b8; border-left-color: #d83b45; background: #fffafb; }
+.watch-event-card.official-changed { border-color: #e49ba3; border-left-color: #cf2f3b; background: #fff8f9; }
+.watch-event-card.official-error { border-color: #e3c7a8; border-left-color: #b8782c; }
 .watch-event-date { min-height: 62px; display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px solid #dde4ec; border-radius: 8px; background: #f5f7fa; }
 .watch-event-date span { color: #78869a; font-size: 11px; }
 .watch-event-date b { margin-top: 1px; color: #1d2d44; font-size: 25px; line-height: 1; }
 .watch-event-content { min-width: 0; }
-.watch-event-badges { display: flex; align-items: center; gap: 6px; }
+.watch-event-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .watch-event-badges span { padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: 650; }
 .watch-scope.scope-home { background: #edf4ff; color: #2463b8; }
 .watch-scope.scope-zijin { background: #fff5e7; color: #98601c; }
 .watch-monitor { margin-left: auto; background: #eef2f6; color: #667085; }
-.watch-monitor.has-match { background: #ffe9eb; color: #bb3340; }
+.watch-monitor.official-reachable { background: #e9f7ee; color: #28714e; }
+.watch-monitor.official-changed { background: #ffe4e7; color: #b42332; }
+.watch-monitor.official-error { background: #fff1df; color: #98601c; }
+.watch-candidate { background: #fbecef; color: #a83843; }
 .watch-event-card h3 { margin: 7px 0 4px; color: #111827; font-size: 16px; line-height: 1.45; }
 .watch-event-meta { margin: 0; color: #697586; font-size: 11px; line-height: 1.5; }
 .watch-event-note { max-width: 900px; margin: 6px 0 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: #5a6575; font-size: 12px; line-height: 1.55; }
+.watch-official { margin-top: 9px; padding: 9px; border: 1px solid #e2e8ef; border-radius: 7px; background: #f8fafc; }
+.watch-official-facts { display: grid; grid-template-columns: minmax(120px, .65fr) minmax(180px, 1.2fr) minmax(180px, 1fr); gap: 7px; }
+.watch-official-facts > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.watch-official-facts span { color: #8a94a3; font-size: 9px; }
+.watch-official-facts b { overflow: hidden; color: #344054; text-overflow: ellipsis; font-size: 10px; line-height: 1.45; }
+.watch-official-channels { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; padding-top: 7px; border-top: 1px solid #e7ebf0; }
+.watch-official-channels a { min-width: 180px; flex: 1 1 220px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 7px; border: 1px solid #dce4ed; border-radius: 5px; background: #fff; text-decoration: none; }
+.watch-official-channels a:hover { border-color: #9fb7d2; background: #f4f8fc; }
+.watch-official-channels a b { min-width: 0; overflow: hidden; color: #315b82; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.watch-official-channels a span { flex: 0 0 auto; color: #8a94a3; font-size: 9px; }
+.watch-official-channels a span.is-ready { color: #28714e; }
+.watch-official-channels a span.has-error { color: #a65e18; }
+.watch-official-channels p { margin: 0; color: #8a94a3; font-size: 10px; }
 .watch-matches { margin-top: 9px; padding-top: 8px; border-top: 1px solid #edf0f3; }
 .watch-matches > strong { display: block; margin-bottom: 5px; color: #b43340; font-size: 11px; }
 .watch-matches button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 8px; border: 0; border-radius: 5px; background: #fff2f3; cursor: pointer; text-align: left; }
@@ -453,6 +471,9 @@ img { display: block; }
   .watch-event-date b { font-size: 23px; }
   .watch-event-card h3 { font-size: 15px; }
   .watch-event-note { -webkit-line-clamp: 3; }
+  .watch-official-facts { grid-template-columns: 1fr; }
+  .watch-official-channels { flex-direction: column; }
+  .watch-official-channels a { min-width: 0; flex-basis: auto; align-items: flex-start; flex-direction: column; gap: 2px; }
   .watch-matches button { align-items: flex-start; flex-direction: column; gap: 3px; }
 }
 

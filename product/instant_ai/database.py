@@ -12,7 +12,7 @@ from urllib.parse import quote_plus
 from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensure_layout
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -417,6 +417,7 @@ def initialize(path: Path | str | None = None) -> None:
                 event_status TEXT NOT NULL DEFAULT 'planned',
                 note TEXT NOT NULL DEFAULT '',
                 sources_json TEXT NOT NULL DEFAULT '[]',
+                monitoring_json TEXT NOT NULL DEFAULT '{}',
                 monitor_terms_json TEXT NOT NULL DEFAULT '[]',
                 source_updated_at TEXT NOT NULL DEFAULT '',
                 is_active INTEGER NOT NULL DEFAULT 1,
@@ -431,6 +432,33 @@ def initialize(path: Path | str | None = None) -> None:
                 matched_terms_json TEXT NOT NULL DEFAULT '[]',
                 matched_at TEXT NOT NULL,
                 PRIMARY KEY (event_key, item_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS watch_event_channels (
+                event_key TEXT NOT NULL REFERENCES watch_events(event_key) ON DELETE CASCADE,
+                channel_key TEXT NOT NULL,
+                publisher TEXT NOT NULL,
+                name TEXT NOT NULL,
+                channel_type TEXT NOT NULL DEFAULT 'html',
+                channel_role TEXT NOT NULL DEFAULT 'official-release',
+                url TEXT NOT NULL,
+                verified_at TEXT NOT NULL DEFAULT '',
+                expected_terms_json TEXT NOT NULL DEFAULT '[]',
+                time_status TEXT NOT NULL DEFAULT 'unverified',
+                window_start TEXT NOT NULL,
+                window_end TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                last_checked_at TEXT,
+                last_success_at TEXT,
+                last_changed_at TEXT,
+                next_check_at TEXT,
+                http_status INTEGER,
+                etag TEXT,
+                last_modified TEXT,
+                content_hash TEXT,
+                signal_found INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                PRIMARY KEY (event_key, channel_key)
             );
 
             CREATE TABLE IF NOT EXISTS watch_sync_state (
@@ -458,8 +486,14 @@ def initialize(path: Path | str | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_watch_events_date ON watch_events(is_active, event_date, event_time);
             CREATE INDEX IF NOT EXISTS idx_watch_matches_event ON watch_event_matches(event_key, matched_at DESC);
             CREATE INDEX IF NOT EXISTS idx_watch_matches_item ON watch_event_matches(item_id, matched_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_watch_channels_due ON watch_event_channels(is_active, next_check_at, url);
             """
         )
+        watch_event_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(watch_events)").fetchall()
+        }
+        if "monitoring_json" not in watch_event_columns:
+            connection.execute("ALTER TABLE watch_events ADD COLUMN monitoring_json TEXT NOT NULL DEFAULT '{}'")
         connection.execute(
             "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

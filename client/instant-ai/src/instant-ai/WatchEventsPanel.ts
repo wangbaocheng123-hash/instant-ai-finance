@@ -58,13 +58,13 @@ export class WatchEventsPanel {
       this.metric('全部', response.counts.total),
       this.metric('首页', response.counts.home),
       this.metric('紫金', response.counts.zijin),
-      this.metric('已匹配', response.counts.matched),
+      this.metric('官方正常', response.counts.official_reachable),
     );
     const sync = document.createElement('p');
     sync.className = response.sync?.last_error ? 'watch-sync has-error' : 'watch-sync';
     sync.textContent = response.sync?.last_error
       ? '罗盘本轮暂未连通，继续使用上次同步列表监测。'
-      : `即时AI每 5 分钟比对一次财经消息${response.sync?.last_success_at ? ` · 最近同步 ${this.formatClock(response.sync.last_success_at)}` : ''}`;
+      : `已配置 ${response.counts.configured} 个事件的官方渠道；即时AI每 5 分钟检查到期渠道并比对财经消息${response.sync?.last_success_at ? ` · 最近同步 ${this.formatClock(response.sync.last_success_at)}` : ''}`;
 
     const list = document.createElement('div');
     list.className = 'watch-event-list';
@@ -85,7 +85,7 @@ export class WatchEventsPanel {
 
   private eventCard(event: WatchEvent): HTMLElement {
     const card = document.createElement('article');
-    card.className = `watch-event-card scope-${event.scope}${event.match_count ? ' has-match' : ''}`;
+    card.className = `watch-event-card scope-${event.scope} official-${event.official_status}${event.match_count ? ' has-match' : ''}`;
 
     const date = formatEventDate(event.event_date, event.event_time);
     const dateBlock = document.createElement('div');
@@ -104,9 +104,15 @@ export class WatchEventsPanel {
     scope.className = `watch-scope scope-${event.scope}`;
     scope.textContent = scopeLabel(event.scope);
     const monitor = document.createElement('span');
-    monitor.className = event.match_count ? 'watch-monitor has-match' : 'watch-monitor';
+    monitor.className = `watch-monitor official-${event.official_status}`;
     monitor.textContent = event.monitor_status;
     badges.append(scope, monitor);
+    if (event.candidate_status) {
+      const candidate = document.createElement('span');
+      candidate.className = 'watch-candidate';
+      candidate.textContent = event.candidate_status;
+      badges.append(candidate);
+    }
 
     const title = document.createElement('h3');
     title.textContent = event.title;
@@ -114,6 +120,10 @@ export class WatchEventsPanel {
     meta.className = 'watch-event-meta';
     meta.textContent = `${date.full} · ${event.category || '重点事件'} · 重要性 ${event.importance}/5`;
     content.append(badges, title, meta);
+
+    if (event.monitoring?.coverage === 'verified') {
+      content.append(this.officialMonitor(event));
+    }
 
     if (event.note) {
       const note = document.createElement('p');
@@ -126,7 +136,7 @@ export class WatchEventsPanel {
       const matches = document.createElement('div');
       matches.className = 'watch-matches';
       const label = document.createElement('strong');
-      label.textContent = `监测到 ${event.match_count} 条相关消息`;
+      label.textContent = `监测到 ${event.match_count} 条候选消息（不等同于官方结果）`;
       matches.append(label);
       event.latest_matches.forEach((match) => {
         const button = document.createElement('button');
@@ -144,6 +154,66 @@ export class WatchEventsPanel {
 
     card.append(dateBlock, content);
     return card;
+  }
+
+  private officialMonitor(event: WatchEvent): HTMLElement {
+    const box = document.createElement('div');
+    box.className = 'watch-official';
+    const facts = document.createElement('div');
+    facts.className = 'watch-official-facts';
+    facts.append(
+      this.fact('发布方', event.monitoring.publisher.name),
+      this.fact('发布时间', event.monitoring.release.label),
+      this.fact('监测窗口', this.formatRange(event.monitoring.release.windowStart, event.monitoring.release.windowEnd)),
+    );
+    const channels = document.createElement('div');
+    channels.className = 'watch-official-channels';
+    event.official_channels.forEach((channel) => {
+      const link = document.createElement('a');
+      link.href = channel.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      const name = document.createElement('b');
+      name.textContent = channel.name;
+      const status = document.createElement('span');
+      status.className = channel.last_error ? 'has-error' : channel.last_success_at ? 'is-ready' : '';
+      status.textContent = channel.last_error
+        ? '检查异常，系统会自动重试'
+        : channel.last_success_at
+          ? `官方页面可达 · ${this.formatClock(channel.last_success_at)}`
+          : `待首次检查${channel.next_check_at ? ` · ${this.formatClock(channel.next_check_at)}` : ''}`;
+      link.append(name, status);
+      channels.append(link);
+    });
+    if (!event.official_channels.length) {
+      const pending = document.createElement('p');
+      pending.textContent = '官方渠道配置正在同步。';
+      channels.append(pending);
+    }
+    box.append(facts, channels);
+    return box;
+  }
+
+  private fact(label: string, value: string): HTMLElement {
+    const node = document.createElement('div');
+    const name = document.createElement('span');
+    name.textContent = label;
+    const content = document.createElement('b');
+    content.textContent = value || '待核验';
+    node.append(name, content);
+    return node;
+  }
+
+  private formatRange(start: string, end: string): string {
+    if (!start || !end) return '待核验';
+    const format = (value: string): string => {
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return value;
+      return new Intl.DateTimeFormat('zh-CN', {
+        timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+      }).format(parsed);
+    };
+    return `${format(start)}—${format(end)}`;
   }
 
   private formatClock(value: string): string {

@@ -122,6 +122,52 @@ export interface WatchEventSource {
   verifiedAt: string;
 }
 
+export interface WatchEventMonitoring {
+  contractVersion: number;
+  coverage: 'verified' | 'unverified';
+  verifiedAt: string;
+  publisher: { name: string; url: string };
+  release: {
+    timeStatus: 'confirmed' | 'date-only' | 'tentative' | 'unverified';
+    scheduledAt: string | null;
+    timeZone: 'Asia/Shanghai';
+    label: string;
+    windowStart: string;
+    windowEnd: string;
+  };
+  channels: Array<{
+    key: string;
+    publisher: string;
+    name: string;
+    url: string;
+    type: string;
+    role: string;
+    verifiedAt: string;
+    expectedTerms: string[];
+  }>;
+  expectedTerms: string[];
+}
+
+export interface WatchEventOfficialChannel {
+  channel_key: string;
+  publisher: string;
+  name: string;
+  channel_type: string;
+  channel_role: string;
+  url: string;
+  verified_at: string;
+  time_status: string;
+  window_start: string;
+  window_end: string;
+  last_checked_at: string | null;
+  last_success_at: string | null;
+  last_changed_at: string | null;
+  next_check_at: string | null;
+  http_status: number | null;
+  signal_found: boolean;
+  last_error: string | null;
+}
+
 export interface WatchEventMatch {
   item_id: number;
   title: string;
@@ -148,18 +194,31 @@ export interface WatchEvent {
   event_status: string;
   note: string;
   sources: WatchEventSource[];
+  monitoring: WatchEventMonitoring;
+  official_channels: WatchEventOfficialChannel[];
   source_updated_at: string;
   last_synced_at: string;
   last_checked_at: string | null;
   match_count: number;
   latest_match_at: string | null;
   monitor_status: string;
+  official_status: 'changed' | 'error' | 'reachable' | 'pending' | 'unconfigured';
+  candidate_status: string;
   latest_matches: WatchEventMatch[];
 }
 
 export interface WatchEventsResponse {
   events: WatchEvent[];
-  counts: { total: number; home: number; zijin: number; matched: number };
+  counts: {
+    total: number;
+    home: number;
+    zijin: number;
+    matched: number;
+    configured: number;
+    official_reachable: number;
+    official_changed: number;
+    official_errors: number;
+  };
   sync: {
     source_url: string;
     last_attempt_at: string | null;
