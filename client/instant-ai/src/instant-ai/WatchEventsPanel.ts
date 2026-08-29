@@ -64,7 +64,7 @@ export class WatchEventsPanel {
     sync.className = response.sync?.last_error ? 'watch-sync has-error' : 'watch-sync';
     sync.textContent = response.sync?.last_error
       ? '罗盘本轮暂未连通，继续使用上次同步列表监测。'
-      : `已配置 ${response.counts.configured} 个事件的官方渠道；即时AI每 5 分钟检查到期渠道并比对财经消息${response.sync?.last_success_at ? ` · 最近同步 ${this.formatClock(response.sync.last_success_at)}` : ''}`;
+      : `已配置 ${response.counts.configured} 个事件的官方渠道；即时AI每 5 分钟检查到期渠道，已发现 ${response.counts.signals_detected} 个官方变化、送达罗盘 ${response.counts.signals_delivered} 个${response.sync?.last_success_at ? ` · 最近同步 ${this.formatClock(response.sync.last_success_at)}` : ''}`;
 
     const list = document.createElement('div');
     list.className = 'watch-event-list';
@@ -112,6 +112,12 @@ export class WatchEventsPanel {
       candidate.className = 'watch-candidate';
       candidate.textContent = event.candidate_status;
       badges.append(candidate);
+    }
+    if (event.latest_signal) {
+      const pipeline = document.createElement('span');
+      pipeline.className = `watch-pipeline signal-${event.latest_signal.status}`;
+      pipeline.textContent = event.pipeline_status;
+      badges.append(pipeline);
     }
 
     const title = document.createElement('h3');

@@ -12,7 +12,7 @@ from urllib.parse import quote_plus
 from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensure_layout
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -457,8 +457,33 @@ def initialize(path: Path | str | None = None) -> None:
                 last_modified TEXT,
                 content_hash TEXT,
                 signal_found INTEGER NOT NULL DEFAULT 0,
+                delivery_token TEXT NOT NULL DEFAULT '',
                 last_error TEXT,
                 PRIMARY KEY (event_key, channel_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS watch_event_signals (
+                signal_id TEXT PRIMARY KEY,
+                event_key TEXT NOT NULL REFERENCES watch_events(event_key) ON DELETE CASCADE,
+                channel_key TEXT NOT NULL,
+                previous_hash TEXT NOT NULL,
+                evidence_hash TEXT NOT NULL,
+                matched_terms_json TEXT NOT NULL DEFAULT '[]',
+                evidence_excerpt TEXT NOT NULL DEFAULT '',
+                detected_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending', 'delivered', 'failed')),
+                delivery_attempts INTEGER NOT NULL DEFAULT 0,
+                last_attempt_at TEXT,
+                delivered_at TEXT,
+                compass_signal_id TEXT NOT NULL DEFAULT '',
+                compass_signal_status TEXT NOT NULL DEFAULT '',
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(event_key, channel_key, evidence_hash),
+                FOREIGN KEY (event_key, channel_key)
+                    REFERENCES watch_event_channels(event_key, channel_key) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS watch_sync_state (
@@ -487,6 +512,7 @@ def initialize(path: Path | str | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_watch_matches_event ON watch_event_matches(event_key, matched_at DESC);
             CREATE INDEX IF NOT EXISTS idx_watch_matches_item ON watch_event_matches(item_id, matched_at DESC);
             CREATE INDEX IF NOT EXISTS idx_watch_channels_due ON watch_event_channels(is_active, next_check_at, url);
+            CREATE INDEX IF NOT EXISTS idx_watch_signals_status ON watch_event_signals(status, updated_at DESC);
             """
         )
         watch_event_columns = {
@@ -494,6 +520,11 @@ def initialize(path: Path | str | None = None) -> None:
         }
         if "monitoring_json" not in watch_event_columns:
             connection.execute("ALTER TABLE watch_events ADD COLUMN monitoring_json TEXT NOT NULL DEFAULT '{}'")
+        watch_channel_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(watch_event_channels)").fetchall()
+        }
+        if "delivery_token" not in watch_channel_columns:
+            connection.execute("ALTER TABLE watch_event_channels ADD COLUMN delivery_token TEXT NOT NULL DEFAULT ''")
         connection.execute(
             "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

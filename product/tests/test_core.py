@@ -121,7 +121,7 @@ class DatabaseTests(unittest.TestCase):
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             self.assertEqual(source_count, len(DEFAULT_SOURCES))
-            self.assertEqual(version, "8")
+            self.assertEqual(version, "9")
             with connect(path) as connection:
                 tables = {
                     row[0]
@@ -498,6 +498,9 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("中文摘要（备用）", app)
         self.assertIn("重点事件关注", app)
         self.assertIn("watch-events", app)
+        self.assertIn("watch-pipeline", app)
+        self.assertIn("送达罗盘", app)
+        self.assertIn("已发现", app)
         self.assertIn("repeat(6,1fr)", styles.replace(" ", ""))
         self.assertNotIn("正在读取公开正文", app)
         self.assertIn('cache:"no-store"', app)
@@ -510,7 +513,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.11.0", worker)
+        self.assertIn("instant-ai-shell-v0.12.0", worker)
 
 
 if __name__ == "__main__":

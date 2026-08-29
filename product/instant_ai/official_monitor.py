@@ -49,6 +49,7 @@ OFFICIAL_HOST_SUFFIXES = frozenset({
     "lme.com",
     "zijinmining.com",
     "alcoa.com",
+    "nasa.gov",
 })
 
 
@@ -118,7 +119,7 @@ def _visible_text(body: bytes, content_type: str) -> str:
     return "\n".join(line for line in lines if len(line) >= 2)
 
 
-def signal_fingerprint(body: bytes, content_type: str, expected_terms: list[str]) -> tuple[str, bool]:
+def signal_evidence(body: bytes, content_type: str, expected_terms: list[str]) -> dict[str, Any]:
     text = _visible_text(body, content_type)
     terms = [unicodedata.normalize("NFKC", str(term)).strip().lower() for term in expected_terms if str(term).strip()]
     matched_lines = [line for line in text.splitlines() if any(term in line for term in terms)] if terms else []
@@ -126,7 +127,18 @@ def signal_fingerprint(body: bytes, content_type: str, expected_terms: list[str]
     material = "\n".join(matched_lines[:300]) if terms else text[:500_000]
     if terms and not material:
         material = "official-signal-absent"
-    return hashlib.sha256(material.encode("utf-8")).hexdigest(), signal_found
+    matched_terms = [term for term in terms if any(term in line for line in matched_lines)]
+    return {
+        "fingerprint": hashlib.sha256(material.encode("utf-8")).hexdigest(),
+        "signal_found": signal_found,
+        "matched_terms": matched_terms[:24],
+        "evidence_excerpt": "\n".join(matched_lines[:12])[:2000],
+    }
+
+
+def signal_fingerprint(body: bytes, content_type: str, expected_terms: list[str]) -> tuple[str, bool]:
+    evidence = signal_evidence(body, content_type, expected_terms)
+    return str(evidence["fingerprint"]), bool(evidence["signal_found"])
 
 
 def _fetch_official_channel(url: str, *, etag: str = "", last_modified: str = "") -> dict[str, Any]:
@@ -209,7 +221,9 @@ def monitor_official_channels(
     with connect(path) as connection:
         rows = connection.execute(
             """
-            SELECT c.*
+            SELECT c.*, e.scope AS event_scope, e.source_kind, e.title AS event_title,
+                   e.event_date, e.event_time, e.category AS event_category,
+                   e.importance AS event_importance
             FROM watch_event_channels c
             JOIN watch_events e ON e.event_key=c.event_key
             WHERE c.is_active=1 AND e.is_active=1
@@ -228,6 +242,7 @@ def monitor_official_channels(
     changes = 0
     errors = 0
     checked_channels = 0
+    signals_queued = 0
 
     for url in selected_urls:
         channels = grouped[url]
@@ -249,16 +264,41 @@ def monitor_official_channels(
                     if response.get("not_modified"):
                         fingerprint = previous_hash
                         signal_found = bool(channel.get("signal_found"))
+                        matched_terms: list[str] = []
+                        evidence_excerpt = ""
                     else:
-                        fingerprint, signal_found = signal_fingerprint(
+                        evidence = signal_evidence(
                             response.get("body") or b"",
                             str(response.get("content_type") or ""),
                             expected_terms,
                         )
+                        fingerprint = str(evidence["fingerprint"])
+                        signal_found = bool(evidence["signal_found"])
+                        matched_terms = list(evidence["matched_terms"])
+                        evidence_excerpt = str(evidence["evidence_excerpt"])
                     changed = bool(previous_hash and fingerprint and previous_hash != fingerprint)
                     changes += int(changed)
                     checked_channels += 1
                     headers = response.get("headers") or {}
+                    if changed and signal_found:
+                        signal_id = "instant-ai:" + hashlib.sha256(
+                            f"{channel['event_key']}|{channel['channel_key']}|{fingerprint}".encode("utf-8")
+                        ).hexdigest()[:48]
+                        inserted = connection.execute(
+                            """
+                            INSERT OR IGNORE INTO watch_event_signals(
+                                signal_id, event_key, channel_key, previous_hash, evidence_hash,
+                                matched_terms_json, evidence_excerpt, detected_at, status,
+                                created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                            """,
+                            (
+                                signal_id, channel["event_key"], channel["channel_key"], previous_hash,
+                                fingerprint, json.dumps(matched_terms, ensure_ascii=False),
+                                evidence_excerpt, checked_at_text, checked_at_text, checked_at_text,
+                            ),
+                        )
+                        signals_queued += int(inserted.rowcount or 0)
                     connection.execute(
                         """
                         UPDATE watch_event_channels SET
@@ -301,6 +341,7 @@ def monitor_official_channels(
         "urls_checked": len(selected_urls),
         "channels_checked": checked_channels,
         "changes": changes,
+        "signals_queued": signals_queued,
         "errors": errors,
         "checked_at": checked_at_text,
     }

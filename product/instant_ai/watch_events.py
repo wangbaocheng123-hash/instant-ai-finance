@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from .database import connect, transaction, utc_now
+from .event_signal_delivery import DEFAULT_COMPASS_SIGNAL_URL, deliver_event_signals
 from .official_monitor import monitor_official_channels, validate_official_url
 
 
@@ -112,6 +113,7 @@ def _normalized_monitoring(raw: object) -> dict[str, Any]:
             "role": str(channel_raw.get("role") or "official-release").strip()[:50],
             "verifiedAt": str(channel_raw.get("verifiedAt") or "").strip()[:20],
             "expectedTerms": terms,
+            "signalToken": str(channel_raw.get("signalDeliveryToken") or "").strip()[:200],
         })
     publisher_raw = raw.get("publisher") if isinstance(raw.get("publisher"), dict) else {}
     publisher_url = _valid_https_url(publisher_raw.get("url"))
@@ -257,6 +259,13 @@ def sync_watch_events(
             connection.execute("UPDATE watch_event_channels SET is_active=0")
             official_channel_count = 0
             for event in events:
+                public_monitoring = {
+                    **event["monitoring"],
+                    "channels": [
+                        {key: value for key, value in channel.items() if key != "signalToken"}
+                        for channel in event["monitoring"]["channels"]
+                    ],
+                }
                 connection.execute(
                     """
                     INSERT INTO watch_events(
@@ -281,7 +290,7 @@ def sync_watch_events(
                         event["title"], event["event_date"], event["event_time"], event["category"],
                         event["importance"], event["event_status"], event["note"],
                         json.dumps(event["sources"], ensure_ascii=False),
-                        json.dumps(event["monitoring"], ensure_ascii=False),
+                        json.dumps(public_monitoring, ensure_ascii=False),
                         json.dumps(event["monitor_terms"], ensure_ascii=False), event["source_updated_at"], attempted_at,
                     ),
                 )
@@ -292,8 +301,8 @@ def sync_watch_events(
                         INSERT INTO watch_event_channels(
                             event_key, channel_key, publisher, name, channel_type, channel_role,
                             url, verified_at, expected_terms_json, time_status,
-                            window_start, window_end, is_active
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                            window_start, window_end, delivery_token, is_active
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                         ON CONFLICT(event_key, channel_key) DO UPDATE SET
                             publisher=excluded.publisher, name=excluded.name,
                             channel_type=excluded.channel_type, channel_role=excluded.channel_role,
@@ -341,13 +350,14 @@ def sync_watch_events(
                                   OR watch_event_channels.expected_terms_json<>excluded.expected_terms_json
                                 THEN NULL ELSE watch_event_channels.last_error END,
                             expected_terms_json=excluded.expected_terms_json,
+                            delivery_token=excluded.delivery_token,
                             url=excluded.url, is_active=1
                         """,
                         (
                             event["event_key"], channel["key"], channel["publisher"], channel["name"],
                             channel["type"], channel["role"], channel["url"], channel["verifiedAt"],
                             json.dumps(channel["expectedTerms"], ensure_ascii=False), release["timeStatus"],
-                            release["windowStart"], release["windowEnd"],
+                            release["windowStart"], release["windowEnd"], channel["signalToken"],
                         ),
                     )
                     official_channel_count += 1
@@ -421,8 +431,12 @@ def scan_watch_events(*, path: object = None) -> dict[str, Any]:
 def refresh_watch_events(*, path: object = None) -> dict[str, Any]:
     sync = sync_watch_events(path=path)
     official = monitor_official_channels(path=path)
+    delivery = deliver_event_signals(
+        path=path,
+        target_url=os.environ.get("INSTANT_AI_COMPASS_SIGNAL_URL", DEFAULT_COMPASS_SIGNAL_URL),
+    )
     scan = scan_watch_events(path=path)
-    return {"sync": sync, "official": official, "scan": scan}
+    return {"sync": sync, "official": official, "delivery": delivery, "scan": scan}
 
 
 def _recent_change(value: object, *, now: datetime) -> bool:
@@ -497,6 +511,16 @@ def list_watch_events(*, path: object = None) -> dict[str, Any]:
                 channel = dict(channel_row)
                 channel["signal_found"] = bool(channel["signal_found"])
                 event["official_channels"].append(channel)
+            signal_row = connection.execute(
+                """
+                SELECT signal_id, detected_at, status, delivery_attempts, delivered_at,
+                       compass_signal_id, compass_signal_status, last_error
+                FROM watch_event_signals WHERE event_key=?
+                ORDER BY detected_at DESC, created_at DESC LIMIT 1
+                """,
+                (event["event_key"],),
+            ).fetchone()
+            event["latest_signal"] = dict(signal_row) if signal_row else None
             events.append(event)
 
     today = datetime.now(SHANGHAI).date().isoformat()
@@ -529,6 +553,15 @@ def list_watch_events(*, path: object = None) -> dict[str, Any]:
             event["candidate_status"] = "有相关消息（待官方确认）"
         else:
             event["candidate_status"] = ""
+        signal = event["latest_signal"]
+        if signal and signal["status"] == "delivered":
+            event["pipeline_status"] = "官方变化已送达罗盘"
+        elif signal and signal["status"] == "failed":
+            event["pipeline_status"] = "官方变化待重试送达"
+        elif signal:
+            event["pipeline_status"] = "官方变化等待送达罗盘"
+        else:
+            event["pipeline_status"] = "尚未产生官方变化信号"
     return {
         "events": events,
         "counts": {
@@ -540,6 +573,10 @@ def list_watch_events(*, path: object = None) -> dict[str, Any]:
             "official_reachable": sum(any(channel["last_success_at"] for channel in event["official_channels"]) for event in events),
             "official_changed": sum(event["official_status"] == "changed" for event in events),
             "official_errors": sum(event["official_status"] == "error" for event in events),
+            "signals_detected": sum(bool(event["latest_signal"]) for event in events),
+            "signals_delivered": sum(
+                bool(event["latest_signal"] and event["latest_signal"]["status"] == "delivered") for event in events
+            ),
         },
         "sync": dict(sync_row) if sync_row else None,
         "time_zone": "Asia/Shanghai",

@@ -249,6 +249,9 @@ img { display: block; }
 .watch-monitor.official-changed { background: #ffe4e7; color: #b42332; }
 .watch-monitor.official-error { background: #fff1df; color: #98601c; }
 .watch-candidate { background: #fbecef; color: #a83843; }
+.watch-pipeline.signal-pending { background: #fff4dd; color: #8a5b10; }
+.watch-pipeline.signal-delivered { background: #e8f7ee; color: #24724d; }
+.watch-pipeline.signal-failed { background: #ffe8e9; color: #a92f3a; }
 .watch-event-card h3 { margin: 7px 0 4px; color: #111827; font-size: 16px; line-height: 1.45; }
 .watch-event-meta { margin: 0; color: #697586; font-size: 11px; line-height: 1.5; }
 .watch-event-note { max-width: 900px; margin: 6px 0 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: #5a6575; font-size: 12px; line-height: 1.55; }

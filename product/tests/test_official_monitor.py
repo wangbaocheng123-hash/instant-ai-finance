@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from instant_ai.database import connect, initialize
+from instant_ai.event_signal_delivery import deliver_event_signals, validate_compass_signal_url
 from instant_ai.official_monitor import monitor_official_channels, signal_fingerprint, validate_official_url
 from instant_ai.watch_events import list_watch_events, sync_watch_events
 
@@ -66,6 +67,7 @@ class OfficialMonitorTests(unittest.TestCase):
                             "role": "official-event",
                             "verifiedAt": "2026-08-29",
                             "expectedTerms": ["GTC Berlin"],
+                            "signalDeliveryToken": "1700000000000.fixture-token",
                         }],
                         "expectedTerms": ["GTC Berlin"],
                     },
@@ -73,6 +75,12 @@ class OfficialMonitorTests(unittest.TestCase):
             }
             sync = sync_watch_events(path=path, fetcher=lambda _: payload)
             self.assertEqual(sync["official_channels"], 1)
+            with connect(path) as connection:
+                public_monitoring = connection.execute(
+                    "SELECT monitoring_json FROM watch_events WHERE event_key='home:timeline:gtc'"
+                ).fetchone()[0]
+                self.assertNotIn("signalDeliveryToken", public_monitoring)
+                self.assertNotIn("fixture-token", public_monitoring)
 
             bodies = [
                 b"<html><main>GTC Berlin 2026 official schedule</main></html>",
@@ -106,9 +114,38 @@ class OfficialMonitorTests(unittest.TestCase):
                 self.assertIsNotNone(channel["last_changed_at"])
                 self.assertEqual(channel["signal_found"], 1)
                 self.assertIsNone(channel["last_error"])
+                signal = connection.execute(
+                    "SELECT status, previous_hash, evidence_hash, matched_terms_json FROM watch_event_signals"
+                ).fetchone()
+                self.assertEqual(signal["status"], "pending")
+                self.assertNotEqual(signal["previous_hash"], signal["evidence_hash"])
+                self.assertIn("gtc berlin", signal["matched_terms_json"])
                 self.assertEqual(connection.execute(
                     "SELECT value FROM schema_meta WHERE key='schema_version'"
-                ).fetchone()[0], "8")
+                ).fetchone()[0], "9")
+
+            sent: list[dict[str, object]] = []
+
+            def sender(url: str, signal: dict[str, object]) -> dict[str, object]:
+                self.assertEqual(validate_compass_signal_url(url), url)
+                sent.append(signal)
+                return {"ok": True, "signal": {"id": "compass-signal-1", "status": "received"}}
+
+            delivery = deliver_event_signals(path=path, sender=sender, now=first_at + timedelta(minutes=7))
+            self.assertEqual(delivery["delivered"], 1)
+            self.assertEqual(sent[0]["eventKey"], "home:timeline:gtc")
+            self.assertEqual(sent[0]["signalKind"], "official-page-change")
+            self.assertTrue(sent[0]["signalFound"])
+            self.assertEqual(sent[0]["signalToken"], "1700000000000.fixture-token")
+            with connect(path) as connection:
+                signal = connection.execute(
+                    "SELECT status, compass_signal_id, compass_signal_status FROM watch_event_signals"
+                ).fetchone()
+                self.assertEqual(dict(signal), {
+                    "status": "delivered",
+                    "compass_signal_id": "compass-signal-1",
+                    "compass_signal_status": "received",
+                })
 
             payload["events"][0]["monitoring"]["channels"][0]["expectedTerms"] = ["keynote"]
             sync_watch_events(path=path, fetcher=lambda _: payload)

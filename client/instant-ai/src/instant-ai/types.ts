@@ -204,6 +204,17 @@ export interface WatchEvent {
   monitor_status: string;
   official_status: 'changed' | 'error' | 'reachable' | 'pending' | 'unconfigured';
   candidate_status: string;
+  pipeline_status: string;
+  latest_signal: {
+    signal_id: string;
+    detected_at: string;
+    status: 'pending' | 'delivered' | 'failed';
+    delivery_attempts: number;
+    delivered_at: string | null;
+    compass_signal_id: string;
+    compass_signal_status: string;
+    last_error: string | null;
+  } | null;
   latest_matches: WatchEventMatch[];
 }
 
@@ -218,6 +229,8 @@ export interface WatchEventsResponse {
     official_reachable: number;
     official_changed: number;
     official_errors: number;
+    signals_detected: number;
+    signals_delivered: number;
   };
   sync: {
     source_url: string;
