@@ -115,3 +115,58 @@ export interface SectionDefinition {
   topic?: string;
   accent: string;
 }
+
+export interface WatchEventSource {
+  name: string;
+  url: string;
+  verifiedAt: string;
+}
+
+export interface WatchEventMatch {
+  item_id: number;
+  title: string;
+  translated_title: string | null;
+  url: string;
+  published_at: string | null;
+  first_seen_at: string;
+  importance_score: number;
+  match_score: number;
+  matched_terms: string[];
+  matched_at: string;
+}
+
+export interface WatchEvent {
+  event_key: string;
+  scope: 'home' | 'zijin';
+  source_kind: 'timeline' | 'manual' | 'research' | string;
+  source_event_id: string;
+  title: string;
+  event_date: string;
+  event_time: string;
+  category: string;
+  importance: number;
+  event_status: string;
+  note: string;
+  sources: WatchEventSource[];
+  source_updated_at: string;
+  last_synced_at: string;
+  last_checked_at: string | null;
+  match_count: number;
+  latest_match_at: string | null;
+  monitor_status: string;
+  latest_matches: WatchEventMatch[];
+}
+
+export interface WatchEventsResponse {
+  events: WatchEvent[];
+  counts: { total: number; home: number; zijin: number; matched: number };
+  sync: {
+    source_url: string;
+    last_attempt_at: string | null;
+    last_success_at: string | null;
+    last_error: string | null;
+    source_revision: number | null;
+    event_count: number;
+  } | null;
+  time_zone: 'Asia/Shanghai';
+}

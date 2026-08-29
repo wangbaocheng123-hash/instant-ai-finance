@@ -121,7 +121,7 @@ class DatabaseTests(unittest.TestCase):
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             self.assertEqual(source_count, len(DEFAULT_SOURCES))
-            self.assertEqual(version, "6")
+            self.assertEqual(version, "7")
             with connect(path) as connection:
                 tables = {
                     row[0]
@@ -135,6 +135,9 @@ class DatabaseTests(unittest.TestCase):
             self.assertIn("reader_translations", tables)
             self.assertIn("translation_usage", tables)
             self.assertIn("item_thumbnails", tables)
+            self.assertIn("watch_events", tables)
+            self.assertIn("watch_event_matches", tables)
+            self.assertIn("watch_sync_state", tables)
 
 
 class RetentionTests(unittest.TestCase):
@@ -493,6 +496,9 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("googlechrome://", app)
         self.assertIn("普通浏览器备用打开", app)
         self.assertIn("中文摘要（备用）", app)
+        self.assertIn("重点事件关注", app)
+        self.assertIn("watch-events", app)
+        self.assertIn("repeat(6,1fr)", styles.replace(" ", ""))
         self.assertNotIn("正在读取公开正文", app)
         self.assertIn('cache:"no-store"', app)
         self.assertIn("visibilitychange", app)
@@ -504,7 +510,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.9.2", worker)
+        self.assertIn("instant-ai-shell-v0.10.0", worker)
 
 
 if __name__ == "__main__":

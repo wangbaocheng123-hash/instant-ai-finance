@@ -32,6 +32,7 @@ from .retention import run_retention_cleanup
 from .reader_translation import translate_reader_item
 from .translation import translate_items, translation_status
 from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
+from .watch_events import list_watch_events, refresh_watch_events
 
 
 HOST = "127.0.0.1"
@@ -51,7 +52,9 @@ def _collect_in_background() -> None:
         return
     COLLECTION_STATE["running"] = True
     try:
-        COLLECTION_STATE["last_result"] = run_collection()
+        result = run_collection()
+        result["watch_events"] = refresh_watch_events()
+        COLLECTION_STATE["last_result"] = result
     except Exception as error:  # keep the desktop service alive
         COLLECTION_STATE["last_result"] = {"status": "failed", "error": f"{type(error).__name__}: {error}"}
     finally:
@@ -134,6 +137,8 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             )
         elif path == "/api/hot":
             self._json(query_hot_items(limit=int(query.get("limit", ["40"])[0])))
+        elif path == "/api/watch-events":
+            self._json(list_watch_events())
         elif path.startswith("/api/items/") and path.endswith("/thumbnail"):
             parts = path.strip("/").split("/")
             if len(parts) != 4:
@@ -314,4 +319,6 @@ def run_server(collect_on_start: bool = True) -> None:
     threading.Thread(target=_scheduler_loop, name="instant-ai-scheduler", daemon=True).start()
     if collect_on_start:
         threading.Thread(target=_collect_in_background, name="instant-ai-initial-collector", daemon=True).start()
+    else:
+        threading.Thread(target=refresh_watch_events, name="instant-ai-initial-watch-events", daemon=True).start()
     server.serve_forever(poll_interval=0.5)

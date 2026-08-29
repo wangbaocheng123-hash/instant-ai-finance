@@ -12,7 +12,7 @@ from urllib.parse import quote_plus
 from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensure_layout
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -404,6 +404,45 @@ def initialize(path: Path | str | None = None) -> None:
                 checked_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS watch_events (
+                event_key TEXT PRIMARY KEY,
+                scope TEXT NOT NULL CHECK(scope IN ('home', 'zijin')),
+                source_kind TEXT NOT NULL,
+                source_event_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                event_date TEXT NOT NULL,
+                event_time TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL DEFAULT 'event',
+                importance INTEGER NOT NULL DEFAULT 3,
+                event_status TEXT NOT NULL DEFAULT 'planned',
+                note TEXT NOT NULL DEFAULT '',
+                sources_json TEXT NOT NULL DEFAULT '[]',
+                monitor_terms_json TEXT NOT NULL DEFAULT '[]',
+                source_updated_at TEXT NOT NULL DEFAULT '',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                last_synced_at TEXT NOT NULL,
+                last_checked_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS watch_event_matches (
+                event_key TEXT NOT NULL REFERENCES watch_events(event_key) ON DELETE CASCADE,
+                item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                match_score INTEGER NOT NULL,
+                matched_terms_json TEXT NOT NULL DEFAULT '[]',
+                matched_at TEXT NOT NULL,
+                PRIMARY KEY (event_key, item_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS watch_sync_state (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                source_url TEXT NOT NULL,
+                last_attempt_at TEXT,
+                last_success_at TEXT,
+                last_error TEXT,
+                source_revision INTEGER,
+                event_count INTEGER NOT NULL DEFAULT 0
+            );
+
             CREATE INDEX IF NOT EXISTS idx_items_published ON items(published_at DESC);
             CREATE INDEX IF NOT EXISTS idx_items_activity ON items(last_seen_at DESC, importance_score DESC);
             CREATE INDEX IF NOT EXISTS idx_items_score ON items(importance_score DESC);
@@ -416,6 +455,9 @@ def initialize(path: Path | str | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_item_translations_provider ON item_translations(provider, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_reader_translations_provider ON reader_translations(provider, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_item_thumbnails_status ON item_thumbnails(status, checked_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_watch_events_date ON watch_events(is_active, event_date, event_time);
+            CREATE INDEX IF NOT EXISTS idx_watch_matches_event ON watch_event_matches(event_key, matched_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_watch_matches_item ON watch_event_matches(item_id, matched_at DESC);
             """
         )
         connection.execute(

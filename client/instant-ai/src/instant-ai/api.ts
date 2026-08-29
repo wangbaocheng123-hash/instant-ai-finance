@@ -1,6 +1,7 @@
 import type {
   AppStatus, FinanceItem, FinanceItemDetail, ReaderTranslationResult, SourceStatus,
   TranslationBatchResult, TranslationStatus,
+  WatchEventsResponse,
 } from './types';
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -25,6 +26,7 @@ export const instantApi = {
     return request<FinanceItem[]>(`/api/items?${params.toString()}`);
   },
   hot: (limit = 40) => request<FinanceItem[]>(`/api/hot?limit=${limit}`),
+  watchEvents: () => request<WatchEventsResponse>('/api/watch-events'),
   item: (id: number) => request<FinanceItemDetail>(`/api/items/${id}`),
   sources: () => request<SourceStatus[]>('/api/sources'),
   translationStatus: () => request<TranslationStatus>('/api/translation/status'),

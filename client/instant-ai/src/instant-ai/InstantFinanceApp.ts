@@ -1,5 +1,6 @@
 import { instantApi } from './api';
 import { FinancePanel } from './FinancePanel';
+import { WatchEventsPanel } from './WatchEventsPanel';
 import type {
   AppStatus, FinanceItem, FinanceItemDetail, ReaderTranslationResult, SectionDefinition, SourceStatus,
   TranslationBatchResult, TranslationStatus,
@@ -20,6 +21,11 @@ const SECTIONS: SectionDefinition[] = [
   { id: 'knowledge', title: '纳斯达克与财经知识', subtitle: 'INVESTOR EDUCATION · MARKET STRUCTURE', topic: '财经知识', accent: '#8aa4ff' },
 ];
 
+const WATCH_SECTION: SectionDefinition = {
+  id: 'watch-events', title: '重点事件关注', subtitle: 'TIME COMPASS · EVENT MONITOR', accent: '#e44758',
+};
+const NAV_SECTIONS = SECTIONS.flatMap((section) => section.id === 'ai' ? [section, WATCH_SECTION] : [section]);
+
 const formatFullTime = (value: string | null): string => {
   if (!value) return '时间待确认';
   const date = new Date(value);
@@ -30,6 +36,7 @@ const formatFullTime = (value: string | null): string => {
 export class InstantFinanceApp {
   private readonly root: HTMLElement;
   private readonly panels = new Map<string, FinancePanel>();
+  private readonly watchPanel = new WatchEventsPanel();
   private readonly sectionItems = new Map<string, FinanceItem[]>();
   private latestItems: FinanceItem[] = [];
   private instantHotItems: FinanceItem[] = [];
@@ -112,12 +119,13 @@ export class InstantFinanceApp {
         <button type="button" data-target="china"><span>中</span><b>中国</b></button>
         <button type="button" data-target="gold"><span>金</span><b>黄金</b></button>
         <button type="button" data-target="ai"><span>AI</span><b>科技</b></button>
+        <button type="button" data-target="watch-events"><span>重</span><b>重点</b></button>
       </nav>
       <div id="overlay" class="overlay hidden"><article id="overlayCard" class="overlay-card"></article></div>
       <div id="toast" class="toast hidden"></div>`;
 
     const nav = this.required('#sectionNav');
-    SECTIONS.forEach((section) => {
+    NAV_SECTIONS.forEach((section) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.target = section.id;
@@ -138,6 +146,8 @@ export class InstantFinanceApp {
       grid.append(panel.element);
       this.panels.set(section.id, panel);
     });
+    this.watchPanel.setLoading();
+    grid.append(this.watchPanel.element);
   }
 
   private bindEvents(): void {
@@ -188,7 +198,7 @@ export class InstantFinanceApp {
   }
 
   private selectSection(sectionId: string, resetViewport = true): void {
-    if (!this.panels.has(sectionId)) return;
+    if (!this.panels.has(sectionId) && sectionId !== WATCH_SECTION.id) return;
     this.activeSectionId = sectionId;
     this.clearSearch();
 
@@ -204,6 +214,9 @@ export class InstantFinanceApp {
       panel.element.hidden = !active;
       panel.element.classList.toggle('is-active', active);
     });
+    const watchActive = sectionId === WATCH_SECTION.id;
+    this.watchPanel.element.hidden = !watchActive;
+    this.watchPanel.element.classList.toggle('is-active', watchActive);
 
     if (resetViewport) window.scrollTo({ top: 0, behavior: 'auto' });
   }
@@ -219,6 +232,11 @@ export class InstantFinanceApp {
       this.instantHotItems = this.selectInstantHotItems(latest, hot);
       this.renderStatus(status);
       this.updateTranslationButton();
+      try {
+        this.watchPanel.render(await instantApi.watchEvents());
+      } catch (error) {
+        this.watchPanel.setError(error instanceof Error ? error.message : '重点事件读取失败');
+      }
       await Promise.all(SECTIONS.map(async (section) => {
         const panel = this.panels.get(section.id);
         if (!panel) return;
