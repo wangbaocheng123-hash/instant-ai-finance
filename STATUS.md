@@ -1,8 +1,8 @@
 # 项目状态
 
 - 最后更新：2026-08-30
-- 当前阶段：`P2/P3 — 模型先生 iPhone 视频兼容修复版 0.15.1 正式发布完成`
-- 阶段状态：`LOCAL_0_15_1_VERIFIED / GITHUB_0_15_1_PUSHED / GRANDPAAMU_0_15_1_LIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_LIBRARY_ACTIVE / OWNER_AUTH_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 当前阶段：`P2/P3 — 模型先生页面媒体策略修复版 0.15.2 正式发布，等待主人 iPhone 复测`
+- 阶段状态：`LOCAL_0_15_2_VERIFIED / GITHUB_0_15_2_PUSHED / GRANDPAAMU_0_15_2_LIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / OWNER_IPHONE_RETEST_PENDING / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_LIBRARY_ACTIVE / OWNER_AUTH_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离
@@ -10,6 +10,8 @@
 
 ## 当前检查点
 
+- 0.15.2 已修复 0.15.1 遗漏的真正页面禁播规则：正式 HTML 的 Content Security Policy 曾保留历史配置 `media-src 'none'`，导致浏览器在发起视频请求前直接拦截所有媒体；播放器统一错误提示又把它误报为网络异常。客户端源码和正式构建现均改为 `media-src 'self'`，服务端响应头也显式限定只允许本站媒体，仍禁止第三方媒体、frame 和 object。
+- 0.15.2 功能提交 `9b7b462` 已推送 GitHub `main` 并由永久受限发布器正式部署；本机与服务器各 36 项 Python 测试全过，Vite 构建和 npm 零漏洞审计通过。正式域名健康接口返回 0.15.2，线上 HTML 与响应头均为 `media-src 'self'`、不再含 `media-src 'none'`，Service Worker 缓存标记为 0.15.2。388 个 Git 外视频、详情和评论均未重传或改写。
 - 0.15.1 已修复用户 iPhone 反复提示“本地视频加载失败”的协议缺口。生产旧版对媒体预探测 `HEAD` 返回 501，而视频文件本身已确认是 H.264 Constrained Baseline + AAC LC、`yuv420p`、MP4 快速启动布局且可完整解码；新版本为受保护视频、静态文件和 API 增加无正文 `HEAD` 响应，并保留登录校验与 HTTP Range 契约。
 - 本机与服务器各 36 项 Python 测试全过，Vite 构建、Python/JavaScript 语法、npm 零漏洞审计和差异检查通过。正式域名以 iPhone Safari 请求头实测作品 445：普通 `HEAD` 为 `200`/2,362,151 字节，`HEAD bytes=0-1` 为 `206 bytes 0-1/2362151`，随后 `GET bytes=0-1023` 为 `206`/1,024 字节；未登录 `HEAD` 继续返回 401。
 - 0.15.1 功能提交 `056213d` 已推送即时 AI 独立 GitHub `main`，既有永久受限发布器完成服务器测试、服务重启和健康检查；`https://grandpaamu.com/api/health` 返回 0.15.1。388 个 Git 外视频与约 9.8MB 模型先生资料均未重传或改写；时变罗盘只做只读健康检查，完整性正常且未修改。
@@ -35,12 +37,13 @@
 
 ## 当前阻塞
 
-- `P2-MODEL-08` 的 iPhone 视频协议修复、Git 推送和正式发布没有剩余阻塞。
+- `P2-MODEL-09` 的代码、Git 推送和正式发布没有剩余阻塞；尚待所有者在 iPhone 上完全关闭旧页面后重新进入 0.15.2 做最后的真机播放确认。
 - 服务器尚未安装 `ffmpeg`。已有正式/普通/豆包识别结果可查看，豆包凭据也已安全配置；但点击后对尚无结果的视频做现场豆包转写仍会因缺少音频提取程序而停止。该系统级依赖必须获得单独批准后才能安装和付费实测。
 - 普通 Whisper/OCR 的 Linux 运行组件体量和兼容性尚未评估，未获大型依赖批准前云端不安装这些组件。
 
 ## 需要用户批准的事项
 
+- 0.15.2 页面媒体策略修复已按用户本轮“正式发布”授权完成，不需要重新确认；388 个云端视频没有重传、改写或删除。
 - 0.15.1 视频协议补丁已按用户当前要求正式发布，不需要重新确认；388 个云端视频没有重传、改写或删除。
 - 0.14.0 正式发布、388 个压缩视频同步和现有豆包语音凭据的 Git 外安全配置均已获得批准并完成，不需要重新确认。
 - 若要启用云端现场豆包转写，需要用户单独批准在该服务器安装 `ffmpeg` 并进行一次可能产生豆包费用的真实识别。
@@ -48,4 +51,4 @@
 
 ## 下一项唯一建议任务
 
-`P2-MODEL-06`：如用户批准，在 `47.236.175.118` 评估并安装最小 `ffmpeg` 运行依赖，再选择一条尚无缓存结果的视频执行一次带费用确认的真实豆包转写验收。
+`P2-MODEL-09`：所有者在 iPhone 上完全关闭即时 AI 页面后重新进入模型先生，播放“大象起舞”并确认 0.15.2 已消除页面 CSP 禁播；若仍失败，再依据浏览器媒体错误码继续定位，不再使用笼统网络提示猜测。
