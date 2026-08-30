@@ -315,6 +315,7 @@ export class ModelMrPanel {
 
   private async transcribe(workId: number, engine: 'video' | 'doubao'): Promise<void> {
     if (this.busyWorks.has(workId)) return;
+    if (engine === 'doubao' && !window.confirm('豆包识别会提取本地视频音频并按音频时长调用付费接口。确认继续吗？')) return;
     this.busyWorks.add(workId);
     this.setWorkMessage(workId, engine === 'doubao' ? '正在读取豆包识别结果…' : '正在识别视频文字…', '');
     this.renderWorks();

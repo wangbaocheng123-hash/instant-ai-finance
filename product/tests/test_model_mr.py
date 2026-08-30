@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import json
+import os
 import tempfile
 import http.client
 import threading
@@ -209,6 +210,43 @@ class ModelMrGatewayTests(unittest.TestCase):
                     server.shutdown()
                     server.server_close()
                     thread.join(timeout=5)
+
+    def test_owner_library_can_run_live_doubao_asr_with_git_external_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "details").mkdir()
+            (root / "media").mkdir()
+            video = root / "media" / "sample.mp4"
+            video.write_bytes(b"video")
+            (root / "public-snapshot.json").write_text(
+                json.dumps({"version": 2, "works": [{"id": 10}], "thoughts": []}),
+                encoding="utf-8",
+            )
+            (root / "details" / "10.json").write_text(
+                json.dumps(
+                    {
+                        "work": {"id": 10, "title": "识别测试", "media_file": "sample.mp4", "media_available": True},
+                        "transcripts": [],
+                        "comments": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            client = ModelMrClient("http://127.0.0.1:9", root / "public-snapshot.json", root / "media")
+            result = {"text": "现场识别原文", "engine": "doubao-recording-asr-2.0", "cached": False, "message": "完成"}
+            with (
+                patch.dict(os.environ, {"INSTANT_AI_DOUBAO_ASR_API_KEY": "test-key"}),
+                patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")),
+                patch("instant_ai.model_mr.transcribe_video", return_value=result) as transcribe,
+            ):
+                detail = client.work_detail(10)
+                transcription = client.transcribe(10, "doubao")
+
+            self.assertTrue(detail["capabilities"]["doubao_asr"])
+            self.assertFalse(transcription["cached"])
+            self.assertEqual(transcription["text"], "现场识别原文")
+            transcribe.assert_called_once_with(video, 10)
 
 
 if __name__ == "__main__":

@@ -38,7 +38,9 @@ sudo /opt/instant-ai/repository/deploy/aliyun/configure-instant-ai-owner.sh --ge
 
 模型先生主人资料库默认位于 `/var/lib/instant-ai/model-mr`：`public-snapshot.json` 为作品索引，`details/` 保存每条作品的正式原文、白名单转写和评论正文，`media/` 保存 360p H.264 + AAC 视频。它们都是 Git 外运行数据，所有 API 和视频分段请求必须先通过主人登录；Caddy 不得直接暴露 `media/`。
 
-本机使用 `scripts/export-model-mr-owner-library.py` 从回环服务生成索引与详情，媒体源为 `H:\模型先生智能体\模型视频_360p_有声`。首次同步传全部 388 个 MP4；后续按相对路径增量覆盖新增或变化文件，不重复提交 Git。不得上传模型先生的 `.env`、原始数据库、API 密钥、粉丝资料、本机绝对路径、原始 JSON、Cookie、日志或管理接口。完整边界见 ADR-0022。
+本机使用 `scripts/export-model-mr-owner-library.py` 从回环服务生成索引与详情，媒体源为 `H:\模型先生智能体\模型视频_360p_有声`。首次同步传全部 388 个 MP4；后续按相对路径增量覆盖新增或变化文件，不重复提交 Git。不得上传模型先生的整份 `.env`、原始数据库、粉丝资料、本机绝对路径、原始 JSON、Cookie、日志或管理接口。完整边界见 ADR-0022。
+
+云端默认只读取已有普通/豆包识别结果。若所有者另行批准云端付费识别，可在服务器端单独提供豆包语音凭据到固定暂存文件 `/var/tmp/instant-ai-doubao.env.upload`，再由 root 运行 `deploy/aliyun/configure-model-mr-doubao.sh`；脚本只接受豆包语音白名单字段，最终配置保存在 Git 外 `/etc/instant-ai/model-mr-secrets.env`（root `0600`）。页面每次现场调用豆包前都会提示按音频时长计费。不得把该文件、值或模型先生整份 `.env` 提交 Git、聊天、日志或公开接口。
 
 ## 统一更新
 

@@ -16,6 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from .doubao_asr import DoubaoAsrUnavailable, is_configured as doubao_asr_is_configured, transcribe_video
 from .paths import LIBRARY_ROOT
 
 
@@ -81,7 +82,13 @@ class ModelMrClient:
                         else "模型先生精简资料已连接。"
                     ),
                     "features": (
-                        ["本地视频", "视频原文", "豆包转写结果", "评论", "投资思路"]
+                        [
+                            "本地视频",
+                            "视频原文",
+                            "豆包识别文字" if doubao_asr_is_configured() else "豆包转写结果",
+                            "评论",
+                            "投资思路",
+                        ]
                         if owner_library
                         else ["作品浏览", "投资思路"]
                     ),
@@ -93,6 +100,7 @@ class ModelMrClient:
                         "analyses": int(counts.get("thoughts") or len(thoughts)),
                     },
                     "chat_enabled": False,
+                    "doubao_asr_enabled": doubao_asr_is_configured(),
                     "snapshot_updated_at": str(snapshot.get("exported_at") or ""),
                 }
             return {
@@ -198,6 +206,14 @@ class ModelMrClient:
             }
         except ModelMrUnavailable:
             detail = self.work_detail(safe_id)
+            if engine == "doubao" and doubao_asr_is_configured():
+                media = self.video_path(safe_id)
+                if media is None:
+                    raise ModelMrUnavailable("这条作品没有可识别的本地视频。")
+                try:
+                    return transcribe_video(media[0], safe_id)
+                except DoubaoAsrUnavailable as error:
+                    raise ModelMrUnavailable(str(error)) from error
             transcript = next(
                 (
                     item
@@ -599,7 +615,8 @@ class ModelMrClient:
                 "video": bool(work["media_available"]),
                 "save_video_text": True,
                 "transcribe_video": bool(transcripts or video_text.get("text")),
-                "doubao_asr": any("doubao" in str(item.get("source") or "").casefold() for item in transcripts),
+                "doubao_asr": doubao_asr_is_configured()
+                or any("doubao" in str(item.get("source") or "").casefold() for item in transcripts),
                 "comments": True,
             },
         }

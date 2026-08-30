@@ -87,6 +87,7 @@ export interface ModelMrStatus {
   features: string[];
   counts?: { works: number; media: number; transcripts: number; comments: number; analyses: number };
   chat_enabled?: boolean;
+  doubao_asr_enabled?: boolean;
 }
 
 export interface ModelMrWork {
