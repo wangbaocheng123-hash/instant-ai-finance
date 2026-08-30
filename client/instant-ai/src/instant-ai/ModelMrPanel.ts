@@ -5,6 +5,13 @@ import type {
 
 type ModelMrTab = 'works' | 'thoughts' | 'chat';
 type WorkDetailTab = 'video' | 'text' | 'comments';
+type CommentTab = 'author' | 'ranking' | 'stocks';
+
+interface ModelMrCommentThread {
+  key: string;
+  root: ModelMrComment | null;
+  replies: ModelMrComment[];
+}
 
 export class ModelMrPanel {
   public readonly element: HTMLElement;
@@ -19,7 +26,9 @@ export class ModelMrPanel {
   private sending = false;
   private readonly details = new Map<number, ModelMrWorkDetail>();
   private readonly detailTabs = new Map<number, WorkDetailTab>();
+  private readonly commentTabs = new Map<number, CommentTab>();
   private readonly commentLimits = new Map<number, number>();
+  private readonly editingTitles = new Set<number>();
   private readonly workMessages = new Map<number, { text: string; tone: string }>();
   private readonly busyWorks = new Set<number>();
 
@@ -93,6 +102,10 @@ export class ModelMrPanel {
     else if (command === 'transcribe') await this.transcribe(workId, 'video');
     else if (command === 'doubao') await this.transcribe(workId, 'doubao');
     else if (command === 'more-comments') this.showMoreComments(workId);
+    else if (command === 'edit-title') this.editTitle(workId);
+    else if (command === 'cancel-title') this.cancelTitle(workId);
+    else if (command === 'save-title') await this.saveTitle(workId);
+    else if (command === 'comment-tab') this.setCommentTab(workId, (action.dataset.commentTab || 'author') as CommentTab);
   }
 
   private selectTab(tab: ModelMrTab): void {
@@ -126,11 +139,17 @@ export class ModelMrPanel {
     card.dataset.workId = String(work.id);
     const heading = document.createElement('div');
     heading.className = 'model-work-heading';
+    const titleGroup = document.createElement('div');
+    titleGroup.className = 'model-work-title-group';
     const title = document.createElement('h3');
     title.textContent = work.title;
+    const editTitle = this.actionButton('改标题', work.id, 'edit-title');
+    editTitle.classList.add('model-title-edit-button');
+    editTitle.disabled = this.busyWorks.has(work.id);
+    titleGroup.append(title, editTitle);
     const date = document.createElement('time');
     date.textContent = this.formatDate(work.published_at);
-    heading.append(title, date);
+    heading.append(titleGroup, date);
     const meta = document.createElement('div');
     meta.className = 'model-work-meta';
     if (work.media_available) meta.append(this.pill('本地视频'));
@@ -138,7 +157,21 @@ export class ModelMrPanel {
     if (work.has_interpretation) meta.append(this.pill('有解读'));
     if (work.comment_count) meta.append(this.pill(`${work.comment_count} 条评论`));
     work.keywords.slice(0, 3).forEach((keyword) => meta.append(this.pill(keyword)));
-    card.append(heading, meta);
+    card.append(heading);
+    if (this.editingTitles.has(work.id)) {
+      const editor = document.createElement('div');
+      editor.className = 'model-title-editor';
+      const input = document.createElement('input');
+      input.id = `model-title-${work.id}`;
+      input.value = work.title;
+      input.maxLength = 120;
+      input.setAttribute('aria-label', '作品标题');
+      const save = this.actionButton('保存标题', work.id, 'save-title', undefined, true);
+      const cancel = this.actionButton('取消', work.id, 'cancel-title');
+      editor.append(input, save, cancel);
+      card.append(editor);
+    }
+    card.append(meta);
     if (work.description) {
       const description = document.createElement('p');
       description.textContent = work.description;
@@ -177,10 +210,12 @@ export class ModelMrPanel {
     this.detailTabs.set(workId, tab);
     if (!this.details.has(workId)) {
       this.busyWorks.add(workId);
+      this.workMessages.delete(workId);
       this.setWorkMessage(workId, '正在读取本地作品资料…', '');
       this.renderWorks();
       try {
         this.details.set(workId, await instantApi.modelMrWork(workId));
+        this.workMessages.delete(workId);
       } catch (error) {
         this.setWorkMessage(workId, error instanceof Error ? error.message : '作品资料读取失败。', 'is-error');
       } finally {
@@ -240,10 +275,17 @@ export class ModelMrPanel {
       video.playsInline = true;
       video.preload = 'metadata';
       video.src = detail.work.video_url;
-      panel.append(video);
       const note = document.createElement('p');
-      note.textContent = '播放的是已压缩的有声本地备份，不会跳转抖音。';
-      panel.append(note);
+      note.textContent = '正在读取视频信息…';
+      video.addEventListener('loadedmetadata', () => {
+        const seconds = Number.isFinite(video.duration) ? Math.max(1, Math.round(video.duration)) : 0;
+        note.textContent = `本地有声视频已就绪${seconds ? ` · ${Math.floor(seconds / 60)}分${seconds % 60}秒` : ''}，不会跳转抖音。`;
+      });
+      video.addEventListener('error', () => {
+        note.textContent = '本地视频加载失败。请先确认网络正常，再收起后重新打开；错误不会跳转抖音。';
+        note.classList.add('is-error');
+      });
+      panel.append(video, note);
     } else panel.append(this.message('这条作品暂未匹配到本地视频，可使用抖音原链接查看来源。'));
     return panel;
   }
@@ -276,11 +318,53 @@ export class ModelMrPanel {
   private renderComments(detail: ModelMrWorkDetail): HTMLElement {
     const panel = document.createElement('div');
     panel.className = 'model-comments-panel';
+    const active = this.commentTabs.get(detail.work.id) || 'author';
+    const threads = this.commentThreads(detail.comments);
+    const authorThreads = threads.filter((thread) => this.threadHasAuthorInteraction(thread));
+    const rankedThreads = threads
+      .filter((thread) => {
+        const lead = thread.root || thread.replies[0];
+        return lead && !this.isAuthorComment(lead) && !this.isLowValueComment(lead.text);
+      })
+      .sort((left, right) => this.compareCommentThreads(left, right));
+    const tabs = document.createElement('nav');
+    tabs.className = 'model-comment-tabs';
+    const definitions: Array<{ key: CommentTab; label: string; count: number }> = [
+      { key: 'author', label: '本人回复', count: authorThreads.length },
+      { key: 'ranking', label: '评论排行', count: rankedThreads.length },
+      { key: 'stocks', label: '评股', count: detail.stock_mentions?.items?.length || 0 },
+    ];
+    definitions.forEach((definition) => {
+      const button = this.actionButton(`${definition.label} ${definition.count}`, detail.work.id, 'comment-tab');
+      button.dataset.commentTab = definition.key;
+      button.classList.toggle('is-active', definition.key === active);
+      tabs.append(button);
+    });
+    panel.append(tabs);
+
     const limit = this.commentLimits.get(detail.work.id) || 60;
-    detail.comments.slice(0, limit).forEach((comment) => panel.append(this.renderComment(comment)));
-    if (!detail.comments.length) panel.append(this.message('这条作品当前没有已同步评论。'));
-    if (limit < detail.comments.length) {
-      const more = this.actionButton(`继续显示（还有 ${detail.comments.length - limit} 条）`, detail.work.id, 'more-comments');
+    let remaining = 0;
+    if (active === 'author') {
+      const note = document.createElement('p');
+      note.className = 'model-comment-sort-note';
+      note.textContent = '只显示模型先生本人回复或本人点赞过的评论，并保留对应提问上下文。';
+      panel.append(note);
+      authorThreads.slice(0, limit).forEach((thread) => panel.append(this.renderCommentThread(thread, true)));
+      if (!authorThreads.length) panel.append(this.message('这条作品暂未识别到模型先生本人回复。'));
+      remaining = Math.max(0, authorThreads.length - limit);
+    } else if (active === 'ranking') {
+      const note = document.createElement('p');
+      note.className = 'model-comment-sort-note';
+      note.textContent = '按点赞量优先，其次按回复数和有效正文长度排列；纯表情、纯“哈哈”等低价值评论不进入排行。';
+      panel.append(note);
+      rankedThreads.slice(0, limit).forEach((thread, index) => panel.append(this.renderCommentThread(thread, false, index + 1)));
+      if (!rankedThreads.length) panel.append(this.message('这条作品当前没有可参与排行的评论。'));
+      remaining = Math.max(0, rankedThreads.length - limit);
+    } else {
+      panel.append(this.renderStockMentions(detail));
+    }
+    if (remaining) {
+      const more = this.actionButton(`继续显示（还有 ${remaining} 组）`, detail.work.id, 'more-comments');
       more.classList.add('model-comments-more');
       panel.append(more);
     }
@@ -289,6 +373,117 @@ export class ModelMrPanel {
     note.textContent = `已同步 ${detail.comments.length} 条；原始评论媒体、账号主页及来源编号未带入云端。`;
     panel.append(note);
     return panel;
+  }
+
+  private commentThreads(comments: ModelMrComment[]): ModelMrCommentThread[] {
+    const threads = new Map<string, ModelMrCommentThread>();
+    comments.forEach((comment) => {
+      const key = comment.thread_key || `comment-${comment.id}`;
+      let thread = threads.get(key);
+      if (!thread) {
+        thread = { key, root: null, replies: [] };
+        threads.set(key, thread);
+      }
+      if (!comment.reply_depth && !thread.root) thread.root = comment;
+      else thread.replies.push(comment);
+    });
+    return Array.from(threads.values());
+  }
+
+  private threadHasAuthorInteraction(thread: ModelMrCommentThread): boolean {
+    return [thread.root, ...thread.replies].some((comment) => comment && (this.isAuthorComment(comment) || comment.author_liked));
+  }
+
+  private isAuthorComment(comment: ModelMrComment): boolean {
+    return comment.kind.includes('author') || comment.author.trim() === '模型先生';
+  }
+
+  private isLowValueComment(text: string): boolean {
+    const compact = text
+      .replace(/\[[^\]]{1,12}\]/g, '')
+      .replace(/@\S+/g, '')
+      .replace(/[^A-Za-z0-9\u4e00-\u9fff]+/g, '')
+      .toLowerCase();
+    if (!compact) return true;
+    if (/^(哈|呵|嘿|嘻){1,12}$/.test(compact) || /^6{1,12}$/.test(compact)) return true;
+    return new Set(['嗯', '哦', '啊', '好', '赞', '点赞', '支持', '收到', '路过', '来了', '呵呵', '谢谢', '感谢', '学习了', '关注了', '蹲', '蹲一个']).has(compact);
+  }
+
+  private compareCommentThreads(left: ModelMrCommentThread, right: ModelMrCommentThread): number {
+    const leftLead = left.root || left.replies[0];
+    const rightLead = right.root || right.replies[0];
+    const likes = (rightLead?.like_count || 0) - (leftLead?.like_count || 0);
+    if (likes) return likes;
+    const replies = (rightLead?.reply_count || right.replies.length) - (leftLead?.reply_count || left.replies.length);
+    if (replies) return replies;
+    return (rightLead?.text.length || 0) - (leftLead?.text.length || 0);
+  }
+
+  private renderCommentThread(thread: ModelMrCommentThread, authorMode: boolean, rank = 0): HTMLElement {
+    const section = document.createElement('section');
+    section.className = `model-comment-thread${authorMode ? ' is-author-thread' : ''}`;
+    if (rank) {
+      const badge = document.createElement('span');
+      badge.className = 'model-comment-rank';
+      badge.textContent = String(rank);
+      section.append(badge);
+    }
+    if (thread.root) section.append(this.renderComment(thread.root));
+    const replies = [...thread.replies].sort((left, right) => {
+      const authorDifference = Number(this.isAuthorComment(right)) - Number(this.isAuthorComment(left));
+      return authorDifference || right.like_count - left.like_count;
+    });
+    const visibleReplies = authorMode
+      ? replies.filter((comment) => this.isAuthorComment(comment) || comment.author_liked || !this.isLowValueComment(comment.text))
+      : replies.slice(0, 6);
+    visibleReplies.forEach((comment) => section.append(this.renderComment(comment)));
+    return section;
+  }
+
+  private renderStockMentions(detail: ModelMrWorkDetail): HTMLElement {
+    const report = detail.stock_mentions;
+    const root = document.createElement('section');
+    root.className = 'model-stock-report';
+    if (!report?.items?.length) {
+      root.append(this.message('这条作品暂时没有评股排行；重新同步主人资料后会使用原智能体的本地证券名称表生成。'));
+      return root;
+    }
+    const heading = document.createElement('header');
+    const title = document.createElement('b');
+    title.textContent = '评论区股票热度';
+    const summary = document.createElement('span');
+    summary.textContent = `已检查 ${report.total_comments} 条评论 · ${report.items.length} 只股票`;
+    heading.append(title, summary);
+    root.append(heading);
+    const commentsById = new Map(detail.comments.map((comment) => [comment.id, comment]));
+    report.items.forEach((item) => {
+      const row = document.createElement('details');
+      row.className = 'model-stock-row';
+      const rowSummary = document.createElement('summary');
+      const rank = document.createElement('span');
+      rank.className = 'model-stock-rank';
+      rank.textContent = String(item.rank);
+      const name = document.createElement('b');
+      name.textContent = item.code ? `${item.name} · ${item.code}` : item.name;
+      const count = document.createElement('span');
+      count.textContent = `${item.comment_count} 条 · 粉丝 ${item.fan_comment_count} · 本人 ${item.author_comment_count}`;
+      rowSummary.append(rank, name, count);
+      row.append(rowSummary);
+      const matched = item.comment_ids.map((id) => commentsById.get(id)).filter((comment): comment is ModelMrComment => Boolean(comment));
+      if (matched.length) matched.forEach((comment) => row.append(this.renderComment(comment)));
+      else item.examples.forEach((example) => {
+        const text = document.createElement('p');
+        text.className = 'model-stock-example';
+        text.textContent = example;
+        row.append(text);
+      });
+      root.append(row);
+    });
+    const footer = document.createElement('p');
+    footer.className = 'model-comments-note';
+    footer.textContent = report.message || '使用原智能体本地证券名称表生成，不调用 AI，不产生 API 费用。';
+    root.append(footer);
+    return root;
   }
 
   private renderComment(comment: ModelMrComment): HTMLElement {
@@ -303,13 +498,65 @@ export class ModelMrPanel {
     const text = document.createElement('p');
     text.textContent = comment.text;
     const metrics = document.createElement('small');
-    metrics.textContent = `赞 ${comment.like_count}${comment.reply_count ? ` · 回复 ${comment.reply_count}` : ''}`;
+    metrics.textContent = `赞 ${comment.like_count}${comment.reply_count ? ` · 回复 ${comment.reply_count}` : ''}${comment.author_liked ? ' · 本人点赞' : ''}`;
     item.append(header, text, metrics);
     return item;
   }
 
   private showMoreComments(workId: number): void {
     this.commentLimits.set(workId, (this.commentLimits.get(workId) || 60) + 60);
+    this.renderWorks();
+  }
+
+  private editTitle(workId: number): void {
+    if (this.busyWorks.has(workId)) return;
+    this.editingTitles.add(workId);
+    this.workMessages.delete(workId);
+    this.renderWorks();
+    requestAnimationFrame(() => {
+      const input = this.element.querySelector<HTMLInputElement>(`#model-title-${workId}`);
+      input?.focus();
+      input?.select();
+    });
+  }
+
+  private cancelTitle(workId: number): void {
+    this.editingTitles.delete(workId);
+    this.workMessages.delete(workId);
+    this.renderWorks();
+  }
+
+  private async saveTitle(workId: number): Promise<void> {
+    if (this.busyWorks.has(workId)) return;
+    const input = this.element.querySelector<HTMLInputElement>(`#model-title-${workId}`);
+    const title = input?.value.trim() || '';
+    if (!title) {
+      this.setWorkMessage(workId, '作品标题不能为空。', 'is-error');
+      this.renderWorks();
+      return;
+    }
+    this.busyWorks.add(workId);
+    this.setWorkMessage(workId, '正在保存标题…', '');
+    this.renderWorks();
+    try {
+      const result = await instantApi.saveModelMrTitle(workId, title);
+      const work = this.works.find((item) => item.id === workId);
+      if (work) work.title = result.title;
+      const detail = this.details.get(workId);
+      if (detail) detail.work.title = result.title;
+      this.editingTitles.delete(workId);
+      this.setWorkMessage(workId, '标题已保存。', 'is-done');
+    } catch (error) {
+      this.setWorkMessage(workId, error instanceof Error ? error.message : '标题保存失败。', 'is-error');
+    } finally {
+      this.busyWorks.delete(workId);
+      this.renderWorks();
+    }
+  }
+
+  private setCommentTab(workId: number, tab: CommentTab): void {
+    this.commentTabs.set(workId, tab);
+    this.commentLimits.set(workId, 60);
     this.renderWorks();
   }
 

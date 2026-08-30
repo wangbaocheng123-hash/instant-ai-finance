@@ -248,6 +248,144 @@ class ModelMrGatewayTests(unittest.TestCase):
             self.assertEqual(transcription["text"], "现场识别原文")
             transcribe.assert_called_once_with(video, 10)
 
+    def test_owner_library_preserves_comment_threads_and_sanitizes_stock_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "details").mkdir()
+            (root / "media").mkdir()
+            (root / "public-snapshot.json").write_text(
+                json.dumps({"version": 2, "works": [{"id": 11, "title": "评论测试"}], "thoughts": []}),
+                encoding="utf-8",
+            )
+            (root / "details" / "11.json").write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "work": {"id": 11, "title": "评论测试"},
+                        "comments": [
+                            {
+                                "id": 1,
+                                "author": "粉丝",
+                                "text": "中芯国际怎么看？",
+                                "kind": "user_comment",
+                                "reply_depth": 0,
+                                "thread_key": "012345abcdef",
+                                "author_liked": True,
+                            },
+                            {
+                                "id": 2,
+                                "author": "模型先生",
+                                "text": "注意估值和周期。",
+                                "kind": "author_reply",
+                                "reply_depth": 1,
+                                "thread_key": "012345abcdef",
+                            },
+                        ],
+                        "stock_mentions": {
+                            "total_comments": 2,
+                            "items": [
+                                {
+                                    "rank": 1,
+                                    "name": "中芯国际",
+                                    "code": "688981",
+                                    "comment_count": 1,
+                                    "mention_count": 1,
+                                    "fan_comment_count": 1,
+                                    "author_comment_count": 0,
+                                    "comment_ids": [1],
+                                    "examples": ["中芯国际怎么看？"],
+                                    "private_path": "H:/private/master.json",
+                                }
+                            ],
+                            "api_used": True,
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            client = ModelMrClient("http://127.0.0.1:9", root / "public-snapshot.json", root / "media")
+            with patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")):
+                detail = client.work_detail(11)
+
+            self.assertEqual({item["thread_key"] for item in detail["comments"]}, {"012345abcdef"})
+            self.assertTrue(detail["comments"][0]["author_liked"])
+            self.assertEqual(detail["stock_mentions"]["items"][0]["name"], "中芯国际")
+            self.assertEqual(detail["stock_mentions"]["items"][0]["comment_ids"], [1])
+            self.assertFalse(detail["stock_mentions"]["api_used"])
+            self.assertNotIn("private_path", str(detail))
+            self.assertNotIn("H:/private", str(detail))
+
+    def test_owner_library_title_edit_updates_detail_and_work_index(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "details").mkdir()
+            (root / "media").mkdir()
+            snapshot_path = root / "public-snapshot.json"
+            snapshot_path.write_text(
+                json.dumps({"version": 2, "works": [{"id": 12, "title": "旧标题"}], "thoughts": []}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (root / "details" / "12.json").write_text(
+                json.dumps({"version": 2, "work": {"id": 12, "title": "旧标题"}, "comments": []}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            client = ModelMrClient("http://127.0.0.1:9", snapshot_path, root / "media")
+            with patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")):
+                result = client.save_title(12, "新标题")
+                works = client.works(limit=10)
+                detail = client.work_detail(12)
+
+            self.assertEqual(result["title"], "新标题")
+            self.assertEqual(works["items"][0]["title"], "新标题")
+            self.assertEqual(detail["work"]["title"], "新标题")
+
+    def test_owner_title_edit_http_endpoint_is_available_to_the_mobile_client(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "details").mkdir()
+            (root / "media").mkdir()
+            (root / "public-snapshot.json").write_text(
+                json.dumps({"version": 2, "works": [{"id": 13, "title": "旧标题"}], "thoughts": []}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (root / "details" / "13.json").write_text(
+                json.dumps({"version": 2, "work": {"id": 13, "title": "旧标题"}, "comments": []}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            client = ModelMrClient("http://127.0.0.1:9", root / "public-snapshot.json", root / "media")
+            auth = OwnerAuth(required=False, path=root / "missing-auth.json")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), InstantAIHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            with (
+                patch("instant_ai.server.MODEL_MR", client),
+                patch("instant_ai.server.AUTH", auth),
+                patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")),
+            ):
+                thread.start()
+                try:
+                    body = json.dumps({"title": "手机新标题"}, ensure_ascii=False).encode("utf-8")
+                    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                    connection.request(
+                        "POST",
+                        "/api/model-mr/works/13/title",
+                        body=body,
+                        headers={
+                            "Content-Type": "application/json; charset=utf-8",
+                            "Content-Length": str(len(body)),
+                            "X-Instant-AI": "1",
+                        },
+                    )
+                    response = connection.getresponse()
+                    payload = json.loads(response.read().decode("utf-8"))
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(payload["title"], "手机新标题")
+                    self.assertEqual(client.work_detail(13)["work"]["title"], "手机新标题")
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=5)
+
 
 if __name__ == "__main__":
     unittest.main()

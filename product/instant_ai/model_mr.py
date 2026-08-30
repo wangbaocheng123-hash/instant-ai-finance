@@ -148,7 +148,23 @@ class ModelMrClient:
         safe_id = self._safe_work_id(work_id)
         try:
             source = self._json(f"/api/videos/{safe_id}", timeout=30, max_bytes=64 * 1024 * 1024)
-            return self._clean_detail(source, work_id=safe_id, live=True)
+            detail = self._clean_detail(source, work_id=safe_id, live=True)
+            try:
+                stock_mentions = self._json(
+                    f"/api/videos/{safe_id}/stock-mentions?limit=20",
+                    timeout=30,
+                    max_bytes=4 * 1024 * 1024,
+                )
+            except ModelMrUnavailable:
+                stock_mentions = {}
+            source_comments = source.get("comments") if isinstance(source.get("comments"), list) else []
+            comment_id_map = {
+                int(item.get("id") or 0): index
+                for index, item in enumerate(source_comments, start=1)
+                if isinstance(item, dict) and int(item.get("id") or 0) > 0
+            }
+            detail["stock_mentions"] = self._clean_stock_mentions(stock_mentions, comment_id_map)
+            return detail
         except ModelMrUnavailable:
             self._require_snapshot()
             detail_path = self._detail_path(safe_id)
@@ -159,6 +175,41 @@ class ModelMrClient:
             if not isinstance(value, dict):
                 raise ModelMrUnavailable("这条作品的资料格式不正确。")
             return self._clean_snapshot_detail(value, safe_id)
+
+    def save_title(self, work_id: int, title: str) -> dict[str, Any]:
+        safe_id = self._safe_work_id(work_id)
+        cleaned_title = str(title or "").strip()
+        if not cleaned_title:
+            raise ValueError("作品标题不能为空。")
+        if len(cleaned_title) > 120:
+            raise ValueError("作品标题不能超过 120 个字符。")
+        try:
+            source = self._json(
+                f"/api/videos/{safe_id}/title",
+                method="POST",
+                payload={"title": cleaned_title},
+                timeout=30,
+            )
+            title_info = source.get("title_info") if isinstance(source.get("title_info"), dict) else {}
+            active_title = str(title_info.get("active_title") or cleaned_title).strip()
+            return {"ok": True, "title": active_title, "saved": True, "mode": "live"}
+        except ModelMrUnavailable:
+            with _DETAIL_LOCK:
+                detail = self.work_detail(safe_id)
+                detail["work"]["title"] = cleaned_title
+                snapshot = self._require_snapshot()
+                matched = False
+                for item in snapshot.get("works", []):
+                    if isinstance(item, dict) and int(item.get("id") or 0) == safe_id:
+                        item["title"] = cleaned_title
+                        matched = True
+                        break
+                if not matched:
+                    raise ModelMrUnavailable("作品索引中没有这条记录。")
+                snapshot["updated_at"] = int(time.time())
+                self._write_json(self._detail_path(safe_id), self._clean_snapshot_detail(detail, safe_id))
+                self._write_json(self.snapshot_path, snapshot)
+            return {"ok": True, "title": cleaned_title, "saved": True, "mode": "owner-mobile-library"}
 
     def save_video_text(self, work_id: int, text: str) -> dict[str, Any]:
         safe_id = self._safe_work_id(work_id)
@@ -396,6 +447,21 @@ class ModelMrClient:
             work_id = self._safe_work_id(source_work.get("id"))
             raw_detail = self._json(f"/api/videos/{work_id}", timeout=30, max_bytes=64 * 1024 * 1024)
             detail = self._clean_detail(raw_detail, work_id=work_id, live=False)
+            try:
+                raw_stock_mentions = self._json(
+                    f"/api/videos/{work_id}/stock-mentions?limit=20",
+                    timeout=30,
+                    max_bytes=4 * 1024 * 1024,
+                )
+            except ModelMrUnavailable:
+                raw_stock_mentions = {}
+            source_comments = raw_detail.get("comments") if isinstance(raw_detail.get("comments"), list) else []
+            comment_id_map = {
+                int(item.get("id") or 0): index
+                for index, item in enumerate(source_comments, start=1)
+                if isinstance(item, dict) and int(item.get("id") or 0) > 0
+            }
+            detail["stock_mentions"] = self._clean_stock_mentions(raw_stock_mentions, comment_id_map)
             media_file = self._match_media(raw_detail, media_lookup)
             if media_file:
                 detail["work"]["media_file"] = media_file
@@ -578,6 +644,7 @@ class ModelMrClient:
             "comment_total": max(len(comments), int(value.get("comment_total") or 0)),
             "capabilities": {
                 "video": bool(primary),
+                "save_title": True,
                 "save_video_text": True,
                 "transcribe_video": live,
                 "doubao_asr": live,
@@ -610,9 +677,13 @@ class ModelMrClient:
             },
             "transcripts": transcripts,
             "comments": comments,
+            "stock_mentions": cls._clean_stock_mentions(
+                value.get("stock_mentions") if isinstance(value.get("stock_mentions"), dict) else {},
+            ),
             "comment_total": max(len(comments), int(value.get("comment_total") or 0)),
             "capabilities": {
                 "video": bool(work["media_available"]),
+                "save_title": True,
                 "save_video_text": True,
                 "transcribe_video": bool(transcripts or video_text.get("text")),
                 "doubao_asr": doubao_asr_is_configured()
@@ -635,8 +706,12 @@ class ModelMrClient:
         raw = item.get("raw_json") if isinstance(item.get("raw_json"), dict) else {}
         kind = str(item.get("kind") or raw.get("kind") or "user_comment")
         reply_depth = max(0, min(int(item.get("reply_depth") or raw.get("reply_depth") or 0), 8))
-        thread_source = str(raw.get("thread_id") or raw.get("root_source_comment_id") or index)
-        thread_key = hashlib.sha256(thread_source.encode("utf-8", errors="ignore")).hexdigest()[:12]
+        preserved_thread_key = str(item.get("thread_key") or "").strip().lower()
+        if re.fullmatch(r"[a-f0-9]{12}", preserved_thread_key):
+            thread_key = preserved_thread_key
+        else:
+            thread_source = str(raw.get("thread_id") or raw.get("root_source_comment_id") or index)
+            thread_key = hashlib.sha256(thread_source.encode("utf-8", errors="ignore")).hexdigest()[:12]
         return {
             "id": index,
             "author": str(item.get("author") or "匿名用户")[:80],
@@ -647,7 +722,63 @@ class ModelMrClient:
             "kind": kind,
             "reply_depth": reply_depth,
             "thread_key": thread_key,
-            "author_liked": bool(raw.get("author_liked")),
+            "author_liked": bool(item.get("author_liked") or raw.get("author_liked")),
+        }
+
+    @staticmethod
+    def _clean_stock_mentions(
+        value: dict[str, Any],
+        comment_id_map: dict[int, int] | None = None,
+    ) -> dict[str, Any]:
+        items: list[dict[str, Any]] = []
+        for index, item in enumerate(value.get("items", []), start=1):
+            if not isinstance(item, dict):
+                continue
+            mapped_ids: list[int] = []
+            for raw_id in item.get("comment_ids", []) if isinstance(item.get("comment_ids"), list) else []:
+                try:
+                    comment_id = int(raw_id)
+                except (TypeError, ValueError):
+                    continue
+                mapped = comment_id_map.get(comment_id) if comment_id_map is not None else comment_id
+                if mapped and mapped not in mapped_ids:
+                    mapped_ids.append(mapped)
+            items.append(
+                {
+                    "rank": max(1, int(item.get("rank") or index)),
+                    "name": str(item.get("name") or "")[:80],
+                    "code": str(item.get("code") or "")[:12],
+                    "comment_count": max(0, int(item.get("comment_count") or 0)),
+                    "mention_count": max(0, int(item.get("mention_count") or 0)),
+                    "fan_comment_count": max(0, int(item.get("fan_comment_count") or 0)),
+                    "author_comment_count": max(0, int(item.get("author_comment_count") or 0)),
+                    "examples": [str(text)[:180] for text in item.get("examples", [])[:3] if str(text).strip()]
+                    if isinstance(item.get("examples"), list)
+                    else [],
+                    "comment_ids": mapped_ids[:200],
+                }
+            )
+        uncertain: list[dict[str, Any]] = []
+        for item in value.get("uncertain", []) if isinstance(value.get("uncertain"), list) else []:
+            if not isinstance(item, dict):
+                continue
+            uncertain.append(
+                {
+                    "text": str(item.get("text") or "")[:80],
+                    "comment_count": max(0, int(item.get("comment_count") or 0)),
+                    "candidates": [str(name)[:80] for name in item.get("candidates", [])[:8] if str(name).strip()]
+                    if isinstance(item.get("candidates"), list)
+                    else [],
+                }
+            )
+        return {
+            "total_comments": max(0, int(value.get("total_comments") or 0)),
+            "stock_count": max(len(items), int(value.get("stock_count") or 0)),
+            "items": items[:20],
+            "uncertain": uncertain[:20],
+            "method": "local-security-master" if items or value.get("method") == "local-security-master" else "",
+            "api_used": False,
+            "message": str(value.get("message") or "")[:240],
         }
 
     @staticmethod

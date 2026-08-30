@@ -419,12 +419,14 @@ class InstantAIHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
             return
 
-        model_work_match = re.fullmatch(r"/api/model-mr/works/(\d+)/(video-text|transcribe|doubao-transcribe)", path)
+        model_work_match = re.fullmatch(r"/api/model-mr/works/(\d+)/(title|video-text|transcribe|doubao-transcribe)", path)
         if model_work_match:
             work_id = int(model_work_match.group(1))
             action = model_work_match.group(2)
             try:
-                if action == "video-text":
+                if action == "title":
+                    self._json(MODEL_MR.save_title(work_id, str(payload.get("title") or "")))
+                elif action == "video-text":
                     self._json(MODEL_MR.save_video_text(work_id, str(payload.get("text") or "")))
                 else:
                     self._json(MODEL_MR.transcribe(work_id, "doubao" if action == "doubao-transcribe" else "local"))

@@ -124,6 +124,28 @@ export interface ModelMrComment {
   author_liked: boolean;
 }
 
+export interface ModelMrStockMentionItem {
+  rank: number;
+  name: string;
+  code: string;
+  comment_count: number;
+  mention_count: number;
+  fan_comment_count: number;
+  author_comment_count: number;
+  examples: string[];
+  comment_ids: number[];
+}
+
+export interface ModelMrStockMentionReport {
+  total_comments: number;
+  stock_count: number;
+  items: ModelMrStockMentionItem[];
+  uncertain: Array<{ text: string; comment_count: number; candidates: string[] }>;
+  method: string;
+  api_used: boolean;
+  message: string;
+}
+
 export interface ModelMrWorkDetail {
   version: number;
   work: ModelMrWork;
@@ -131,9 +153,11 @@ export interface ModelMrWorkDetail {
   interpretation: { text: string; updated_at: string };
   transcripts: ModelMrTranscript[];
   comments: ModelMrComment[];
+  stock_mentions: ModelMrStockMentionReport;
   comment_total: number;
   capabilities: {
     video: boolean;
+    save_title: boolean;
     save_video_text: boolean;
     transcribe_video: boolean;
     doubao_asr: boolean;

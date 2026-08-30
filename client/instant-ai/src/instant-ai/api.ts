@@ -36,6 +36,10 @@ export const instantApi = {
   modelMrStatus: () => request<ModelMrStatus>('/api/model-mr/status'),
   modelMrWorks: (limit = 40) => request<{ items: ModelMrWork[]; count: number }>(`/api/model-mr/works?limit=${limit}`),
   modelMrWork: (id: number) => request<ModelMrWorkDetail>(`/api/model-mr/works/${id}`),
+  saveModelMrTitle: (id: number, title: string) => request<{ ok: boolean; title: string; saved: boolean; mode: string }>(`/api/model-mr/works/${id}/title`, {
+    method: 'POST',
+    body: JSON.stringify({ title }),
+  }),
   saveModelMrVideoText: (id: number, text: string) => request<{ ok: boolean; text: string; saved: boolean; mode: string }>(`/api/model-mr/works/${id}/video-text`, {
     method: 'POST',
     body: JSON.stringify({ text }),
