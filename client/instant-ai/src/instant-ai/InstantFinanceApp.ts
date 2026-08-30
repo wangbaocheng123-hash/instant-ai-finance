@@ -72,7 +72,6 @@ export class InstantFinanceApp {
           <div class="brand-block"><span class="brand-mark">即</span><div><strong>即时 AI</strong><small>全球财经情报终端</small></div></div>
           <div class="header-status"><span class="status-dot"></span><b id="healthText">连接资讯数据核心</b><span id="lastUpdate">--:--</span></div>
           <div class="header-actions">
-            <label class="terminal-search"><span>⌕</span><input id="searchInput" autocomplete="off" placeholder="搜索公司、人物、商品或事件" /></label>
             <div class="header-tools" role="group" aria-label="客户端状态工具">
               <button type="button" class="translate-button" data-action="translate" title="把英文财经标题翻译成中文，并保留英文原题">汉化开启</button>
               <button type="button" data-action="sources" title="查看文字来源状态">来源</button>
@@ -91,24 +90,10 @@ export class InstantFinanceApp {
           <aside class="rail">
             <div class="rail-title">情报频道</div>
             <nav id="sectionNav"></nav>
-            <div class="rail-title">全球市场中心</div>
-            <div class="region-grid">
-              <button data-query="美国 华尔街">纽约</button><button data-query="中国 A股 港股">中国</button>
-              <button data-query="日本 韩国 新加坡 印度">亚洲</button><button data-query="欧洲 欧元 英国">欧洲</button>
-              <button data-query="中东 战争 制裁 原油">中东</button><button data-query="非洲 矿业 黄金 铜">资源国</button>
-            </div>
             <div class="translation-note"><b>标题汉化工具</b><small>中文译文在上 · 英文原题保留 · 译文安全缓存</small></div>
             <div class="local-only"><span></span><div><b>个人数据模式</b><small>无注册 · 无团队 · 无自动视频</small></div></div>
           </aside>
           <main class="workspace">
-            <section class="pulse-board">
-            <div><span>当前窗口</span><strong id="totalItems">0</strong></div>
-              <div><span>未读消息</span><strong id="unreadItems">0</strong></div>
-              <div><span>来源健康</span><strong id="sourceHealth">0/0</strong></div>
-              <div><span>重要提醒</span><strong id="alertCount">0</strong></div>
-              <div class="coverage"><span>覆盖范围</span><p>全球媒体 · 中国/亚洲 · 黄金矿业 · AI产业 · 宏观央行 · 地缘供应链</p></div>
-            </section>
-            <section id="searchResults" class="search-results hidden"></section>
             <section id="panelGrid" class="panel-grid" aria-live="polite" aria-label="当前频道内容"></section>
           </main>
         </div>
@@ -171,27 +156,14 @@ export class InstantFinanceApp {
         this.selectSection(navButton.dataset.target);
         return;
       }
-      const queryButton = target.closest<HTMLElement>('[data-query]');
-      if (queryButton?.dataset.query) {
-        const input = this.required<HTMLInputElement>('#searchInput');
-        input.value = queryButton.dataset.query;
-        void this.search(queryButton.dataset.query);
-        return;
-      }
       const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
       if (action === 'translate') void this.toggleTranslation();
       if (action === 'sources') void this.openSources();
       if (action === 'close-overlay') this.closeOverlay();
       if (action === 'save-item' && this.activeDetail) void this.toggleSave();
       if (action === 'reader-translation' && this.activeDetail) void this.openReaderTranslation();
-      if (action === 'clear-search') this.clearSearch();
     });
 
-    this.required<HTMLInputElement>('#searchInput').addEventListener('keydown', (event) => {
-      const input = event.currentTarget as HTMLInputElement;
-      if (event.key === 'Enter') void this.search(input.value.trim());
-      if (event.key === 'Escape') this.clearSearch();
-    });
     this.required('#overlay').addEventListener('click', (event) => {
       if (event.target === event.currentTarget) this.closeOverlay();
     });
@@ -200,7 +172,6 @@ export class InstantFinanceApp {
   private selectSection(sectionId: string, resetViewport = true): void {
     if (!this.panels.has(sectionId) && sectionId !== WATCH_SECTION.id) return;
     this.activeSectionId = sectionId;
-    this.clearSearch();
 
     this.root.querySelectorAll<HTMLElement>('[data-target]').forEach((button) => {
       const active = button.dataset.target === sectionId;
@@ -256,10 +227,6 @@ export class InstantFinanceApp {
   }
 
   private renderStatus(status: AppStatus): void {
-    this.required('#totalItems').textContent = String(status.items.total || 0);
-    this.required('#unreadItems').textContent = String(status.items.unread || 0);
-    this.required('#sourceHealth').textContent = `${Math.max(0, (status.sources.enabled || 0) - (status.sources.errors || 0))}/${status.sources.enabled || 0}`;
-    this.required('#alertCount').textContent = String(status.notifications.pending || 0);
     this.required('#healthText').textContent = status.collection.running ? '全球财经正在自动更新' : '自动实时采集运行中';
     this.required('#lastUpdate').textContent = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date());
     this.required('#collectionMode').textContent = status.collection.running ? '正在采集' : '自动实时采集';
@@ -313,81 +280,6 @@ export class InstantFinanceApp {
       });
     }
     return merged.slice(0, 16);
-  }
-
-  private async search(query: string): Promise<void> {
-    if (!query) return this.clearSearch();
-    const container = this.required('#searchResults');
-    container.classList.remove('hidden');
-    container.textContent = '正在搜索财经证据库…';
-    try {
-      const items = await instantApi.items('', query, 80);
-      if (this.translationEnabled) {
-        try {
-          const candidates = items.filter((item) => this.shouldTranslate(item)).slice(0, 12);
-          if (candidates.length > 0) {
-            const result = await instantApi.translate(candidates.map((item) => item.id), 8);
-            this.applyTranslations(items, result);
-            this.translationStatus = result.status;
-            this.updateTranslationButton();
-          }
-        } catch {
-          // Search remains usable with original titles when the optional translator is unavailable.
-        }
-      }
-      container.replaceChildren();
-      const header = document.createElement('header');
-      const title = document.createElement('h2');
-      title.textContent = `搜索：${query}`;
-      const count = document.createElement('span');
-      count.textContent = `${items.length} 条`;
-      const close = document.createElement('button');
-      close.type = 'button';
-      close.dataset.action = 'clear-search';
-      close.textContent = '关闭';
-      header.append(title, count, close);
-      container.append(header);
-      const list = document.createElement('div');
-      list.className = 'search-list';
-      items.forEach((item) => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.dataset.itemId = String(item.id);
-        const thumbnail = document.createElement('img');
-        thumbnail.className = 'search-thumbnail';
-        thumbnail.src = item.thumbnail_url;
-        thumbnail.alt = '';
-        thumbnail.loading = 'lazy';
-        thumbnail.decoding = 'async';
-        const copy = document.createElement('div');
-        copy.className = 'search-result-copy';
-        const meta = document.createElement('span');
-        meta.textContent = `${item.importance_score} · ${item.sources?.[0] || item.event_type} · ${formatFullTime(item.published_at || item.first_seen_at)}`;
-        const titleNode = document.createElement('b');
-        const displayTitle = this.displayTitle(item);
-        titleNode.textContent = displayTitle;
-        copy.append(meta, titleNode);
-        if (displayTitle !== item.title) {
-          const original = document.createElement('small');
-          original.className = 'search-original-title';
-          original.textContent = `英文原题：${item.title}`;
-          copy.append(original);
-        }
-        button.append(thumbnail, copy);
-        list.append(button);
-      });
-      container.append(list);
-      container.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } catch (error) {
-      container.textContent = error instanceof Error ? error.message : '搜索失败';
-    }
-  }
-
-  private clearSearch(): void {
-    this.required<HTMLInputElement>('#searchInput').value = '';
-    const container = this.required('#searchResults');
-    container.classList.add('hidden');
-    container.replaceChildren();
   }
 
   private async openItem(id: number): Promise<void> {
