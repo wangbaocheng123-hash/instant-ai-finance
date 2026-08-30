@@ -410,7 +410,7 @@ img { display: block; }
   font-size: 16px;
 }
 .login-form input:focus { border-color: #2463eb; box-shadow: 0 0 0 4px rgba(36, 99, 235, .12); }
-.login-form button {
+.login-form > button {
   min-height: 50px;
   margin-top: 3px;
   border: 0;
@@ -421,8 +421,25 @@ img { display: block; }
   font-size: 16px;
   font-weight: 700;
 }
-.login-form button:hover { background: #1c52c5; }
-.login-form button:disabled { cursor: not-allowed; opacity: .55; }
+.login-form > button:hover { background: #1c52c5; }
+.login-form > button:disabled { cursor: not-allowed; opacity: .55; }
+.login-password-control { position: relative; }
+.login-password-control input { padding-right: 92px; }
+.login-password-control button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  bottom: 6px;
+  min-width: 76px;
+  border: 0;
+  border-radius: 7px;
+  background: #eef3fb;
+  color: #2456a6;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+.login-password-control button:hover { background: #e1eafa; }
 .login-message { min-height: 22px; margin: -4px 0 0; color: #667085; font-size: 13px; line-height: 1.55; }
 .login-message.is-error { color: #b4232f; }
 .login-message.is-success { color: #147a4d; }
@@ -561,7 +578,7 @@ img { display: block; }
   .login-heading { margin-top: 46px; }
   .login-heading h1 { font-size: 28px; }
   .login-form input { height: 52px; }
-  .login-form button { min-height: 52px; }
+  .login-form > button { min-height: 52px; }
   .ticker > b { flex-basis: 76px; }
   .brand-block small { display: none; }
   .news-row { grid-template-columns: 88px minmax(0, 1fr); }

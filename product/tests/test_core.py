@@ -502,6 +502,8 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("model-mr", app)
         self.assertIn("主人账户登录", app)
         self.assertIn("30 天", app)
+        self.assertIn("显示密码", app)
+        self.assertIn('autocapitalize="none"', app)
         self.assertIn("watch-pipeline", app)
         self.assertIn("送达罗盘", app)
         self.assertIn("已发现", app)
@@ -524,7 +526,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.13.0", worker)
+        self.assertIn("instant-ai-shell-v0.13.1", worker)
 
 
 if __name__ == "__main__":

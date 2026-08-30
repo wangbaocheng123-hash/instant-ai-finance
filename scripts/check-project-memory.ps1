@@ -66,7 +66,7 @@ $requiredMemoryRules = @(
     @{ Path = 'PROJECT_CHARTER.md'; Text = ConvertFrom-Utf8Base64 '5Y2V5Li75Lq644CB5peg5rOo5YaM44CB5peg5aSa55So5oi35L2T57O7' },
     @{ Path = 'docs/decisions/ADR-0020-single-owner-thirty-day-session.md'; Text = ConvertFrom-Utf8Base64 '5LiN5bu656uL55So5oi36KGo' },
     @{ Path = 'docs/decisions/ADR-0021-model-mr-sanitized-module.md'; Text = ConvertFrom-Utf8Base64 '5LqR56uv5LiN5LiK5LygIGAuZW52YOOAgeWOn+Wni+aVsOaNruW6k+OAgeivhOiuuuOAgeinhumikeaIluaXpeW/lw==' },
-    @{ Path = 'STATUS.md'; Text = 'LOCAL_0_13_0_VERIFIED' },
+    @{ Path = 'STATUS.md'; Text = 'LOCAL_0_13_1_VERIFIED' },
     @{ Path = 'STATUS.md'; Text = 'https://grandpaamu.com/' },
     @{ Path = 'PROJECT_CHARTER.md'; Text = 'ADR-0010' },
     @{ Path = 'AGENTS.md'; Text = ConvertFrom-Utf8Base64 '5LiN5b6X5omT5byA5oiW5o6n5Yi2IENocm9tZeOAgUVkZ2XjgIHlhoXnva7mtY/op4jlmajmiJbpmL/ph4zkupHnvZHpobXmjqfliLblj7A=' },

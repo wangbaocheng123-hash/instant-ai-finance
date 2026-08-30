@@ -209,8 +209,8 @@ export class InstantFinanceApp {
             <p>仅限本系统所有者使用。登录成功后，本设备 30 天内无需再次登录。</p>
           </div>
           <form id="loginForm" class="login-form">
-            <label><span>账户</span><input id="loginUsername" name="username" autocomplete="username" maxlength="64" required /></label>
-            <label><span>密码</span><input id="loginPassword" name="password" type="password" autocomplete="current-password" required /></label>
+            <label><span>账户（已为你填好）</span><input id="loginUsername" name="username" value="amu" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" required /></label>
+            <label><span>密码</span><div class="login-password-control"><input id="loginPassword" name="password" type="password" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" required /><button id="loginPasswordToggle" type="button" aria-controls="loginPassword" aria-pressed="false">显示密码</button></div></label>
             <button id="loginSubmit" type="submit" ${setupRequired ? 'disabled' : ''}>登录即时 AI</button>
             <p id="loginMessage" class="login-message ${setupRequired || initialMessage ? 'is-error' : ''}" role="status">${
               setupRequired ? '主人账户尚未在服务器安全配置，系统已保持锁定。' : initialMessage
@@ -224,7 +224,16 @@ export class InstantFinanceApp {
       event.preventDefault();
       void this.login();
     });
-    this.required<HTMLInputElement>('#loginUsername').focus();
+    const passwordInput = this.required<HTMLInputElement>('#loginPassword');
+    const passwordToggle = this.required<HTMLButtonElement>('#loginPasswordToggle');
+    passwordToggle.addEventListener('click', () => {
+      const visible = passwordInput.type === 'text';
+      passwordInput.type = visible ? 'password' : 'text';
+      passwordToggle.textContent = visible ? '显示密码' : '隐藏密码';
+      passwordToggle.setAttribute('aria-pressed', String(!visible));
+      passwordInput.focus();
+    });
+    passwordInput.focus();
   }
 
   private async login(): Promise<void> {
@@ -251,7 +260,7 @@ export class InstantFinanceApp {
           : '账户或密码不正确。';
       button.disabled = false;
       button.textContent = '登录即时 AI';
-      this.required<HTMLInputElement>('#loginPassword').select();
+      this.required<HTMLInputElement>('#loginPassword').focus();
     }
   }
 
