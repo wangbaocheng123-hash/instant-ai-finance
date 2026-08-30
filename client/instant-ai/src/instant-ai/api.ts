@@ -1,6 +1,7 @@
 import type {
   AppStatus, AuthLoginResult, AuthStatus, FinanceItem, FinanceItemDetail, ModelMrChatConfig, ModelMrChatResult,
-  ModelMrStatus, ModelMrThoughtCategory, ModelMrWork, ReaderTranslationResult, SourceStatus,
+  ModelMrStatus, ModelMrThoughtCategory, ModelMrTranscriptionResult, ModelMrWork, ModelMrWorkDetail,
+  ReaderTranslationResult, SourceStatus,
   TranslationBatchResult, TranslationStatus,
   WatchEventsResponse,
 } from './types';
@@ -34,6 +35,15 @@ export const instantApi = {
   }),
   modelMrStatus: () => request<ModelMrStatus>('/api/model-mr/status'),
   modelMrWorks: (limit = 40) => request<{ items: ModelMrWork[]; count: number }>(`/api/model-mr/works?limit=${limit}`),
+  modelMrWork: (id: number) => request<ModelMrWorkDetail>(`/api/model-mr/works/${id}`),
+  saveModelMrVideoText: (id: number, text: string) => request<{ ok: boolean; text: string; saved: boolean; mode: string }>(`/api/model-mr/works/${id}/video-text`, {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  }),
+  transcribeModelMrWork: (id: number, engine: 'video' | 'doubao') => request<ModelMrTranscriptionResult>(`/api/model-mr/works/${id}/${engine === 'doubao' ? 'doubao-transcribe' : 'transcribe'}`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }),
   modelMrThoughts: () => request<{ categories: ModelMrThoughtCategory[]; count: number; purpose: string }>('/api/model-mr/thoughts'),
   modelMrChatConfig: () => request<ModelMrChatConfig>('/api/model-mr/chat/config'),
   modelMrChat: (messages: Array<{ role: 'user' | 'assistant'; content: string }>, model: string) => request<ModelMrChatResult>('/api/model-mr/chat', {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import re
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -136,6 +137,96 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
+    def _serve_private_file(self, target: Path, mime_type: str) -> None:
+        if not target.is_file():
+            self._not_found()
+            return
+        file_size = target.stat().st_size
+        start = 0
+        end = max(file_size - 1, 0)
+        status = HTTPStatus.OK
+        range_header = self.headers.get("Range", "").strip()
+        if range_header:
+            match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header)
+            if not match or file_size == 0:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{file_size}")
+                self.end_headers()
+                return
+            start_text, end_text = match.groups()
+            if not start_text and not end_text:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{file_size}")
+                self.end_headers()
+                return
+            if start_text:
+                start = int(start_text)
+                end = min(int(end_text), file_size - 1) if end_text else file_size - 1
+            else:
+                suffix_length = min(int(end_text), file_size)
+                start = file_size - suffix_length
+                end = file_size - 1
+            if start >= file_size or start > end:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{file_size}")
+                self.end_headers()
+                return
+            status = HTTPStatus.PARTIAL_CONTENT
+        content_length = max(end - start + 1, 0)
+        self.send_response(status)
+        self.send_header("Content-Type", mime_type)
+        self.send_header("Content-Length", str(content_length))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Cache-Control", "private, max-age=3600")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+        if status == HTTPStatus.PARTIAL_CONTENT:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+        self.end_headers()
+        try:
+            with target.open("rb") as stream:
+                stream.seek(start)
+                remaining = content_length
+                while remaining:
+                    chunk = stream.read(min(256 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            return
+
+    def _serve_model_mr_video(self, work_id: int) -> None:
+        local = MODEL_MR.video_path(work_id)
+        if local is not None:
+            self._serve_private_file(*local)
+            return
+        try:
+            upstream = MODEL_MR.open_live_video(work_id, self.headers.get("Range", ""))
+        except (ValueError, ModelMrUnavailable) as error:
+            self._json({"error": str(error)}, HTTPStatus.NOT_FOUND)
+            return
+        try:
+            status = int(getattr(upstream, "status", HTTPStatus.OK))
+            self.send_response(status)
+            for name in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
+                value = upstream.headers.get(name)
+                if value:
+                    self.send_header(name, value)
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+            self.end_headers()
+            while True:
+                chunk = upstream.read(256 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            return
+        finally:
+            upstream.close()
+
     def do_GET(self) -> None:
         if not self._host_allowed():
             self._json({"error": "invalid_host"}, HTTPStatus.BAD_REQUEST)
@@ -158,6 +249,13 @@ class InstantAIHandler(BaseHTTPRequestHandler):
                 self._json(MODEL_MR.works(limit=limit))
             except (ValueError, ModelMrUnavailable) as error:
                 self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
+        elif re.fullmatch(r"/api/model-mr/works/\d+/video", path):
+            self._serve_model_mr_video(int(path.split("/")[4]))
+        elif re.fullmatch(r"/api/model-mr/works/\d+", path):
+            try:
+                self._json(MODEL_MR.work_detail(int(path.rsplit("/", 1)[-1])))
+            except (ValueError, ModelMrUnavailable) as error:
+                self._json({"error": str(error)}, HTTPStatus.NOT_FOUND)
         elif path == "/api/model-mr/thoughts":
             try:
                 self._json(MODEL_MR.thoughts())
@@ -264,7 +362,12 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             return
         parsed = urlparse(self.path)
         path = parsed.path
-        length = min(int(self.headers.get("Content-Length", "0") or "0"), 64 * 1024)
+        content_length = int(self.headers.get("Content-Length", "0") or "0")
+        max_length = 768 * 1024 if re.fullmatch(r"/api/model-mr/works/\d+/video-text", path) else 64 * 1024
+        if content_length > max_length:
+            self._json({"error": "request_too_large"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            return
+        length = content_length
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
@@ -310,6 +413,21 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             try:
                 messages = payload.get("messages") if isinstance(payload.get("messages"), list) else []
                 self._json(MODEL_MR.chat(messages, str(payload.get("model") or "")))
+            except ValueError as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            except ModelMrUnavailable as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
+            return
+
+        model_work_match = re.fullmatch(r"/api/model-mr/works/(\d+)/(video-text|transcribe|doubao-transcribe)", path)
+        if model_work_match:
+            work_id = int(model_work_match.group(1))
+            action = model_work_match.group(2)
+            try:
+                if action == "video-text":
+                    self._json(MODEL_MR.save_video_text(work_id, str(payload.get("text") or "")))
+                else:
+                    self._json(MODEL_MR.transcribe(work_id, "doubao" if action == "doubao-transcribe" else "local"))
             except ValueError as error:
                 self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
             except ModelMrUnavailable as error:

@@ -82,10 +82,10 @@ export interface AuthLoginResult {
 export interface ModelMrStatus {
   available: boolean;
   module: string;
-  mode: 'independent-readonly';
+  mode: 'independent-owner' | 'owner-mobile-library' | 'sanitized-snapshot';
   message: string;
   features: string[];
-  counts?: { works: number; transcripts: number; analyses: number };
+  counts?: { works: number; media: number; transcripts: number; comments: number; analyses: number };
   chat_enabled?: boolean;
 }
 
@@ -97,7 +97,54 @@ export interface ModelMrWork {
   published_at: string;
   has_video_text: boolean;
   has_interpretation: boolean;
+  comment_count: number;
+  media_available: boolean;
+  video_url: string;
   keywords: string[];
+}
+
+export interface ModelMrTranscript {
+  text: string;
+  source: string;
+  language: string;
+  created_at: string;
+}
+
+export interface ModelMrComment {
+  id: number;
+  author: string;
+  text: string;
+  like_count: number;
+  reply_count: number;
+  published_at: string;
+  kind: string;
+  reply_depth: number;
+  thread_key: string;
+  author_liked: boolean;
+}
+
+export interface ModelMrWorkDetail {
+  version: number;
+  work: ModelMrWork;
+  video_text: { text: string; official: boolean; source: string; updated_at: string };
+  interpretation: { text: string; updated_at: string };
+  transcripts: ModelMrTranscript[];
+  comments: ModelMrComment[];
+  comment_total: number;
+  capabilities: {
+    video: boolean;
+    save_video_text: boolean;
+    transcribe_video: boolean;
+    doubao_asr: boolean;
+    comments: boolean;
+  };
+}
+
+export interface ModelMrTranscriptionResult {
+  text: string;
+  engine: string;
+  cached: boolean;
+  message: string;
 }
 
 export interface ModelMrThoughtCategory {

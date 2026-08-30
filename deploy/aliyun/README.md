@@ -26,7 +26,7 @@ Python 服务只监听云服务器自己的 `127.0.0.1:18765`。公网只通过�
 5. 只新增 `/opt/instant-ai`、`/var/lib/instant-ai`、`instant-ai.service`、独立 Caddy 站点与 systemd drop-in；原 Caddyfile 保持不变；
 6. 阿里云安全组只开放 HTTPS 所需端口，不开放 `18765`。
 
-## 主人账户与模型先生精简资料
+## 主人账户与模型先生主人资料库
 
 代码发布完成后，首次启用主人账户应在 Alibaba Cloud Client 的服务器终端以 root 运行：
 
@@ -36,7 +36,9 @@ sudo /opt/instant-ai/repository/deploy/aliyun/configure-instant-ai-owner.sh --ge
 
 密码在服务器端随机生成并只显示一次；配置文件只保存 `scrypt` 哈希和随机会话密钥。也可以省略 `--generate` 后交互输入两次密码，密码不会进入 Shell 历史。
 
-模型先生云端只读资料默认放在 `/var/lib/instant-ai/model-mr/public-snapshot.json`。该文件由 `scripts/export-model-mr-snapshot.py` 从本机回环服务导出，只包含作品和投资思路白名单字段；不得上传模型先生的 `.env`、数据库、视频、评论、粉丝资料或日志。精简快照属于运行数据，不进入 Git。
+模型先生主人资料库默认位于 `/var/lib/instant-ai/model-mr`：`public-snapshot.json` 为作品索引，`details/` 保存每条作品的正式原文、白名单转写和评论正文，`media/` 保存 360p H.264 + AAC 视频。它们都是 Git 外运行数据，所有 API 和视频分段请求必须先通过主人登录；Caddy 不得直接暴露 `media/`。
+
+本机使用 `scripts/export-model-mr-owner-library.py` 从回环服务生成索引与详情，媒体源为 `H:\模型先生智能体\模型视频_360p_有声`。首次同步传全部 388 个 MP4；后续按相对路径增量覆盖新增或变化文件，不重复提交 Git。不得上传模型先生的 `.env`、原始数据库、API 密钥、粉丝资料、本机绝对路径、原始 JSON、Cookie、日志或管理接口。完整边界见 ADR-0022。
 
 ## 统一更新
 
