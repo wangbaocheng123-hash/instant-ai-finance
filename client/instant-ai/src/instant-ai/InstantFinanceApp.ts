@@ -1,8 +1,9 @@
 import { instantApi } from './api';
 import { FinancePanel } from './FinancePanel';
+import { ModelMrPanel } from './ModelMrPanel';
 import { WatchEventsPanel } from './WatchEventsPanel';
 import type {
-  AppStatus, FinanceItem, FinanceItemDetail, ReaderTranslationResult, SectionDefinition, SourceStatus,
+  AppStatus, AuthStatus, FinanceItem, FinanceItemDetail, ReaderTranslationResult, SectionDefinition, SourceStatus,
   TranslationBatchResult, TranslationStatus,
 } from './types';
 
@@ -24,7 +25,10 @@ const SECTIONS: SectionDefinition[] = [
 const WATCH_SECTION: SectionDefinition = {
   id: 'watch-events', title: '重点事件关注', subtitle: 'TIME COMPASS · EVENT MONITOR', accent: '#e44758',
 };
-const NAV_SECTIONS = SECTIONS.flatMap((section) => section.id === 'ai' ? [section, WATCH_SECTION] : [section]);
+const MODEL_MR_SECTION: SectionDefinition = {
+  id: 'model-mr', title: '模型先生', subtitle: 'WORKS · INVESTMENT THOUGHTS · AI', accent: '#7c5ce7',
+};
+const NAV_SECTIONS = SECTIONS.flatMap((section) => section.id === 'ai' ? [section, WATCH_SECTION, MODEL_MR_SECTION] : [section]);
 
 const formatFullTime = (value: string | null): string => {
   if (!value) return '时间待确认';
@@ -37,6 +41,7 @@ export class InstantFinanceApp {
   private readonly root: HTMLElement;
   private readonly panels = new Map<string, FinancePanel>();
   private readonly watchPanel = new WatchEventsPanel();
+  private readonly modelMrPanel = new ModelMrPanel();
   private readonly sectionItems = new Map<string, FinanceItem[]>();
   private latestItems: FinanceItem[] = [];
   private instantHotItems: FinanceItem[] = [];
@@ -46,6 +51,8 @@ export class InstantFinanceApp {
   private translationInFlight = false;
   private translationStatus: TranslationStatus | null = null;
   private lastRefreshStartedAt = 0;
+  private authRequired = false;
+  private refreshTimer: number | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -57,12 +64,25 @@ export class InstantFinanceApp {
   }
 
   async start(): Promise<void> {
+    window.addEventListener('instant-ai-auth-required', () => void this.requireLogin());
+    let authStatus: AuthStatus;
+    try {
+      authStatus = await instantApi.authStatus();
+    } catch {
+      this.renderLogin(null, '即时 AI 服务暂时无法连接，请稍后重试。');
+      return;
+    }
+    this.authRequired = authStatus.required;
+    if (authStatus.required && !authStatus.authenticated) {
+      this.renderLogin(authStatus);
+      return;
+    }
     this.renderShell();
     this.createPanels();
     this.selectSection(this.activeSectionId, false);
     this.bindEvents();
     await this.refresh();
-    window.setInterval(() => void this.refresh(false), 60_000);
+    this.refreshTimer = window.setInterval(() => void this.refresh(false), 60_000);
   }
 
   private renderShell(): void {
@@ -73,8 +93,9 @@ export class InstantFinanceApp {
           <div class="header-status"><span class="status-dot"></span><b id="healthText">连接资讯数据核心</b><span id="lastUpdate">--:--</span></div>
           <div class="header-actions">
             <div class="header-tools" role="group" aria-label="客户端状态工具">
-              <button type="button" class="translate-button" data-action="translate" title="把英文财经标题翻译成中文，并保留英文原题">汉化开启</button>
-              <button type="button" data-action="sources" title="查看文字来源状态">来源</button>
+               <button type="button" class="translate-button" data-action="translate" title="把英文财经标题翻译成中文，并保留英文原题">汉化开启</button>
+               <button type="button" data-action="sources" title="查看文字来源状态">来源</button>
+               ${this.authRequired ? '<button type="button" data-action="logout" title="退出主人账户">退出</button>' : ''}
               <div class="auto-collection" title="客户端启动后立即更新一轮，之后每 5 分钟自动采集全球财经文字来源">
                 <span></span><b id="collectionMode">自动实时采集</b><small id="collectionCadence" class="visually-hidden">每 5 分钟持续更新</small>
               </div>
@@ -105,6 +126,7 @@ export class InstantFinanceApp {
         <button type="button" data-target="gold"><span>金</span><b>黄金</b></button>
         <button type="button" data-target="ai"><span>AI</span><b>科技</b></button>
         <button type="button" data-target="watch-events"><span>重</span><b>重点</b></button>
+        <button type="button" data-target="model-mr"><span>模</span><b>模型先生</b></button>
       </nav>
       <div id="overlay" class="overlay hidden"><article id="overlayCard" class="overlay-card"></article></div>
       <div id="toast" class="toast hidden"></div>`;
@@ -133,6 +155,7 @@ export class InstantFinanceApp {
     });
     this.watchPanel.setLoading();
     grid.append(this.watchPanel.element);
+    grid.append(this.modelMrPanel.element);
   }
 
   private bindEvents(): void {
@@ -159,6 +182,7 @@ export class InstantFinanceApp {
       const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
       if (action === 'translate') void this.toggleTranslation();
       if (action === 'sources') void this.openSources();
+      if (action === 'logout') void this.logout();
       if (action === 'close-overlay') this.closeOverlay();
       if (action === 'save-item' && this.activeDetail) void this.toggleSave();
       if (action === 'reader-translation' && this.activeDetail) void this.openReaderTranslation();
@@ -169,8 +193,89 @@ export class InstantFinanceApp {
     });
   }
 
+  private renderLogin(status: AuthStatus | null, initialMessage = ''): void {
+    if (this.refreshTimer !== null) {
+      window.clearInterval(this.refreshTimer);
+      this.refreshTimer = null;
+    }
+    const setupRequired = status?.setup_required === true;
+    this.root.innerHTML = `
+      <main class="login-shell">
+        <section class="login-card" aria-labelledby="loginTitle">
+          <div class="login-brand"><span>即</span><div><b>即时 AI</b><small>全球财经情报终端</small></div></div>
+          <div class="login-heading">
+            <span>OWNER ACCESS</span>
+            <h1 id="loginTitle">主人账户登录</h1>
+            <p>仅限本系统所有者使用。登录成功后，本设备 30 天内无需再次登录。</p>
+          </div>
+          <form id="loginForm" class="login-form">
+            <label><span>账户</span><input id="loginUsername" name="username" autocomplete="username" maxlength="64" required /></label>
+            <label><span>密码</span><input id="loginPassword" name="password" type="password" autocomplete="current-password" required /></label>
+            <button id="loginSubmit" type="submit" ${setupRequired ? 'disabled' : ''}>登录即时 AI</button>
+            <p id="loginMessage" class="login-message ${setupRequired || initialMessage ? 'is-error' : ''}" role="status">${
+              setupRequired ? '主人账户尚未在服务器安全配置，系统已保持锁定。' : initialMessage
+            }</p>
+          </form>
+          <div class="login-security"><span></span><p><b>单主人模式</b><small>无注册 · 无团队 · 30 天安全会话</small></p></div>
+        </section>
+      </main>`;
+    if (setupRequired) return;
+    this.required('#loginForm').addEventListener('submit', (event) => {
+      event.preventDefault();
+      void this.login();
+    });
+    this.required<HTMLInputElement>('#loginUsername').focus();
+  }
+
+  private async login(): Promise<void> {
+    const username = this.required<HTMLInputElement>('#loginUsername').value.trim();
+    const password = this.required<HTMLInputElement>('#loginPassword').value;
+    const button = this.required<HTMLButtonElement>('#loginSubmit');
+    const message = this.required('#loginMessage');
+    button.disabled = true;
+    button.textContent = '正在验证…';
+    message.className = 'login-message';
+    message.textContent = '';
+    try {
+      await instantApi.login(username, password);
+      message.className = 'login-message is-success';
+      message.textContent = '登录成功，正在进入即时 AI…';
+      window.location.reload();
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      message.className = 'login-message is-error';
+      message.textContent = code === 'too_many_attempts'
+        ? '尝试次数过多，请 15 分钟后再试。'
+        : code === 'auth_setup_required'
+          ? '主人账户尚未在服务器配置。'
+          : '账户或密码不正确。';
+      button.disabled = false;
+      button.textContent = '登录即时 AI';
+      this.required<HTMLInputElement>('#loginPassword').select();
+    }
+  }
+
+  private async logout(): Promise<void> {
+    try {
+      await instantApi.logout();
+    } finally {
+      await this.requireLogin();
+    }
+  }
+
+  private async requireLogin(): Promise<void> {
+    let status: AuthStatus | null = null;
+    try {
+      status = await instantApi.authStatus();
+    } catch {
+      // The login screen remains usable when the service comes back.
+    }
+    this.authRequired = status?.required ?? true;
+    this.renderLogin(status);
+  }
+
   private selectSection(sectionId: string, resetViewport = true): void {
-    if (!this.panels.has(sectionId) && sectionId !== WATCH_SECTION.id) return;
+    if (!this.panels.has(sectionId) && sectionId !== WATCH_SECTION.id && sectionId !== MODEL_MR_SECTION.id) return;
     this.activeSectionId = sectionId;
 
     this.root.querySelectorAll<HTMLElement>('[data-target]').forEach((button) => {
@@ -188,6 +293,9 @@ export class InstantFinanceApp {
     const watchActive = sectionId === WATCH_SECTION.id;
     this.watchPanel.element.hidden = !watchActive;
     this.watchPanel.element.classList.toggle('is-active', watchActive);
+    const modelMrActive = sectionId === MODEL_MR_SECTION.id;
+    this.modelMrPanel.element.hidden = !modelMrActive;
+    this.modelMrPanel.element.classList.toggle('is-active', modelMrActive);
 
     if (resetViewport) window.scrollTo({ top: 0, behavior: 'auto' });
   }
@@ -207,6 +315,11 @@ export class InstantFinanceApp {
         this.watchPanel.render(await instantApi.watchEvents());
       } catch (error) {
         this.watchPanel.setError(error instanceof Error ? error.message : '重点事件读取失败');
+      }
+      try {
+        await this.modelMrPanel.refresh();
+      } catch (error) {
+        this.modelMrPanel.setError(error instanceof Error ? error.message : '模型先生模块读取失败');
       }
       await Promise.all(SECTIONS.map(async (section) => {
         const panel = this.panels.get(section.id);

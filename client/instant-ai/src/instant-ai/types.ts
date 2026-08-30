@@ -63,6 +63,66 @@ export interface AppStatus {
   };
 }
 
+export interface AuthStatus {
+  required: boolean;
+  authenticated: boolean;
+  setup_required: boolean;
+  username: string;
+  expires_at: number | null;
+  session_days: number;
+}
+
+export interface AuthLoginResult {
+  ok: boolean;
+  required?: boolean;
+  username?: string;
+  expires_at?: number;
+}
+
+export interface ModelMrStatus {
+  available: boolean;
+  module: string;
+  mode: 'independent-readonly';
+  message: string;
+  features: string[];
+  counts?: { works: number; transcripts: number; analyses: number };
+  chat_enabled?: boolean;
+}
+
+export interface ModelMrWork {
+  id: number;
+  title: string;
+  description: string;
+  url: string;
+  published_at: string;
+  has_video_text: boolean;
+  has_interpretation: boolean;
+  keywords: string[];
+}
+
+export interface ModelMrThoughtCategory {
+  id: number;
+  name: string;
+  description: string;
+  level: number;
+  parent_id: number | null;
+  video_count: number;
+}
+
+export interface ModelMrChatConfig {
+  enabled: boolean;
+  default_model: string;
+  models: Array<{ id: string; label: string; description: string }>;
+  message: string;
+}
+
+export interface ModelMrChatResult {
+  answer: string;
+  model: string;
+  response_id?: string | null;
+  tools_used?: string[];
+}
+
 export interface TranslationStatus {
   enabled: boolean;
   provider: string;

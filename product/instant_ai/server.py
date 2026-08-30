@@ -6,10 +6,12 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Mapping
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import __version__
 from .ai_provider import provider_status, queue_analysis
+from .auth import AUTH
 from .database import create_backup, initialize, run_restore_drill, seed_sources
 from .paths import STATIC_ROOT, ensure_layout
 from .service import (
@@ -33,6 +35,7 @@ from .reader_translation import translate_reader_item
 from .translation import translate_items, translation_status
 from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 from .watch_events import list_watch_events, refresh_watch_events
+from .model_mr import MODEL_MR, ModelMrUnavailable
 
 
 HOST = "127.0.0.1"
@@ -79,7 +82,7 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         host = self.headers.get("Host", "").split(":", 1)[0].lower()
         return host in {"127.0.0.1", "localhost"}
 
-    def _json(self, payload: object, status: int = 200) -> None:
+    def _json(self, payload: object, status: int = 200, headers: Mapping[str, str] | None = None) -> None:
         body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -87,8 +90,28 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
+
+    def _secure_request(self) -> bool:
+        return self.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip().casefold() == "https"
+
+    def _client_key(self) -> str:
+        forwarded = self.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip()
+        return forwarded or self.client_address[0]
+
+    def _require_auth(self) -> bool:
+        if not AUTH.required:
+            return True
+        if AUTH.setup_required:
+            self._json({"error": "auth_setup_required"}, HTTPStatus.SERVICE_UNAVAILABLE)
+            return False
+        if AUTH.session(self.headers.get("Cookie", "")) is None:
+            self._json({"error": "authentication_required"}, HTTPStatus.UNAUTHORIZED)
+            return False
+        return True
 
     def _not_found(self) -> None:
         self._json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
@@ -122,7 +145,29 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
 
         if path == "/api/health":
-            self._json({"ok": True, "version": __version__})
+            self._json({"ok": True, "version": __version__, "auth_required": AUTH.required})
+        elif path == "/api/auth/status":
+            self._json(AUTH.status(self.headers.get("Cookie", "")))
+        elif path.startswith("/api/") and not self._require_auth():
+            return
+        elif path == "/api/model-mr/status":
+            self._json(MODEL_MR.status())
+        elif path == "/api/model-mr/works":
+            try:
+                limit = int(query.get("limit", ["40"])[0])
+                self._json(MODEL_MR.works(limit=limit))
+            except (ValueError, ModelMrUnavailable) as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
+        elif path == "/api/model-mr/thoughts":
+            try:
+                self._json(MODEL_MR.thoughts())
+            except ModelMrUnavailable as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
+        elif path == "/api/model-mr/chat/config":
+            try:
+                self._json(MODEL_MR.chat_config())
+            except ModelMrUnavailable as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
         elif path == "/api/status":
             self._json({**stats(), "collection": COLLECTION_STATE})
         elif path == "/api/items":
@@ -220,7 +265,56 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         length = min(int(self.headers.get("Content-Length", "0") or "0"), 64 * 1024)
-        payload = json.loads(self.rfile.read(length) or b"{}")
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except json.JSONDecodeError:
+            self._json({"error": "invalid_json"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        if path == "/api/auth/login":
+            if not AUTH.required:
+                self._json({"ok": True, "required": False})
+                return
+            if AUTH.setup_required:
+                self._json({"error": "auth_setup_required"}, HTTPStatus.SERVICE_UNAVAILABLE)
+                return
+            client_key = self._client_key()
+            if not AUTH.login_allowed(client_key):
+                self._json({"error": "too_many_attempts"}, HTTPStatus.TOO_MANY_REQUESTS)
+                return
+            username = str(payload.get("username") or "")
+            password = str(payload.get("password") or "")
+            if not AUTH.authenticate(username, password):
+                AUTH.record_failed_login(client_key)
+                self._json({"error": "invalid_credentials"}, HTTPStatus.UNAUTHORIZED)
+                return
+            AUTH.clear_failed_logins(client_key)
+            token, session = AUTH.create_session(username)
+            self._json(
+                {"ok": True, "username": session.username, "expires_at": session.expires_at},
+                headers={"Set-Cookie": AUTH.session_cookie(token, secure=self._secure_request())},
+            )
+            return
+
+        if path == "/api/auth/logout":
+            self._json(
+                {"ok": True},
+                headers={"Set-Cookie": AUTH.expired_cookie(secure=self._secure_request())},
+            )
+            return
+
+        if not self._require_auth():
+            return
+
+        if path == "/api/model-mr/chat":
+            try:
+                messages = payload.get("messages") if isinstance(payload.get("messages"), list) else []
+                self._json(MODEL_MR.chat(messages, str(payload.get("model") or "")))
+            except ValueError as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            except ModelMrUnavailable as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
+            return
 
         if path == "/api/backup":
             target = create_backup(force=True)

@@ -36,6 +36,8 @@ $requiredFiles = @(
     'docs/decisions/ADR-0017-official-event-channel-monitoring.md',
     'docs/decisions/ADR-0018-official-signal-compass-codex-handoff.md',
     'docs/decisions/ADR-0019-cloud-codex-publish-channel.md',
+    'docs/decisions/ADR-0020-single-owner-thirty-day-session.md',
+    'docs/decisions/ADR-0021-model-mr-sanitized-module.md',
     'deploy/aliyun/check-publish-channel.sh',
     'deploy/aliyun/install-codex-publish-channel.sh',
     'deploy/aliyun/compassdev-instant-ai-publish.sudoers',
@@ -60,11 +62,11 @@ $requiredLibraryDirs = @(
 
 $issues = [System.Collections.Generic.List[string]]::new()
 $requiredMemoryRules = @(
-    @{ Path = 'AGENTS.md'; Text = ConvertFrom-Utf8Base64 '5rC45LmF5oyJ5Y2V5py65Y2V55So5oi36K6+6K6h' },
-    @{ Path = 'PROJECT_CHARTER.md'; Text = ConvertFrom-Utf8Base64 '5Y2V5py644CB5Y2V55So5oi344CB5peg6LSm5oi35L2T57O7' },
-    @{ Path = 'docs/decisions/ADR-0003-single-user-no-account-layer.md'; Text = ConvertFrom-Utf8Base64 '5LiN5bu656uL55So5oi36KGo44CB55So5oi35YGP5aW95Lit5b+D5oiW5aSa56ef5oi35pWw5o2u6ZqU56a75oq96LGh' },
-    @{ Path = 'research/MVP_BLUEPRINT.md'; Text = ConvertFrom-Utf8Base64 '5LiN5Li66L+Z5Lqb6IO95Yqb6aKE55WZIHNjaGVtYS9BUEk=' },
-    @{ Path = 'STATUS.md'; Text = 'LOCAL_0_12_1_VERIFIED' },
+    @{ Path = 'AGENTS.md'; Text = ConvertFrom-Utf8Base64 'MzAg5aSp5a6J5YWo5Lya6K+d' },
+    @{ Path = 'PROJECT_CHARTER.md'; Text = ConvertFrom-Utf8Base64 '5Y2V5Li75Lq644CB5peg5rOo5YaM44CB5peg5aSa55So5oi35L2T57O7' },
+    @{ Path = 'docs/decisions/ADR-0020-single-owner-thirty-day-session.md'; Text = ConvertFrom-Utf8Base64 '5LiN5bu656uL55So5oi36KGo' },
+    @{ Path = 'docs/decisions/ADR-0021-model-mr-sanitized-module.md'; Text = ConvertFrom-Utf8Base64 '5LqR56uv5LiN5LiK5LygIGAuZW52YOOAgeWOn+Wni+aVsOaNruW6k+OAgeivhOiuuuOAgeinhumikeaIluaXpeW/lw==' },
+    @{ Path = 'STATUS.md'; Text = 'LOCAL_0_13_0_VERIFIED' },
     @{ Path = 'STATUS.md'; Text = 'https://grandpaamu.com/' },
     @{ Path = 'PROJECT_CHARTER.md'; Text = 'ADR-0010' },
     @{ Path = 'AGENTS.md'; Text = ConvertFrom-Utf8Base64 '5LiN5b6X5omT5byA5oiW5o6n5Yi2IENocm9tZeOAgUVkZ2XjgIHlhoXnva7mtY/op4jlmajmiJbpmL/ph4zkupHnvZHpobXmjqfliLblj7A=' },

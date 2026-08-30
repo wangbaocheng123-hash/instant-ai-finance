@@ -11,7 +11,7 @@
 - 独立 Caddy 配置：`/etc/caddy/instant-ai.caddy` 与 `/etc/caddy/Caddyfile.instant-ai`
 - Caddy 增量加载：`/etc/systemd/system/caddy.service.d/instant-ai.conf`（不改原 `Caddyfile`）
 
-Python 服务只监听云服务器自己的 `127.0.0.1:18765`。公网只通过现有 Caddy 的 HTTPS 进入，不增加注册、邮箱、账户或密码。该地址只允许展示公开、可重建、短周期财经消息；任何知道地址的人都可以访问。
+Python 服务只监听云服务器自己的 `127.0.0.1:18765`。公网只通过现有 Caddy 的 HTTPS 进入，不增加注册、邮箱或多用户体系；业务接口由一个主人账户和 30 天安全会话保护。主人凭据保存在 `/var/lib/instant-ai/auth.json`，不进入 Git。
 
 正式手机入口为 `https://grandpaamu.com/`；`https://www.grandpaamu.com/` 永久跳转到根域名。原 `sslip.io` 地址继续作为服务器公网 IP 不变时的应急入口。`grandpaamu.com` 的根记录与 `www` 记录都必须指向当前即时 AI 云服务器公网 IP。
 
@@ -25,6 +25,18 @@ Python 服务只监听云服务器自己的 `127.0.0.1:18765`。公网只通过�
 4. 不覆盖、删除、重命名该实例上的任何已有文件、站点、服务或 Nginx 配置；目标路径已存在时立即停止；
 5. 只新增 `/opt/instant-ai`、`/var/lib/instant-ai`、`instant-ai.service`、独立 Caddy 站点与 systemd drop-in；原 Caddyfile 保持不变；
 6. 阿里云安全组只开放 HTTPS 所需端口，不开放 `18765`。
+
+## 主人账户与模型先生精简资料
+
+代码发布完成后，首次启用主人账户应在 Alibaba Cloud Client 的服务器终端以 root 运行：
+
+```bash
+sudo /opt/instant-ai/repository/deploy/aliyun/configure-instant-ai-owner.sh --generate owner
+```
+
+密码在服务器端随机生成并只显示一次；配置文件只保存 `scrypt` 哈希和随机会话密钥。也可以省略 `--generate` 后交互输入两次密码，密码不会进入 Shell 历史。
+
+模型先生云端只读资料默认放在 `/var/lib/instant-ai/model-mr/public-snapshot.json`。该文件由 `scripts/export-model-mr-snapshot.py` 从本机回环服务导出，只包含作品和投资思路白名单字段；不得上传模型先生的 `.env`、数据库、视频、评论、粉丝资料或日志。精简快照属于运行数据，不进入 Git。
 
 ## 统一更新
 
@@ -48,7 +60,7 @@ sudo -n /usr/local/sbin/instant-ai-publish
 sudo /opt/instant-ai/repository/deploy/aliyun/update-instant-ai.sh
 ```
 
-发布器是底层脚本的 root 持有副本，只接受 fast-forward 更新；云端若有其他 Codex 尚未提交的修改会立即停止，避免覆盖。它在服务器运行 21 项 Python 测试，随后只重启 `instant-ai.service` 并验证回环健康。业务数据目录 `/var/lib/instant-ai` 不属于 Git，也不会随代码更新删除或上传。
+发布器是底层脚本的 root 持有副本，只接受 fast-forward 更新；云端若有其他 Codex 尚未提交的修改会立即停止，避免覆盖。它在服务器运行项目 Python 测试，随后只重启 `instant-ai.service` 并验证回环健康。业务数据目录 `/var/lib/instant-ai` 不属于 Git，也不会随代码更新删除或上传。
 
 首次建立或需要修复发布通道时，由 root 在目标服务器运行一次：
 

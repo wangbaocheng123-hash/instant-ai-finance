@@ -11,6 +11,8 @@ WorkingDirectory=/opt/instant-ai/repository/product
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=/opt/instant-ai/repository/product
 Environment=INSTANT_AI_LIBRARY_ROOT=/var/lib/instant-ai
+Environment=INSTANT_AI_AUTH_REQUIRED=1
+Environment=INSTANT_AI_AUTH_FILE=/var/lib/instant-ai/auth.json
 ExecStart=/usr/bin/python3 -c "from instant_ai.server import run_server; run_server()"
 Restart=on-failure
 RestartSec=5
