@@ -10,6 +10,7 @@
 - 新增服务器端随机生成一次性主人密码的安全配置脚本、systemd 认证 drop-in 和模型先生精简快照导出工具。TypeScript/Vite 0.13.0 生产构建和 30 项 Python 测试通过；390×844 登录页、登录后主界面、模型先生作品页和七栏底部导航实测通过。
 - 用户明确授权本次只通过 SSH 更新 `47.236.175.118` 的即时 AI，不动时变罗盘或其他系统。既有受限发布通道返回 `CODEX_CLOUD_PUBLISH_READY`，功能提交 `8416427` 快进生产仓库，服务器 30 项测试全部通过，回环与正式域名均返回 0.13.0。
 - 生产端启用主人账户 `owner` 和 30 天会话。正式域名实测：未登录模型 API 401、登录 200，Cookie 为 2,592,000 秒并含 HttpOnly/SameSite=Strict/Secure；主人凭据只存 Git 外 `0600` 文件。配置脚本首次重启后立即检查遇到正常启动延迟，随后确认服务 active，并把脚本改为最多等待 30 秒后再验收。
+- 用户随后要求简化登录信息；生产主人账户改为 `amu`，密码继续只通过隐藏输入写入 Git 外哈希配置，不记录明文。旧账户与旧会话立即失效；正式域名实测旧账户 401、新账户 200，30 天安全 Cookie 和模型先生 398 条作品继续正常。
 - 117,320 字节模型先生精简快照经 SHA-256 校验后部署到 Git 外 `/var/lib/instant-ai/model-mr/public-snapshot.json`，属主 `instantai:instantai`、权限 `0640`。生产网关实测 `sanitized-snapshot`、398 条作品、61 条投资思路；智能问答因未安全配置模型服务保持关闭。时变罗盘未修改。
 - 按用户要求完成云端发布链路审计：当前 Codex 以 `compassdev` 运行，服务器早已通过 root 持有的 `/usr/local/sbin/instant-ai-publish` 和精确 NOPASSWD sudoers 提供最小权限发布；发布器与生产更新脚本 SHA-256 一致。历史 Codex 会话同时确认即时 AI 和时变罗盘此前均多次使用各自独立发布器自动发布，五项相关服务审计时全部 active。
 - 确认本次要求用户手动粘贴的根因不是权限丢失，而是即时 AI 项目说明遗漏既有发布器，并用 `sudo -n true` 错误测试通用 root。新增 ADR-0019、`check-publish-channel.sh`、sudoers 模板和一次性恢复安装器；永久规则现在区分阿里云控制面与服务器内应用发布，并固定在明确发布授权后由 Codex 执行 `sudo -n /usr/local/sbin/instant-ai-publish`，不再让用户重复操作。
