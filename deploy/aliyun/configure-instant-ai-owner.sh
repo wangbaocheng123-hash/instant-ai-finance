@@ -42,6 +42,12 @@ chmod 0600 "${AUTH_FILE}"
 systemctl daemon-reload
 systemctl restart instant-ai.service
 systemctl is-active --quiet instant-ai.service
+for _ in {1..30}; do
+  if curl --fail --silent http://127.0.0.1:18765/api/health >/dev/null; then
+    break
+  fi
+  sleep 1
+done
 curl --fail --silent --show-error http://127.0.0.1:18765/api/health
 echo
 echo "即时 AI 主人账户已启用；密码未写入 Git 或终端历史。"
