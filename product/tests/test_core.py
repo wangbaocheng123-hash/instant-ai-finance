@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from instant_ai import thumbnails
-from instant_ai.collectors import parse_feed
+from instant_ai.collectors import Source, parse_feed, parse_wechat_public_index
 from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources, transaction, utc_now
 from instant_ai.launch import client_window_bounds, mobile_preview_window_bounds
 from instant_ai.paths import STATIC_ROOT
@@ -40,6 +40,16 @@ RSS_SAMPLE = b"""<?xml version="1.0" encoding="UTF-8"?>
 <guid>item-1</guid><description>Copper and gold production increased.</description>
 <media:content medium="image" type="image/jpeg" url="https://images.example.com/copper.jpg" />
 <pubDate>Sun, 23 Aug 2026 08:00:00 GMT</pubDate></item></channel></rss>"""
+
+WECHAT_PUBLIC_INDEX_SAMPLE = """<!doctype html><html><head><title>财联社 - 微信公众号</title></head><body>
+<div class="ae"><a class="ae-container-2" href="/articles/article-one">
+  <span>^__^</span><span>•</span><span>8 / 30</span>
+  <div><span class="pretty">A股政策出现重要变化</span></div>
+</a></div>
+<div class="ae"><a href="/articles/ignored">普通链接</a></div>
+<div class="ae"><a class="ae-container-2" href="/articles/article-two">
+  <span>8 / 29</span><span class="pretty">上市公司发布半年报</span>
+</a></div></body></html>""".encode("utf-8")
 
 
 class RuleTests(unittest.TestCase):
@@ -110,8 +120,69 @@ class FeedTests(unittest.TestCase):
         entry = parse_feed(body)[0]
         self.assertEqual(entry.published_at, "2017-12-25T00:00:00+00:00")
 
+    def test_wechat_public_index_is_title_only_and_dated(self) -> None:
+        source = Source(
+            1,
+            "cls-wechat-public-index",
+            "财联社公众号公开文章发现",
+            "wechat_public_index",
+            "https://qnmlgb.tech/authors/example",
+            2,
+            ["中国财经"],
+            {"expected_account": "财联社", "max_entries": 30},
+        )
+        entries = parse_wechat_public_index(
+            source,
+            WECHAT_PUBLIC_INDEX_SAMPLE,
+            now=datetime(2026, 8, 31, 0, 0, tzinfo=UTC),
+        )
+        self.assertEqual([entry.title for entry in entries], ["A股政策出现重要变化", "上市公司发布半年报"])
+        self.assertEqual(entries[0].source_item_id, "article-one")
+        self.assertEqual(entries[0].url, "https://qnmlgb.tech/articles/article-one")
+        self.assertEqual(entries[0].summary, "")
+        self.assertEqual(entries[0].published_at, "2026-08-29T16:00:00+00:00")
+
+    def test_wechat_public_index_rejects_an_account_mismatch(self) -> None:
+        source = Source(
+            1,
+            "cls-wechat-public-index",
+            "财联社公众号公开文章发现",
+            "wechat_public_index",
+            "https://qnmlgb.tech/authors/example",
+            2,
+            ["中国财经"],
+            {"expected_account": "另一个公众号"},
+        )
+        with self.assertRaisesRegex(ValueError, "account mismatch"):
+            parse_wechat_public_index(source, WECHAT_PUBLIC_INDEX_SAMPLE)
+
+    def test_wechat_public_index_rejects_an_identifier_mismatch(self) -> None:
+        source = Source(
+            1,
+            "cls-wechat-public-index",
+            "财联社公众号公开文章发现",
+            "wechat_public_index",
+            "https://qnmlgb.tech/authors/example",
+            2,
+            ["中国财经"],
+            {"expected_account": "财联社", "wechat_biz": "wrong-biz"},
+        )
+        with self.assertRaisesRegex(ValueError, "identifier mismatch"):
+            parse_wechat_public_index(source, WECHAT_PUBLIC_INDEX_SAMPLE)
+
 
 class DatabaseTests(unittest.TestCase):
+    def test_cls_sources_are_scoped_to_china_and_title_metadata(self) -> None:
+        sources = {source["key"]: source for source in DEFAULT_SOURCES}
+        website = sources["cls-official-news"]
+        wechat = sources["cls-wechat-public-index"]
+        self.assertEqual(website["topic_hints"], ["中国财经"])
+        self.assertEqual(wechat["topic_hints"], ["中国财经"])
+        self.assertTrue(website["config"]["title_link_only"])
+        self.assertTrue(wechat["config"]["title_link_only"])
+        self.assertEqual(wechat["config"]["wechat_id"], "cailianpress")
+        self.assertLess(wechat["trust_level"], website["trust_level"])
+
     def test_schema_and_source_seed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "test.db"

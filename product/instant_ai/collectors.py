@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -289,6 +289,125 @@ def parse_html_links(source: Source, body: bytes) -> list[Entry]:
     return entries
 
 
+class WechatPublicIndexParser(HTMLParser):
+    """Read title/date/link metadata from a public account index page.
+
+    This intentionally does not fetch or copy WeChat article bodies.  The
+    adapter is a discovery fallback for accounts that do not expose an
+    official public feed.
+    """
+
+    def __init__(self, base_url: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.base_url = base_url
+        self.entries: list[tuple[str, str, str]] = []
+        self.page_text: list[str] = []
+        self._href: str | None = None
+        self._text: list[str] = []
+        self._title_text: list[str] = []
+        self._in_pretty_title = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        classes = set((values.get("class") or "").split())
+        if tag.lower() == "a" and "ae-container-2" in classes:
+            self._href = values.get("href")
+            self._text = []
+            self._title_text = []
+            self._in_pretty_title = False
+        elif self._href is not None and tag.lower() == "span" and "pretty" in classes:
+            self._in_pretty_title = True
+
+    def handle_data(self, data: str) -> None:
+        self.page_text.append(data)
+        if self._href is None:
+            return
+        self._text.append(data)
+        if self._in_pretty_title:
+            self._title_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        lowered = tag.lower()
+        if lowered == "span" and self._in_pretty_title:
+            self._in_pretty_title = False
+        if lowered == "a" and self._href is not None:
+            link = urljoin(self.base_url, self._href)
+            title = clean_text(" ".join(self._title_text))
+            date_hint = clean_text(" ".join(self._text))
+            self.entries.append((link, title, date_hint))
+            self._href = None
+            self._text = []
+            self._title_text = []
+            self._in_pretty_title = False
+
+
+_MONTH_DAY_HINT = re.compile(r"(?<!\d)(?P<month>0?[1-9]|1[0-2])\s*/\s*(?P<day>0?[1-9]|[12]\d|3[01])(?!\d)")
+_CHINA_TIMEZONE = timezone(timedelta(hours=8))
+
+
+def _parse_month_day_hint(value: str, now: datetime | None = None) -> str | None:
+    match = _MONTH_DAY_HINT.search(value)
+    if not match:
+        return None
+    current = (now or datetime.now(UTC)).astimezone(_CHINA_TIMEZONE)
+    try:
+        candidate = datetime(
+            current.year,
+            int(match.group("month")),
+            int(match.group("day")),
+            tzinfo=_CHINA_TIMEZONE,
+        )
+        if candidate > current + timedelta(days=1):
+            candidate = candidate.replace(year=current.year - 1)
+    except ValueError:
+        return None
+    return candidate.astimezone(UTC).replace(microsecond=0).isoformat()
+
+
+def parse_wechat_public_index(
+    source: Source,
+    body: bytes,
+    *,
+    now: datetime | None = None,
+) -> list[Entry]:
+    """Parse a no-login public index as low-trust, title-only discovery."""
+
+    parser = WechatPublicIndexParser(source.url)
+    document = _decode_html(body)
+    parser.feed(document)
+    expected_account = clean_text(str(source.config.get("expected_account", "")))
+    expected_biz = str(source.config.get("wechat_biz", "")).strip()
+    page_text = clean_text(" ".join(parser.page_text))
+    if expected_account and expected_account not in page_text:
+        raise ValueError(f"Public index account mismatch: expected {expected_account}")
+    if expected_biz and expected_biz not in document:
+        raise ValueError("Public index account identifier mismatch")
+
+    max_entries = int(source.config.get("max_entries", 30))
+    seen: set[str] = set()
+    entries: list[Entry] = []
+    for link, title, date_hint in parser.entries:
+        normalized = normalized_url(link)
+        published = _parse_month_day_hint(date_hint, now)
+        if not title or not published or normalized in seen:
+            continue
+        seen.add(normalized)
+        entries.append(
+            Entry(
+                normalized.rsplit("/", 1)[-1],
+                title[:500],
+                normalized,
+                "",
+                published,
+            )
+        )
+        if len(entries) >= max_entries:
+            break
+    if not entries:
+        raise ValueError("Public account index returned no dated article entries")
+    return entries
+
+
 def collect_source(source: Source) -> tuple[FetchResult, list[Entry], str, str]:
     result = fetch(source)
     if result.status == 304:
@@ -298,6 +417,20 @@ def collect_source(source: Source) -> tuple[FetchResult, list[Entry], str, str]:
         entries = parse_feed(result.body, int(source.config.get("max_entries", 50)))
     elif source.kind == "html_links":
         entries = parse_html_links(source, result.body)
+    elif source.kind == "wechat_public_index":
+        entries = parse_wechat_public_index(source, result.body)
     else:
         raise ValueError(f"Unsupported source kind: {source.kind}")
+    if source.config.get("title_link_only"):
+        entries = [
+            Entry(
+                entry.source_item_id,
+                entry.title,
+                entry.url,
+                "",
+                entry.published_at,
+                entry.image_url,
+            )
+            for entry in entries
+        ]
     return result, entries, digest, raw_path

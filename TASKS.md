@@ -25,6 +25,7 @@
 | P1-DESKTOP-01 | DONE | 建立桌面启动入口 | `C:\Users\36590\Desktop\即时 AI.lnk`，Edge 应用壳 |
 | P1-VERIFY-01 | DONE | 验证核心、接口、数据位置和备份 | `product/tests/`、`scripts/verify-instant-ai.ps1`、SQLite 完整性检查 |
 | P2-SOURCE-02 | DONE | 扩展全球财经文字来源与五分钟采集 | 截至第 37 次正式采集：20 来源健康、947 条、来源错误 0；覆盖全球/华尔街/中国/亚洲/黄金矿业/AI/地缘/融资/财经知识 |
+| P2-SOURCE-03 | IN_PROGRESS | 把财联社官网和财联社公众号公开文章加入“中国财经” | ADR-0027；0.16.0 合并候选新增两个可独立审计/停用的来源，官网只取标题/日期/链接，公众号经无登录公开索引作低可信发现；隔离采集 106 条、保留 105 条、错误 0，78 项 Python、3 项前端契约、Vite 构建和 npm 零漏洞检查通过；已获得明确“正式发布”授权，正在推送 GitHub 并部署阿里云 |
 | P2-UI-02 | DONE | 以许可证隔离的 World Monitor 分叉建立纯文字财经终端 | 分叉提交 `9682a944c9c45c5a081feee397db4f8a77be9203`；生产构建及本地浏览器频道、搜索、详情、无媒体元素验证通过 |
 | P2-I18N-01 | DONE | 在桌面客户端内置英文标题汉化与本机缓存 | 分叉提交 `867a4acbfbbce3b587a4ed5eb61fc062289e7fbb`；SQLite schema 3、MyMemory 安全额度、中英双标题、开关和重复请求缓存经 API/浏览器验证 |
 | P2-I18N-02 | DONE | 增加新闻详情按需中文阅读与短期译文缓存 | ADR-0013；0.9.0；公开正文有界提取、Feed 摘要回退、共享安全额度、SQLite schema 6 级联缓存；18 项测试、生产构建和 390×844 手机界面验证通过 |
@@ -38,7 +39,7 @@
 | P2-BLOGGER-01 | DONE | 建立北京采集中心到新加坡博主资料域的签名清单接收底座 | ADR-0024；`blogger-transfer/v1` 严格 1 MiB 契约、HMAC-SHA256、五分钟时间窗、nonce 防重放、独立 `/var/lib/instant-ai/blogger-agent/database/blogger_ingest.db`、传输幂等及作品修订乱序保护；第一阶段无 HTTP、媒体、ASR、真实网络或付费调用，后续由 P2-BLOGGER-02 补齐传输闭环 |
 | P2-BLOGGER-02 | DONE | 完成新加坡 manifest、media、comments 与 complete 机器传输闭环 | ADR-0025；主人认证前独立分流且 HMAC 不获 `/api` 权限；精确 Content-Length、禁 query/chunked、同文件系统流式 staging、媒体/评论双层校验、fsync + 原子替换、幂等/冲突保护；schema 3 artifact 与唯一 `awaiting_asr_approval` 队列；不调用 ASR/ffmpeg/模型，不读取真实凭据或数据，未发布生产 |
 | P2-BLOGGER-03 | DONE | 增加主人登录后的只读博主资料查询层与手机面板 | SQLite `mode=ro` 四个主人 GET、最高 current 修订与字段白名单；手机端独立第八入口及博主→作品→详情三级页面，显式返回 transfer/processing status，不从传输状态推断 ASR、不提供自动付费动作；0.16.0 本地候选 74 项 Python、3 项前端契约及 Vite 构建通过，未发布生产 |
-| P3-BLOGGER-01 | IN_PROGRESS | 正式部署北京到新加坡博主资料通道 | 新加坡代码只进入即时 AI 现有仓库，入口位于模型先生右侧；北京保留原模型下载器并旁路新增独立采集服务。先完成即时 AI 与北京采集源码检查点；待所有者明确“正式发布”后使用既有受限发布器部署，并在两端 Git 外 root `0600` 配置对等身份做合成资料联调；真实 ASR/AI 继续单独批准 |
+| P3-BLOGGER-01 | IN_PROGRESS | 正式部署北京到新加坡博主资料通道 | 新加坡代码只进入即时 AI 现有仓库，入口位于模型先生右侧；北京保留原模型下载器并旁路新增独立采集服务。0.16.0 应用代码已获得“正式发布”授权并进入部署流程；两端 Git 外 root `0600` 对等身份、合成资料联调和真实资料传输仍需单独配置，真实 ASR/AI 继续单独批准 |
 | P2-MODEL-01 | DONE | 清理并把模型先生手机版作为独立模块接入即时 AI | ADR-0021；原工程与 4.37GB 视频保持不变；即时 AI 只展示作品、投资思路和受控问答，字段白名单排除评论/粉丝/管理/路径/密钥/数据库；117,320 字节精简快照含 398 条作品和 61 条思路；模型先生位于重点右侧，390×844 验收通过 |
 | P2-MODEL-03 | DONE | 生成模型先生 360p 本地视频备份（保留原片） | 以 `scripts/reencode-model-mr-videos.py` 全量处理 `H:\模型先生智能体`，输出到统一目录 `H:\模型先生智能体\模型视频_360p`，成功 388 个，失败 0、跳过 0；生成清单 `model_mr_360p_manifest_20260830.json`；原片未删除 |
 | P2-MODEL-04 | DONE | 修复模型先生视频音轨并提高压缩率（保留原片） | `scripts/reencode-model-mr-videos-h264.py` 使用 H.264 + AAC、最大 640×360、固定 300k/96k 码率生成 `H:\模型先生智能体\模型视频_360p_有声`；388 个输出、0 失败、0 字节文件，实际约 1.335GB；样本音轨映射验证通过，原片未删除；清单 `model_mr_360p_h264_audio_manifest_20260830.json` |
