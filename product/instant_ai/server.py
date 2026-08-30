@@ -94,7 +94,8 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _secure_request(self) -> bool:
         return self.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip().casefold() == "https"
@@ -135,7 +136,8 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
         self.end_headers()
-        self.wfile.write(content)
+        if self.command != "HEAD":
+            self.wfile.write(content)
 
     def _serve_private_file(self, target: Path, mime_type: str) -> None:
         if not target.is_file():
@@ -183,6 +185,8 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         if status == HTTPStatus.PARTIAL_CONTENT:
             self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
         self.end_headers()
+        if self.command == "HEAD":
+            return
         try:
             with target.open("rb") as stream:
                 stream.seek(start)
@@ -217,15 +221,34 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
             self.end_headers()
-            while True:
-                chunk = upstream.read(256 * 1024)
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
+            if self.command != "HEAD":
+                while True:
+                    chunk = upstream.read(256 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
         except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
             return
         finally:
             upstream.close()
+
+    def do_HEAD(self) -> None:
+        if not self._host_allowed():
+            self._json({"error": "invalid_host"}, HTTPStatus.BAD_REQUEST)
+            return
+        path = urlparse(self.path).path
+        if path == "/api/health":
+            self._json({"ok": True, "version": __version__, "auth_required": AUTH.required})
+        elif path == "/api/auth/status":
+            self._json(AUTH.status(self.headers.get("Cookie", "")))
+        elif path.startswith("/api/") and not self._require_auth():
+            return
+        elif re.fullmatch(r"/api/model-mr/works/\d+/video", path):
+            self._serve_model_mr_video(int(path.split("/")[4]))
+        elif path.startswith("/api/"):
+            self._not_found()
+        else:
+            self._serve_static(path)
 
     def do_GET(self) -> None:
         if not self._host_allowed():

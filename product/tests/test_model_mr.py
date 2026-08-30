@@ -206,6 +206,25 @@ class ModelMrGatewayTests(unittest.TestCase):
                     self.assertEqual(response.status, 206)
                     self.assertEqual(response.getheader("Content-Range"), "bytes 1-3/10")
                     self.assertEqual(body, b"ide")
+                    connection.request("HEAD", "/api/model-mr/works/9/video")
+                    head = connection.getresponse()
+                    head_body = head.read()
+                    self.assertEqual(head.status, 200)
+                    self.assertEqual(head.getheader("Content-Type"), "video/mp4")
+                    self.assertEqual(head.getheader("Content-Length"), "10")
+                    self.assertEqual(head.getheader("Accept-Ranges"), "bytes")
+                    self.assertEqual(head_body, b"")
+                    connection.request(
+                        "HEAD",
+                        "/api/model-mr/works/9/video",
+                        headers={"Range": "bytes=0-1"},
+                    )
+                    range_head = connection.getresponse()
+                    range_head_body = range_head.read()
+                    self.assertEqual(range_head.status, 206)
+                    self.assertEqual(range_head.getheader("Content-Range"), "bytes 0-1/10")
+                    self.assertEqual(range_head.getheader("Content-Length"), "2")
+                    self.assertEqual(range_head_body, b"")
                 finally:
                     server.shutdown()
                     server.server_close()
