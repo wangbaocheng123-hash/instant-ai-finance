@@ -35,6 +35,10 @@ $requiredFiles = @(
     'docs/decisions/ADR-0016-time-compass-watch-events.md',
     'docs/decisions/ADR-0017-official-event-channel-monitoring.md',
     'docs/decisions/ADR-0018-official-signal-compass-codex-handoff.md',
+    'docs/decisions/ADR-0019-cloud-codex-publish-channel.md',
+    'deploy/aliyun/check-publish-channel.sh',
+    'deploy/aliyun/install-codex-publish-channel.sh',
+    'deploy/aliyun/compassdev-instant-ai-publish.sudoers',
     'research/REUSE_DECISION.md',
     'research/MVP_BLUEPRINT.md',
     'research/WORLDMONITOR_FINANCE_FORK.md',
@@ -63,7 +67,9 @@ $requiredMemoryRules = @(
     @{ Path = 'STATUS.md'; Text = 'LOCAL_0_12_1_VERIFIED' },
     @{ Path = 'STATUS.md'; Text = 'https://grandpaamu.com/' },
     @{ Path = 'PROJECT_CHARTER.md'; Text = 'ADR-0010' },
-    @{ Path = 'AGENTS.md'; Text = ConvertFrom-Utf8Base64 '5LiN5b6X5omT5byA5oiW5o6n5Yi2IENocm9tZeOAgUVkZ2XjgIHlhoXnva7mtY/op4jlmajmiJbpmL/ph4zkupHnvZHpobXmjqfliLblj7A=' }
+    @{ Path = 'AGENTS.md'; Text = ConvertFrom-Utf8Base64 '5LiN5b6X5omT5byA5oiW5o6n5Yi2IENocm9tZeOAgUVkZ2XjgIHlhoXnva7mtY/op4jlmajmiJbpmL/ph4zkupHnvZHpobXmjqfliLblj7A=' },
+    @{ Path = 'AGENTS.md'; Text = 'sudo -n /usr/local/sbin/instant-ai-publish' },
+    @{ Path = 'STATUS.md'; Text = 'CODEX_CLOUD_PUBLISH_READY' }
 )
 
 foreach ($relativePath in $requiredFiles) {

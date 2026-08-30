@@ -22,6 +22,7 @@
 4. 若研究上游仓库，先核对 `UPSTREAM_LOCK.yaml` 的仓库、提交和状态。
 5. 只读取与本任务有关的报告，不把未验证假设当成结论。
 6. 开始前用一句话说明本轮从哪个检查点继续。
+7. 若任务包含阿里云正式发布，必须先运行 `deploy/aliyun/check-publish-channel.sh`，并用 `sudo -n -l` 核对精确命令白名单后再判断是否阻塞；不得用 `sudo -n true` 推断窄范围发布器不可用。检查返回 `CODEX_CLOUD_PUBLISH_READY` 且用户已明确要求正式发布时，由 Codex 自行执行发布，不让用户重复粘贴命令。
 
 ## 工作中记录
 

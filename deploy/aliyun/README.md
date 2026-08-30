@@ -28,13 +28,35 @@ Python 服务只监听云服务器自己的 `127.0.0.1:18765`。公网只通过�
 
 ## 统一更新
 
-服务器首次从统一远程仓库克隆 `main` 到 `/opt/instant-ai/repository`。以后运行：
+服务器首次从统一远程仓库克隆 `main` 到 `/opt/instant-ai/repository`。云端 Codex 在用户明确要求正式发布后，先执行只读检查：
+
+```bash
+deploy/aliyun/check-publish-channel.sh
+```
+
+检查输出 `CODEX_CLOUD_PUBLISH_READY` 后，由 Codex 直接运行既有窄权限发布器：
+
+```bash
+sudo -n /usr/local/sbin/instant-ai-publish
+```
+
+不需要用户进入 root 终端或粘贴命令。不得以 `sudo -n true` 判断这个通道是否存在；它只会测试未授权的通用 root。需要排查时使用 `sudo -n -l` 查看精确白名单。
+
+只有在安装或修复发布器的运维场景，root 操作员才直接运行底层脚本：
 
 ```bash
 sudo /opt/instant-ai/repository/deploy/aliyun/update-instant-ai.sh
 ```
 
-脚本只接受 fast-forward 更新；云端若有其他 Codex 尚未提交的修改会立即停止，避免覆盖。业务数据目录 `/var/lib/instant-ai` 不属于 Git，也不会随代码更新删除或上传。
+发布器是底层脚本的 root 持有副本，只接受 fast-forward 更新；云端若有其他 Codex 尚未提交的修改会立即停止，避免覆盖。它在服务器运行 21 项 Python 测试，随后只重启 `instant-ai.service` 并验证回环健康。业务数据目录 `/var/lib/instant-ai` 不属于 Git，也不会随代码更新删除或上传。
+
+首次建立或需要修复发布通道时，由 root 在目标服务器运行一次：
+
+```bash
+sudo /opt/instant-ai/repository/deploy/aliyun/install-codex-publish-channel.sh
+```
+
+安装器只写入 root 持有的 `/usr/local/sbin/instant-ai-publish` 和 `/etc/sudoers.d/compassdev-instant-ai-publish`，并用 `visudo` 检查；不会授予其他 sudo 命令。时变罗盘使用自己的独立发布器，不由本安装器修改。
 
 首次部署在确认全部目标路径空闲后运行：
 

@@ -4,8 +4,10 @@
 
 ## 2026-08-30
 
+- 按用户要求完成云端发布链路审计：当前 Codex 以 `compassdev` 运行，服务器早已通过 root 持有的 `/usr/local/sbin/instant-ai-publish` 和精确 NOPASSWD sudoers 提供最小权限发布；发布器与生产更新脚本 SHA-256 一致。历史 Codex 会话同时确认即时 AI 和时变罗盘此前均多次使用各自独立发布器自动发布，五项相关服务审计时全部 active。
+- 确认本次要求用户手动粘贴的根因不是权限丢失，而是即时 AI 项目说明遗漏既有发布器，并用 `sudo -n true` 错误测试通用 root。新增 ADR-0019、`check-publish-channel.sh`、sudoers 模板和一次性恢复安装器；永久规则现在区分阿里云控制面与服务器内应用发布，并固定在明确发布授权后由 Codex 执行 `sudo -n /usr/local/sbin/instant-ai-publish`，不再让用户重复操作。
 - 用户明确批准把 0.12.1 更新到开源仓库并正式发布。本地重新执行 TypeScript/Vite 生产构建、npm 审计和 21 项 Python 测试，全部通过；0.12.1 提交 `3f94db1` 已推送 GitHub `main`。
-- 正式域名只读复核仍返回 0.12.0，`instant-ai.service`、Caddy 与时变罗盘健康。当前 Codex 工作环境没有桌面 Alibaba Cloud Client 控制通道，生产仓库为 root 所有且 `sudo` 需要交互密码，因此按永久安全规则未绕过权限、未改用网页或外部 SSH；云端发布等待从客户端服务器连接执行既定更新脚本。
+- 正式域名当时只读复核仍返回 0.12.0，`instant-ai.service`、Caddy 与时变罗盘健康。该任务只测试了未授权的通用 sudo，又没有从项目说明中发现既有精确发布器，因而误判为必须等待用户从客户端服务器连接执行底层脚本；这一误判已由同日稍后的发布链路审计纠正。
 - 用户随后从 Alibaba Cloud Client 的 root 终端执行既定更新脚本，生产仓库安全快进至 `5f2e851` 并完成服务器测试和服务重启。正式域名、应急域名与回环接口均返回 0.12.1，Service Worker 为 0.12.1；线上产物已移除搜索、统计概览和区域搜索，保留即时热点、标题汉化和重点事件。20/20 来源健康、采集周期 300 秒，Caddy 与时变罗盘保持正常。
 
 ## 2026-08-29

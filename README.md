@@ -53,6 +53,6 @@ pythonw product\launch_instant_ai.py
 
 ## 统一更新规则
 
-`main` 是唯一可部署分支。家中电脑、云端服务器和其他 Codex 环境都先从远程仓库拉取 `main`，修改后通过分支和提交回传，再由 `main` 发布。云服务器使用 `deploy/aliyun/update-instant-ai.sh` 做无数据同步更新；H 盘和云端运行数据不会互相复制。
+`main` 是唯一可部署分支。家中电脑、云端服务器和其他 Codex 环境都先从远程仓库拉取 `main`，修改后通过分支和提交回传，再由 `main` 发布。用户明确要求正式发布后，云端 Codex 先运行 `deploy/aliyun/check-publish-channel.sh`，再使用 `sudo -n /usr/local/sbin/instant-ai-publish` 自动完成无数据同步更新、服务器测试、服务重启和健康检查；不需要用户粘贴服务器命令。底层脚本为 `deploy/aliyun/update-instant-ai.sh`，只供 root 安装或修复发布通道。H 盘和云端运行数据不会互相复制。
 
 前端源代码与 World Monitor 的来源、许可证和固定提交见 `client/instant-ai/NOTICE.txt`。完整许可证见根目录 `LICENSE`。
