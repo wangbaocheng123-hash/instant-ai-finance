@@ -483,6 +483,8 @@ class MobileShellTests(unittest.TestCase):
         manifest = json.loads((STATIC_ROOT / "manifest.webmanifest").read_text(encoding="utf-8"))
 
         self.assertIn("manifest.webmanifest", index)
+        self.assertIn("media-src 'self'", index)
+        self.assertNotIn("media-src 'none'", index)
         self.assertIn("mobile-dock", styles)
         self.assertIn("header-tools", styles)
         self.assertIn(".finance-panel[hidden]", styles)
@@ -531,7 +533,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.15.1", worker)
+        self.assertIn("instant-ai-shell-v0.15.2", worker)
 
 
 if __name__ == "__main__":
