@@ -1,8 +1,8 @@
 # 项目状态
 
 - 最后更新：2026-08-31
-- 当前阶段：`P2/P3 — 即时 AI 0.17.0 博主主人工作区本地候选完成，生产仍为 0.16.0`
-- 阶段状态：`LOCAL_0_17_0_VERIFIED / GITHUB_0_16_0_PUSHED / GRANDPAAMU_0_16_0_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_READY_LOCAL / CLS_WEBSITE_LIVE_SAMPLE_OK / CLS_WECHAT_PUBLIC_INDEX_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 当前阶段：`P2/P3 — 即时 AI 0.17.0 博主主人工作区已推送 GitHub，生产仍为 0.16.0`
+- 阶段状态：`LOCAL_0_17_0_VERIFIED / GITHUB_0_17_0_PUSHED / GRANDPAAMU_0_16_0_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_READY / CLS_WEBSITE_LIVE_SAMPLE_OK / CLS_WECHAT_PUBLIC_INDEX_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离；新加坡博主接收数据生产根固定为 `/var/lib/instant-ai/blogger-agent`，生命周期待后续决定
@@ -11,6 +11,7 @@
 ## 当前检查点
 
 - 完成 `P2-BLOGGER-04` 与 ADR-0028。0.17.0 本地候选把博主详情从传输摘要升级为主人手机工作区：登录后直接播放已核验 MP4，支持普通/Range HEAD 和 GET；可编辑标题、保存正式视频原文、读取已有识别或在二次费用确认后调用豆包；评论提供本人互动、有效排行和全部评论三个视图。
+- 0.17.0 功能提交 `5d56048` 已推送现有 `instant-ai-finance` 仓库 `main`。本机 80 项 Python 测试（1 项 Windows symlink 条件跳过）、4 项前端契约、TypeScript/Vite 构建、Python/JavaScript 语法、项目记忆检查和 npm 零漏洞审计通过；正式域名仍保持 0.16.0，未越过发布授权闸门。
 - 主人编辑内容写入 Git 外 `/var/lib/instant-ai/blogger-agent/database/blogger_owner.db`，不会修改北京传输清单和 artifact 账本。评论页面只返回重新编号与不可逆线程键，继续排除来源评论 ID、账号 ID、主页、服务器路径、原始 JSON、机器身份和密钥。博主切换保留在新加坡页面，“+ 新增博主”只进入北京采集端。
 - 北京到新加坡真实资料通道现已工作。生产主人页已显示 2 位博主、3 部作品；“贵族之路”有 2 部作品，最新一部的 1 个视频 artifact 与 80 条评论已完成传输核验，处理仍为 `awaiting_asr_approval`。本轮没有触发 ASR、安装 `ffmpeg` 或产生模型费用。
 - 所有者已明确要求“正式发布”。0.16.0 合并提交 `fb1f615` 安全快进至 GitHub `main`，既有永久受限发布器把生产仓库从 `4fcd5b1` 更新到同一提交；服务器 78 项 Python 测试全过，正式域名健康接口和 Service Worker 均返回 0.16.0。服务在开放健康接口前执行 `seed_sources()`，22 条来源定义已进入正式库；来源详情仍受主人登录保护，未登录返回 401。
