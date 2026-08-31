@@ -1,20 +1,26 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
+import os
 import sqlite3
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 from urllib.parse import urlsplit
 
 from .blogger_ingest import DEFAULT_BLOGGER_AGENT_ROOT, STORE_SCHEMA_VERSION, opaque_work_key
+from . import doubao_asr
 
 
 MODULE_NAME = "blogger-library"
-MODULE_MODE = "owner-read-only"
+MODULE_MODE = "owner-mobile-library"
 MAX_CURRENT_ROWS = 10_000
+MAX_PUBLIC_COMMENTS = 10_000
+MAX_VIDEO_TEXT_LENGTH = 200_000
 
 _REQUIRED_TABLES = {"schema_meta", "transfers", "artifacts", "processing_queue"}
 _PROCESSING_STATUSES = {
@@ -123,6 +129,7 @@ class BloggerLibrary:
     def __init__(self, root: Path = DEFAULT_BLOGGER_AGENT_ROOT) -> None:
         self.root = Path(root)
         self.database_path = self.root / "database" / "blogger_ingest.db"
+        self.owner_database_path = self.root / "database" / "blogger_owner.db"
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -183,7 +190,7 @@ class BloggerLibrary:
             "available": True,
             "module": MODULE_NAME,
             "mode": MODULE_MODE,
-            "message": "博主资料库已按主人只读模式连接。",
+            "message": "博主资料库已连接，可查看视频、原文与评论。",
             "counts": counts,
         }
 
@@ -212,9 +219,7 @@ class BloggerLibrary:
         return {"creator": creator, "items": items, "count": len(items)}
 
     def work_detail(self, work_key: str) -> dict[str, Any] | None:
-        if not isinstance(work_key, str) or len(work_key) != 64:
-            return None
-        if any(character not in "0123456789abcdef" for character in work_key):
+        if not self._valid_work_key(work_key):
             return None
         try:
             with self._connect() as connection:
@@ -227,7 +232,121 @@ class BloggerLibrary:
         detail = self._public_work(work)
         snapshot = work["manifest"].get("comment_snapshot")
         detail["comment_snapshot"] = self._comment_snapshot(snapshot)
+        owner = self._owner_content(work_key)
+        comments = self._comments_for_work(work)
+        transcript_text = _text(owner.get("transcript_text"))
+        transcript_source = _text(owner.get("transcript_engine"))
+        video_text = _text(owner.get("video_text"))
+        media = self.video_path(work_key)
+        detail["media_available"] = media is not None
+        detail["video_url"] = f"/api/blogger-library/works/{work_key}/video" if media else ""
+        transcripts = []
+        if transcript_text:
+            transcripts.append(
+                {
+                    "text": transcript_text,
+                    "source": transcript_source or "识别结果",
+                    "language": _text(owner.get("transcript_language")) or "zh-CN",
+                    "created_at": _text(owner.get("transcript_created_at")),
+                }
+            )
+        detail.update(
+            {
+                "video_text": {
+                    "text": video_text,
+                    "official": bool(video_text),
+                    "source": "主人保存" if video_text else "",
+                    "updated_at": _text(owner.get("updated_at")),
+                },
+                "transcripts": transcripts,
+                "comments": comments,
+                "comment_total": len(comments),
+                "capabilities": {
+                    "video": media is not None,
+                    "save_title": True,
+                    "save_video_text": True,
+                    "transcribe_video": bool(transcript_text or video_text),
+                    "doubao_asr": media is not None and doubao_asr.is_configured(),
+                    "comments": bool(comments),
+                },
+            }
+        )
         return detail
+
+    @staticmethod
+    def _valid_work_key(work_key: object) -> bool:
+        return (
+            isinstance(work_key, str)
+            and len(work_key) == 64
+            and all(character in "0123456789abcdef" for character in work_key)
+        )
+
+    def save_title(self, work_key: str, title: str) -> dict[str, Any]:
+        if not self._valid_work_key(work_key) or self.work_detail(work_key) is None:
+            raise ValueError("博主作品不存在。")
+        value = str(title or "").strip()
+        if not value:
+            raise ValueError("作品标题不能为空。")
+        if len(value) > 120:
+            raise ValueError("作品标题不能超过 120 个字符。")
+        self._save_owner_content(work_key, title=value)
+        return {"ok": True, "title": value, "saved": True, "mode": MODULE_MODE}
+
+    def save_video_text(self, work_key: str, text: str) -> dict[str, Any]:
+        if not self._valid_work_key(work_key) or self.work_detail(work_key) is None:
+            raise ValueError("博主作品不存在。")
+        value = str(text or "").strip()
+        if len(value) > MAX_VIDEO_TEXT_LENGTH:
+            raise ValueError("视频原文超过保存上限。")
+        self._save_owner_content(work_key, video_text=value)
+        return {"ok": True, "text": value, "saved": True, "mode": MODULE_MODE}
+
+    def transcribe(self, work_key: str, engine: str) -> dict[str, Any]:
+        if not self._valid_work_key(work_key) or self.work_detail(work_key) is None:
+            raise ValueError("博主作品不存在。")
+        owner = self._owner_content(work_key)
+        cached = _text(owner.get("transcript_text")) or _text(owner.get("video_text"))
+        if engine != "doubao":
+            if not cached:
+                raise BloggerLibraryUnavailable("尚无可读取的识别结果；可在确认费用后使用豆包识别。")
+            return {
+                "text": cached,
+                "engine": _text(owner.get("transcript_engine")) or "owner-saved",
+                "cached": True,
+                "message": "已读取现有识别文字，请核对后保存为视频原文。",
+            }
+        media = self.video_path(work_key)
+        if media is None:
+            raise BloggerLibraryUnavailable("这条博主作品没有可识别的视频。")
+        try:
+            result = doubao_asr.transcribe_video(media[0], int(work_key[:12], 16), scope="blogger")
+        except doubao_asr.DoubaoAsrUnavailable as error:
+            raise BloggerLibraryUnavailable(str(error)) from error
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        self._save_owner_content(
+            work_key,
+            transcript_text=_text(result.get("text")),
+            transcript_engine=_text(result.get("engine")) or "doubao-recording-asr-2.0",
+            transcript_language="zh-CN",
+            transcript_created_at=now,
+        )
+        return result
+
+    def video_path(self, work_key: str) -> tuple[Path, str] | None:
+        if not self._valid_work_key(work_key):
+            return None
+        try:
+            with self._connect() as connection:
+                works = self._current_works(connection, work_key=work_key)
+                if not works:
+                    return None
+                descriptor = self._artifact_descriptor(connection, works[0], "media")
+        except BloggerLibraryUnavailable:
+            return None
+        if descriptor is None:
+            return None
+        target = self._safe_artifact_path(descriptor)
+        return (target, _text(descriptor.get("mime_type")) or "video/mp4") if target else None
 
     def _current_works(
         self,
@@ -259,6 +378,7 @@ class BloggerLibrary:
                 p.processing_status,
                 SUM(CASE WHEN a.artifact_kind='media' THEN 1 ELSE 0 END) AS media_expected,
                 SUM(CASE WHEN a.artifact_kind='media' AND a.state='verified' THEN 1 ELSE 0 END) AS media_received,
+                SUM(CASE WHEN a.artifact_kind='media' AND a.state='verified' AND a.media_role='video' AND a.mime_type='video/mp4' THEN 1 ELSE 0 END) AS video_received,
                 SUM(CASE WHEN a.artifact_kind='comment_bundle' THEN 1 ELSE 0 END) AS comments_expected,
                 SUM(CASE WHEN a.artifact_kind='comment_bundle' AND a.state='verified' THEN 1 ELSE 0 END) AS comments_received
             FROM transfers AS t
@@ -316,6 +436,7 @@ class BloggerLibrary:
             if work_key is not None and calculated_key != work_key:
                 continue
             value = dict(row)
+            value["_transfer_id"] = _text(value.get("transfer_id"))
             value.pop("transfer_id", None)
             value.pop("manifest_json", None)
             value["creator_id"] = canonical_id
@@ -440,13 +561,20 @@ class BloggerLibrary:
         raw_work = manifest.get("work")
         work = raw_work if isinstance(raw_work, dict) else {}
         captured_at = self._captured_at(value) or _epoch_timestamp(value.get("received_at")) or ""
+        work_key = _text(value.get("work_key"))
+        owner = self._owner_content(work_key)
+        snapshot = self._comment_snapshot(manifest.get("comment_snapshot"))
+        media_available = _integer(value.get("video_received")) > 0
+        processing_status = _text(value.get("processing_status"))
+        if _text(owner.get("video_text")) and processing_status == "awaiting_asr_approval":
+            processing_status = "ready"
         return {
-            "work_key": _text(value.get("work_key")),
+            "work_key": work_key,
             "creator_id": _text(value.get("creator_id")),
             "source_work_id": _text(value.get("source_work_id")),
             "platform": _text(value.get("work_platform")),
             "work_type": _text(work.get("work_type")),
-            "title": _text(work.get("title")),
+            "title": _text(owner.get("title")) or _text(work.get("title")),
             "description": _text(work.get("description")),
             "source_url": _safe_source_url(work.get("source_url")),
             "published_at": self._published_at(value),
@@ -460,8 +588,204 @@ class BloggerLibrary:
                 "comments_expected": _integer(value.get("comments_expected")),
                 "comments_received": _integer(value.get("comments_received")),
             },
-            "processing_status": _text(value.get("processing_status")),
+            "processing_status": processing_status,
+            "media_available": media_available,
+            "video_url": f"/api/blogger-library/works/{work_key}/video" if media_available else "",
+            "has_video_text": bool(_text(owner.get("video_text"))),
+            "comment_count": _integer(snapshot.get("captured_count")) if snapshot else 0,
         }
+
+    @staticmethod
+    def _artifact_descriptor(
+        connection: sqlite3.Connection,
+        work: Mapping[str, Any],
+        artifact_kind: str,
+    ) -> dict[str, Any] | None:
+        transfer_id = _text(work.get("_transfer_id"))
+        if not transfer_id:
+            return None
+        conditions = "artifact_kind=? AND state='verified'"
+        parameters: list[object] = [transfer_id, artifact_kind]
+        if artifact_kind == "media":
+            conditions += " AND media_role='video' AND mime_type='video/mp4'"
+        row = connection.execute(
+            f"""
+            SELECT stored_relative_path, expected_size_bytes, expected_sha256,
+                   mime_type, uncompressed_size_bytes, uncompressed_sha256, item_count
+            FROM artifacts
+            WHERE transfer_id=? AND {conditions}
+            ORDER BY ordinal ASC, artifact_id ASC
+            LIMIT 1
+            """,
+            parameters,
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def _safe_artifact_path(self, descriptor: Mapping[str, Any]) -> Path | None:
+        relative = _text(descriptor.get("stored_relative_path")).replace("\\", "/")
+        parts = [part for part in relative.split("/") if part]
+        if not parts or relative.startswith("/") or any(part in {".", ".."} for part in parts):
+            return None
+        candidate = self.root.joinpath(*parts)
+        try:
+            root = self.root.resolve(strict=True)
+            artifacts_root = (root / "artifacts").resolve(strict=True)
+            target = candidate.resolve(strict=True)
+            if artifacts_root != target and artifacts_root not in target.parents:
+                return None
+            current = root
+            for part in parts:
+                current = current / part
+                if current.is_symlink():
+                    return None
+            if not target.is_file() or target.stat().st_size != _integer(descriptor.get("expected_size_bytes")):
+                return None
+        except (OSError, RuntimeError):
+            return None
+        return target
+
+    def _comments_for_work(self, work: Mapping[str, Any]) -> list[dict[str, Any]]:
+        try:
+            with self._connect() as connection:
+                descriptor = self._artifact_descriptor(connection, work, "comment_bundle")
+        except BloggerLibraryUnavailable:
+            return []
+        if descriptor is None:
+            return []
+        target = self._safe_artifact_path(descriptor)
+        if target is None:
+            return []
+        expected_uncompressed = _integer(descriptor.get("uncompressed_size_bytes"))
+        expected_items = _integer(descriptor.get("item_count"))
+        if expected_items > MAX_PUBLIC_COMMENTS or expected_uncompressed > 128 * 1024 * 1024:
+            return []
+        comments: list[dict[str, Any]] = []
+        digest = hashlib.sha256()
+        uncompressed_size = 0
+        try:
+            with gzip.open(target, "rb") as stream:
+                for raw_line in stream:
+                    uncompressed_size += len(raw_line)
+                    if uncompressed_size > expected_uncompressed or len(comments) >= MAX_PUBLIC_COMMENTS:
+                        return []
+                    digest.update(raw_line)
+                    item = json.loads(raw_line.decode("utf-8"))
+                    if not isinstance(item, dict):
+                        return []
+                    source_id = _text(item.get("source_comment_id"))
+                    thread_source = (
+                        _text(item.get("root_source_comment_id"))
+                        or _text(item.get("parent_source_comment_id"))
+                        or source_id
+                    )
+                    is_creator = item.get("is_creator") is True
+                    comments.append(
+                        {
+                            "id": len(comments) + 1,
+                            "author": _text(item.get("author")) or "抖音用户",
+                            "text": _text(item.get("text")),
+                            "like_count": _integer(item.get("like_count")),
+                            "reply_count": _integer(item.get("reply_count")),
+                            "published_at": _timestamp(item.get("published_at")) or "",
+                            "kind": "author_reply" if is_creator else (_text(item.get("kind")) or "comment"),
+                            "reply_depth": 1 if _text(item.get("parent_source_comment_id")) else 0,
+                            "thread_key": hashlib.sha256(thread_source.encode("utf-8")).hexdigest()[:16],
+                            "author_liked": item.get("author_liked") is True,
+                        }
+                    )
+        except (OSError, EOFError, gzip.BadGzipFile, UnicodeDecodeError, json.JSONDecodeError):
+            return []
+        if uncompressed_size != expected_uncompressed or len(comments) != expected_items:
+            return []
+        expected_digest = _text(descriptor.get("uncompressed_sha256"))
+        if expected_digest and digest.hexdigest() != expected_digest:
+            return []
+        return comments
+
+    def _owner_content(self, work_key: str) -> dict[str, Any]:
+        if not self._valid_work_key(work_key) or not self.owner_database_path.is_file():
+            return {}
+        uri = f"{self.owner_database_path.resolve().as_uri()}?mode=ro"
+        try:
+            with closing(sqlite3.connect(uri, uri=True, timeout=2.0)) as connection:
+                connection.row_factory = sqlite3.Row
+                row = connection.execute(
+                    "SELECT * FROM work_content WHERE work_key=?",
+                    (work_key,),
+                ).fetchone()
+        except sqlite3.Error:
+            return {}
+        return dict(row) if row is not None else {}
+
+    def _save_owner_content(self, work_key: str, **changes: str) -> None:
+        self.owner_database_path.parent.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        try:
+            with closing(sqlite3.connect(self.owner_database_path, timeout=5.0)) as connection, connection:
+                connection.execute("PRAGMA journal_mode=WAL")
+                connection.execute("PRAGMA busy_timeout=5000")
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS work_content(
+                        work_key TEXT PRIMARY KEY,
+                        title TEXT NOT NULL DEFAULT '',
+                        video_text TEXT NOT NULL DEFAULT '',
+                        transcript_text TEXT NOT NULL DEFAULT '',
+                        transcript_engine TEXT NOT NULL DEFAULT '',
+                        transcript_language TEXT NOT NULL DEFAULT '',
+                        transcript_created_at TEXT NOT NULL DEFAULT '',
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                row = connection.execute(
+                    "SELECT * FROM work_content WHERE work_key=?",
+                    (work_key,),
+                ).fetchone()
+                fields = {
+                    "title": "",
+                    "video_text": "",
+                    "transcript_text": "",
+                    "transcript_engine": "",
+                    "transcript_language": "",
+                    "transcript_created_at": "",
+                }
+                if row is not None:
+                    names = [column[0] for column in connection.execute("SELECT * FROM work_content LIMIT 0").description]
+                    fields.update(dict(zip(names, row)))
+                fields.update({key: _text(value) for key, value in changes.items() if key in fields})
+                connection.execute(
+                    """
+                    INSERT INTO work_content(
+                        work_key, title, video_text, transcript_text, transcript_engine,
+                        transcript_language, transcript_created_at, updated_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(work_key) DO UPDATE SET
+                        title=excluded.title,
+                        video_text=excluded.video_text,
+                        transcript_text=excluded.transcript_text,
+                        transcript_engine=excluded.transcript_engine,
+                        transcript_language=excluded.transcript_language,
+                        transcript_created_at=excluded.transcript_created_at,
+                        updated_at=excluded.updated_at
+                    """,
+                    (
+                        work_key,
+                        fields["title"],
+                        fields["video_text"],
+                        fields["transcript_text"],
+                        fields["transcript_engine"],
+                        fields["transcript_language"],
+                        fields["transcript_created_at"],
+                        now,
+                    ),
+                )
+            try:
+                os.chmod(self.owner_database_path, 0o600)
+            except OSError:
+                pass
+        except sqlite3.Error as error:
+            raise BloggerLibraryUnavailable("博主原文暂时无法保存。") from error
 
     @staticmethod
     def _comment_snapshot(value: object) -> dict[str, Any] | None:

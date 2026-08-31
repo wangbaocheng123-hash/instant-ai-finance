@@ -31,21 +31,22 @@ def is_configured() -> bool:
     return bool(api_key or (app_id and access_key))
 
 
-def transcribe_video(source: Path, work_id: int) -> dict[str, Any]:
+def transcribe_video(source: Path, work_id: int, *, scope: str = "model-mr") -> dict[str, Any]:
     if not is_configured():
         raise DoubaoAsrUnavailable("云端尚未安全配置豆包语音凭据。")
     source = source.resolve()
     if not source.is_file():
         raise DoubaoAsrUnavailable("这条作品没有可识别的本地视频。")
     ffmpeg = _find_ffmpeg()
-    with tempfile.TemporaryDirectory(prefix=f"instant-ai-doubao-{work_id}-") as temp:
+    safe_scope = "blogger" if scope == "blogger" else "model-mr"
+    with tempfile.TemporaryDirectory(prefix=f"instant-ai-{safe_scope}-doubao-{work_id}-") as temp:
         audio_path = Path(temp) / "audio.wav"
         _extract_audio(ffmpeg, source, audio_path)
         if audio_path.stat().st_size > 100 * 1024 * 1024:
             raise DoubaoAsrUnavailable("提取后的音频超过 100MB，暂时不能提交豆包识别。")
         task_id = str(uuid.uuid4())
         payload = {
-            "user": {"uid": f"instant-ai-model-mr-{work_id}"},
+            "user": {"uid": f"instant-ai-{safe_scope}-{work_id}"},
             "audio": {
                 "data": base64.b64encode(audio_path.read_bytes()).decode("ascii"),
                 "format": "wav",

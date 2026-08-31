@@ -106,7 +106,7 @@ export interface BloggerStatusCounts {
 export interface BloggerLibraryStatus {
   available: boolean;
   module: 'blogger-library';
-  mode: 'owner-read-only';
+  mode: 'owner-mobile-library';
   message: string;
   counts: BloggerStatusCounts;
 }
@@ -157,6 +157,10 @@ export interface BloggerWork {
   captured_at: string;
   transfer: BloggerTransferSummary;
   processing_status: BloggerProcessingStatus;
+  media_available: boolean;
+  video_url: string;
+  has_video_text: boolean;
+  comment_count: number;
 }
 
 export interface BloggerCreatorWorksResponse {
@@ -177,6 +181,18 @@ export interface BloggerCommentSnapshot {
 
 export interface BloggerWorkDetail extends BloggerWork {
   comment_snapshot: BloggerCommentSnapshot | null;
+  video_text: { text: string; official: boolean; source: string; updated_at: string };
+  transcripts: ModelMrTranscript[];
+  comments: ModelMrComment[];
+  comment_total: number;
+  capabilities: {
+    video: boolean;
+    save_title: boolean;
+    save_video_text: boolean;
+    transcribe_video: boolean;
+    doubao_asr: boolean;
+    comments: boolean;
+  };
 }
 
 export interface ModelMrStatus {

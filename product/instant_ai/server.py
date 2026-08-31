@@ -38,7 +38,7 @@ from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 from .watch_events import list_watch_events, refresh_watch_events
 from .model_mr import MODEL_MR, ModelMrUnavailable
 from .blogger_http import BloggerTransferHTTP
-from .blogger_library import BLOGGER_LIBRARY
+from .blogger_library import BLOGGER_LIBRARY, BloggerLibraryUnavailable
 
 
 HOST = "127.0.0.1"
@@ -315,6 +315,13 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         finally:
             upstream.close()
 
+    def _serve_blogger_video(self, work_key: str) -> None:
+        local = BLOGGER_LIBRARY.video_path(work_key)
+        if local is None:
+            self._not_found()
+            return
+        self._serve_private_file(*local)
+
     def do_HEAD(self) -> None:
         if self._handle_blogger_transfer():
             return
@@ -328,6 +335,8 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             self._json(AUTH.status(self.headers.get("Cookie", "")))
         elif path.startswith("/api/") and not self._require_auth():
             return
+        elif re.fullmatch(r"/api/blogger-library/works/[0-9a-f]{64}/video", path):
+            self._serve_blogger_video(path.split("/")[4])
         elif re.fullmatch(r"/api/model-mr/works/\d+/video", path):
             self._serve_model_mr_video(int(path.split("/")[4]))
         elif path.startswith("/api/"):
@@ -358,6 +367,8 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         elif re.fullmatch(r"/api/blogger-library/creators/[0-9a-f-]{36}/works", path):
             result = BLOGGER_LIBRARY.creator_works(path.split("/")[4])
             self._json(result) if result is not None else self._not_found()
+        elif re.fullmatch(r"/api/blogger-library/works/[0-9a-f]{64}/video", path):
+            self._serve_blogger_video(path.split("/")[4])
         elif re.fullmatch(r"/api/blogger-library/works/[0-9a-f]{64}", path):
             result = BLOGGER_LIBRARY.work_detail(path.rsplit("/", 1)[-1])
             self._json(result) if result is not None else self._not_found()
@@ -485,7 +496,10 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         content_length = int(self.headers.get("Content-Length", "0") or "0")
-        max_length = 768 * 1024 if re.fullmatch(r"/api/model-mr/works/\d+/video-text", path) else 64 * 1024
+        max_length = 768 * 1024 if (
+            re.fullmatch(r"/api/model-mr/works/\d+/video-text", path)
+            or re.fullmatch(r"/api/blogger-library/works/[0-9a-f]{64}/video-text", path)
+        ) else 64 * 1024
         if content_length > max_length:
             self._json({"error": "request_too_large"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             return
@@ -538,6 +552,31 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             except ValueError as error:
                 self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
             except ModelMrUnavailable as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
+            return
+
+        blogger_work_match = re.fullmatch(
+            r"/api/blogger-library/works/([0-9a-f]{64})/(title|video-text|transcribe|doubao-transcribe)",
+            path,
+        )
+        if blogger_work_match:
+            work_key = blogger_work_match.group(1)
+            action = blogger_work_match.group(2)
+            try:
+                if action == "title":
+                    self._json(BLOGGER_LIBRARY.save_title(work_key, str(payload.get("title") or "")))
+                elif action == "video-text":
+                    self._json(BLOGGER_LIBRARY.save_video_text(work_key, str(payload.get("text") or "")))
+                else:
+                    self._json(
+                        BLOGGER_LIBRARY.transcribe(
+                            work_key,
+                            "doubao" if action == "doubao-transcribe" else "cached",
+                        )
+                    )
+            except ValueError as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            except BloggerLibraryUnavailable as error:
                 self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
             return
 

@@ -365,6 +365,11 @@ img { display: block; }
 .blogger-header { border-top-color: #0f8a7b; }
 .blogger-body { background: #f5f9f8; }
 .blogger-view { min-height: 100%; padding: 12px; }
+.blogger-creator-switch { display: flex; gap: 7px; margin-bottom: 10px; overflow-x: auto; padding: 2px 1px 6px; scrollbar-width: thin; }
+.blogger-creator-switch button, .blogger-add-creator { flex: 0 0 auto; min-height: 38px; display: inline-flex; align-items: center; justify-content: center; padding: 8px 11px; border: 1px solid #cfe0dc; border-radius: 8px; background: #fff; color: #176e63; cursor: pointer; font-size: 11px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.blogger-creator-switch button.is-active { border-color: #0f8a7b; background: #0f8a7b; color: #fff; }
+.blogger-add-creator { border-style: dashed; color: #0f7468; }
+.blogger-view-heading .blogger-add-creator { margin-top: 9px; }
 .blogger-library-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; margin-bottom: 13px; }
 .blogger-library-summary > div { min-width: 0; min-height: 58px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 3px; padding: 8px; border: 1px solid #d7e7e3; border-radius: 8px; background: #fff; }
 .blogger-library-summary b { color: #126f64; font-size: 20px; }
@@ -388,7 +393,14 @@ img { display: block; }
 .blogger-back-button { min-height: 38px; margin: 0 0 10px; padding: 7px 10px; border: 1px solid #cfe0dc; border-radius: 7px; background: #fff; color: #176e63; cursor: pointer; font-size: 12px; font-weight: 650; }
 .blogger-back-button:hover { border-color: #88bdb6; background: #f5fbf9; }
 .blogger-work-detail { padding: 15px; border: 1px solid #d9e5e2; border-radius: 10px; background: #fff; }
+.blogger-workspace-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 9px; }
+.blogger-workspace-header h3 { margin: 0; color: #172c29; font-size: 20px; line-height: 1.55; }
+.blogger-workspace-header button { min-height: 30px; padding: 5px 8px; border: 1px solid #89bdb6; border-radius: 7px; background: #f7fcfb; color: #176e63; cursor: pointer; font-size: 10px; font-weight: 700; }
 .blogger-detail-kicker { margin: 0; color: #188173; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.blogger-workspace-header + .blogger-detail-kicker, .blogger-workspace-header + .model-title-editor + .blogger-detail-kicker { margin-top: 6px; }
+.blogger-panel .model-detail-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 12px; border: 1px solid #d7e7e3; border-radius: 9px 9px 0 0; background: #edf7f5; }
+.blogger-panel .model-detail-tabs button.is-active, .blogger-panel .model-text-actions button.is-primary, .blogger-panel .model-comment-tabs button.is-active, .blogger-panel .model-comment-rank { border-color: #0f8a7b; background: #0f8a7b; }
+.blogger-panel .model-detail-content { border: 1px solid #d7e7e3; border-top: 0; border-radius: 0 0 9px 9px; background: #f8fbfa; }
 .blogger-work-detail > h3 { margin: 7px 0 5px; color: #172c29; font-size: 20px; line-height: 1.55; }
 .blogger-work-detail > time { color: #7d8b88; font-size: 10px; }
 .blogger-detail-description { margin: 13px 0 0; padding: 11px 12px; border-left: 3px solid #55a79c; border-radius: 0 7px 7px 0; background: #f3f9f7; color: #3d5350; font-size: 13px; line-height: 1.75; white-space: pre-wrap; }
@@ -402,6 +414,7 @@ img { display: block; }
 .blogger-state-card.is-ready { border-color: #bfe0cd; background: #f3faf6; }
 .blogger-state-card.is-error { border-color: #edc1c5; background: #fff6f7; }
 .blogger-detail-section { margin-top: 12px; padding: 11px; border: 1px solid #e0e8e6; border-radius: 8px; background: #fbfcfc; }
+.blogger-detail-section > summary { color: #3b514e; cursor: pointer; font-size: 11px; font-weight: 700; }
 .blogger-detail-section h4 { margin: 0 0 8px; color: #3b514e; font-size: 12px; }
 .blogger-detail-section p { margin: 0; color: #667672; font-size: 11px; line-height: 1.65; }
 .blogger-transfer-facts > div { display: grid; gap: 5px; }
