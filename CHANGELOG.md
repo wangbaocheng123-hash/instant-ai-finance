@@ -2,10 +2,23 @@
 
 本文件只记录已经发生的项目变更。研究结论和架构理由分别写入 `research/` 与 `docs/decisions/`。
 
+## 2026-08-31
+
+- 按所有者最终边界把新加坡博主实现固定为即时 AI 现有仓库内模块，导航顺序为“重点 → 模型先生 → 博主”，不建立第二个新加坡应用仓库；北京原模型下载器保持不变，旁路新增博主采集服务。新增 ADR-0026，并保留博主 Git 外数据域、签名传输和付费 ASR 闸门。
+
 ## 2026-08-30
 
 - 正式发布即时 AI 0.15.2，修复模型先生本地视频被页面自身 Content Security Policy 阻止的问题。0.15.1 已补齐 iPhone 的媒体 HEAD 请求，但正式 HTML 仍保留 `media-src 'none'`，使浏览器在请求视频前直接禁播；客户端源码、正式构建和服务端响应头现统一为 `media-src 'self'`，只允许登录后的本站媒体，第三方 frame/object 继续禁止。
 - 0.15.2 提交 `9b7b462` 已推送 GitHub `main` 并由永久受限发布器正式部署；本机与服务器各 36 项 Python 测试全过，Vite 构建、Python/JavaScript/Shell 检查及 npm 零漏洞审计通过。正式域名健康接口返回 0.15.2，线上 HTML 与响应头不再含 `media-src 'none'`，Service Worker 缓存标记升级为 0.15.2；388 个 Git 外视频和主人资料没有重传或修改。
+- 完成北京到新加坡博主资料第三阶段：新增 SQLite `mode=ro` 主人只读投影与四个主人登录后 GET 接口，按博主、作品列表和作品详情返回严格白名单字段、opaque work key、独立传输状态与处理状态；缺库时只报告未连接，不创建目录、schema 或业务数据。
+- 即时 AI 手机端新增独立“博主”入口，形成博主→作品→详情三级页面，明确区分资料传输和 `awaiting_asr_approval`，不提供自动付费转写按钮，不读取财经新闻或模型先生资料域。版本升级为 0.16.0 本地候选并按既有流程同步生产静态产物；74 项 Python、3 项前端契约、TypeScript/Vite 构建、Python 编译、项目记忆和 npm 零漏洞检查通过，尚未推送或正式发布。
+- 根据独立安全审阅加固传输边界：评论包冻结为 21 个公开业务字段并拒绝账号 ID、原始 JSON、路径、未知/重复字段及非有限数；manifest 只接受 `video/mp4` 与 `image|cover` 的 JPEG/PNG/WebP。complete 在确认前用安全文件句柄重新核对普通文件、父链、长度和完整 SHA-256；manifest/complete 在读取正文前先验 HMAC，共享服务增加 30 秒空闲读取超时与 32 并发硬上限。合成负例和跨仓端到端均不调用真实数据、ASR 或 AI。
+- 完成北京到新加坡博主传输第二阶段，新增 `blogger_http.py` 并在现有服务的主人认证之前独立分流 manifest、media、comments、complete。机器入口逐请求执行北京权威七行 HMAC、五分钟时间窗和持久 nonce，禁止 query、chunked 与模糊 Content-Length；机器 HMAC 不会获得任何 `/api` 权限，主人认证也不能替代机器签名。
+- 博主独立 SQLite 升级到 schema 3，新增 manifest missing map 对应的 artifact 账本、稳定 opaque work key、transport status 和唯一处理队列。artifact 流式写同文件系统 staging，核对压缩正文长度/hash，并验证 MP4 `ftyp`、JPEG/PNG/WebP 签名或评论 gzip 的未压缩长度/hash/NDJSON 条数；正式文件名由服务端生成，以 fsync + `os.replace` 提交，同内容重试幂等、冲突不覆盖、断流自动清理。
+- complete 缺附件固定返回 409；齐全后只创建 `processing_status=awaiting_asr_approval`，严格返回 `completed`、`transport_completed`、`artifacts_verified` 与 intelligence status，不调用 ffmpeg、豆包、ASR、模型或财经 AI 队列。systemd/Caddy 模板加入 Git 外 `/etc/instant-ai/blogger-transfer.env` 与 no-store 路由说明；本轮未读取真实密钥/数据库/媒体，未联网传输或正式发布。新增 ADR-0025 与完整权限、校验、幂等和零付费调用测试。
+- 按用户明确的分层方案开始实施北京采集中心到新加坡即时 AI 的博主资料通道。新增 ADR-0024，固定新加坡 Git 外生产数据根 `/var/lib/instant-ai/blogger-agent`，与财经新闻数据库、模型先生资料域及时变罗盘完全隔离；博主资料正式生命周期保持待定，不套用新闻 3/5/7 天自动淘汰。
+- 新增 `blogger-transfer/v1` 纯 JSON 清单接收底座：1 MiB 字段白名单、抖音 HTTPS 来源约束、HMAC-SHA256、正文摘要、五分钟时间窗、nonce 防重放和独立 SQLite 账本。相同传输支持规范化幂等；更低修订只记为 `stale`，更高修订原子成为当前版本，同修订或同传输的内容冲突会拒绝。
+- 新增 9 项博主清单单元测试，覆盖 Git 外临时目录隔离、签名篡改、错误密钥、请求过期、nonce 重放、JSON 重复/额外字段、非允许来源、幂等、乱序与修订冲突；即时 AI 全量 45 项 Python 测试通过。第一阶段没有增加 HTTP 路由、媒体目录、视频传输、评论正文、ffmpeg、豆包/AI 调用、真实网络或付费行为，也没有读取任何真实密钥、数据库或运行数据。
 - 正式发布即时 AI 0.15.1，修复模型先生视频在 iPhone 上反复提示加载失败的问题。确认视频文件本身是兼容的 H.264 + AAC、`yuv420p`、MP4 快速启动布局并可完整解码；根因是旧服务没有处理苹果浏览器播放前的媒体 `HEAD` 预探测，正式域名当时返回 501。新服务为受保护视频补齐无正文普通 HEAD 和 Range HEAD，同时维持主人登录与分段播放限制。
 - 0.15.1 提交 `056213d` 已推送即时 AI 独立 GitHub `main` 并由既有永久受限发布器正式部署；本机与服务器各 36 项 Python 测试全过，npm 审计为 0 漏洞。生产作品 445 以 iPhone Safari 请求顺序实测 `HEAD 200`、`HEAD bytes=0-1` 为 `206 bytes 0-1/2362151`，随后 `GET bytes=0-1023` 为 206/1,024 字节，未登录仍为 401。388 个 Git 外视频和模型先生资料没有重传或改写，时变罗盘未修改。
 - 正式发布即时 AI 0.15.0，补齐模型先生手机版的视频加载状态、作品标题编辑、本人回复、评论排行和评股。详情成功后不再残留“正在读取本地作品资料”；视频明确显示就绪或错误；标题通过单主人接口原子写入 Git 外索引与详情；评论线程保留上下文，排行过滤低价值文本，评股复用原智能体本地证券名称表且不调用 AI。新增 ADR-0023。

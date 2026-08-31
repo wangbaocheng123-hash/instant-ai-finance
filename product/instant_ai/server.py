@@ -37,18 +37,81 @@ from .translation import translate_items, translation_status
 from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 from .watch_events import list_watch_events, refresh_watch_events
 from .model_mr import MODEL_MR, ModelMrUnavailable
+from .blogger_http import BloggerTransferHTTP
+from .blogger_library import BLOGGER_LIBRARY
 
 
 HOST = "127.0.0.1"
 PORT = 18765
 COLLECTION_LOCK = threading.Lock()
 SCHEDULER_INTERVAL_SECONDS = 5 * 60
+REQUEST_READ_TIMEOUT_SECONDS = 30
+MAX_CONCURRENT_REQUESTS = 32
 COLLECTION_STATE: dict[str, object] = {
     "running": False,
     "last_result": None,
     "mode": "automatic",
     "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
 }
+
+
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    """Shared HTTP server with an idle read timeout and a hard thread ceiling."""
+
+    daemon_threads = True
+    request_queue_size = MAX_CONCURRENT_REQUESTS
+
+    def __init__(
+        self,
+        server_address,
+        request_handler_class,
+        *,
+        max_concurrent_requests: int = MAX_CONCURRENT_REQUESTS,
+    ) -> None:
+        self._request_slots = threading.BoundedSemaphore(max(1, int(max_concurrent_requests)))
+        super().__init__(server_address, request_handler_class)
+
+    def get_request(self):
+        request, client_address = super().get_request()
+        request.settimeout(REQUEST_READ_TIMEOUT_SECONDS)
+        return request, client_address
+
+    def process_request(self, request, client_address) -> None:
+        if not self._request_slots.acquire(blocking=False):
+            try:
+                body = b'{"error":"server_overloaded"}'
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\r\n"
+                    b"Content-Type: application/json\r\n"
+                    + f"Content-Length: {len(body)}\r\n".encode("ascii")
+                    + b"Cache-Control: no-store\r\n"
+                    + b"Connection: close\r\n\r\n"
+                    + body
+                )
+            except OSError:
+                pass
+            finally:
+                self.shutdown_request(request)
+            return
+
+        worker = threading.Thread(
+            target=self._process_request_with_slot,
+            args=(request, client_address),
+            name="instant-ai-http-request",
+            daemon=True,
+        )
+        try:
+            worker.start()
+        except Exception:
+            self._request_slots.release()
+            self.shutdown_request(request)
+            raise
+
+    def _process_request_with_slot(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
 
 
 def _collect_in_background() -> None:
@@ -117,6 +180,26 @@ class InstantAIHandler(BaseHTTPRequestHandler):
 
     def _not_found(self) -> None:
         self._json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+
+    def _handle_blogger_transfer(self) -> bool:
+        if not BloggerTransferHTTP.is_candidate(self.path):
+            return False
+        self.close_connection = True
+        application = getattr(self.server, "blogger_transfer", None)
+        if application is None:
+            self._json(
+                {"error_code": "blogger_receiver_unavailable"},
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                headers={"Connection": "close"},
+            )
+            return True
+        response = application.handle(self.command, self.path, self.headers, self.rfile)
+        self._json(
+            response.payload,
+            response.status,
+            headers={"Connection": "close"},
+        )
+        return True
 
     def _serve_static(self, path: str) -> None:
         relative = "index.html" if path in {"", "/"} else unquote(path.lstrip("/"))
@@ -233,6 +316,8 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             upstream.close()
 
     def do_HEAD(self) -> None:
+        if self._handle_blogger_transfer():
+            return
         if not self._host_allowed():
             self._json({"error": "invalid_host"}, HTTPStatus.BAD_REQUEST)
             return
@@ -251,6 +336,8 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             self._serve_static(path)
 
     def do_GET(self) -> None:
+        if self._handle_blogger_transfer():
+            return
         if not self._host_allowed():
             self._json({"error": "invalid_host"}, HTTPStatus.BAD_REQUEST)
             return
@@ -264,6 +351,16 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             self._json(AUTH.status(self.headers.get("Cookie", "")))
         elif path.startswith("/api/") and not self._require_auth():
             return
+        elif path == "/api/blogger-library/status":
+            self._json(BLOGGER_LIBRARY.status())
+        elif path == "/api/blogger-library/creators":
+            self._json(BLOGGER_LIBRARY.creators())
+        elif re.fullmatch(r"/api/blogger-library/creators/[0-9a-f-]{36}/works", path):
+            result = BLOGGER_LIBRARY.creator_works(path.split("/")[4])
+            self._json(result) if result is not None else self._not_found()
+        elif re.fullmatch(r"/api/blogger-library/works/[0-9a-f]{64}", path):
+            result = BLOGGER_LIBRARY.work_detail(path.rsplit("/", 1)[-1])
+            self._json(result) if result is not None else self._not_found()
         elif path == "/api/model-mr/status":
             self._json(MODEL_MR.status())
         elif path == "/api/model-mr/works":
@@ -380,6 +477,8 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             self._serve_static(path)
 
     def do_POST(self) -> None:
+        if self._handle_blogger_transfer():
+            return
         if not self._host_allowed() or self.headers.get("X-Instant-AI") != "1":
             self._json({"error": "request_rejected"}, HTTPStatus.FORBIDDEN)
             return
@@ -538,8 +637,18 @@ class InstantAIHandler(BaseHTTPRequestHandler):
 
         self._not_found()
 
+    def do_PUT(self) -> None:
+        if self._handle_blogger_transfer():
+            return
+        if not self._host_allowed() or self.headers.get("X-Instant-AI") != "1":
+            self._json({"error": "request_rejected"}, HTTPStatus.FORBIDDEN)
+            return
+        if not self._require_auth():
+            return
+        self._not_found()
 
-def create_server() -> ThreadingHTTPServer:
+
+def create_server() -> BoundedThreadingHTTPServer:
     ensure_layout()
     create_backup()
     initialize()
@@ -548,7 +657,9 @@ def create_server() -> ThreadingHTTPServer:
     reclassify_items()
     backfill_thumbnail_candidates()
     backfill_notifications()
-    return ThreadingHTTPServer((HOST, PORT), InstantAIHandler)
+    server = BoundedThreadingHTTPServer((HOST, PORT), InstantAIHandler)
+    server.blogger_transfer = BloggerTransferHTTP.from_environment()  # type: ignore[attr-defined]
+    return server
 
 
 def run_server(collect_on_start: bool = True) -> None:

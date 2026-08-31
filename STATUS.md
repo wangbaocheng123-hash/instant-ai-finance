@@ -1,17 +1,26 @@
 # 项目状态
 
-- 最后更新：2026-08-30
-- 当前阶段：`P2/P3 — 模型先生页面媒体策略修复版 0.15.2 正式发布，等待主人 iPhone 复测`
-- 阶段状态：`LOCAL_0_15_2_VERIFIED / GITHUB_0_15_2_PUSHED / GRANDPAAMU_0_15_2_LIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / OWNER_IPHONE_RETEST_PENDING / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_LIBRARY_ACTIVE / OWNER_AUTH_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 最后更新：2026-08-31
+- 当前阶段：`P2/P3 — 博主模块已融入现有即时 AI 源码；0.16.0 待推送，生产仍为 0.15.2`
+- 阶段状态：`BLOGGER_OWNER_LIBRARY_LOCAL_VERIFIED / BLOGGER_TRANSPORT_V1_LOCAL_VERIFIED / LOCAL_0_16_0_VERIFIED / LOCAL_0_15_1_VERIFIED / GITHUB_0_15_2_PUSHED / GRANDPAAMU_0_15_2_LIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
-- 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离
+- 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离；新加坡博主接收数据生产根固定为 `/var/lib/instant-ai/blogger-agent`，生命周期待后续决定
 - 使用边界：仅所有者个人使用；一个主人账户、30 天安全会话；无注册、用户表、个人资料、团队、角色或多用户体系
 
 ## 当前检查点
 
+- 所有者于 2026-08-31 最终确认部署边界：新加坡博主模块直接进入即时 AI 现有源码仓库、现有页面与现有发布链路，入口位于模型先生右侧；北京既有模型下载器不清理、不替换，旁路新增独立博主采集服务。ADR-0026 已记录该决定。
 - 0.15.2 已修复 0.15.1 遗漏的真正页面禁播规则：正式 HTML 的 Content Security Policy 曾保留历史配置 `media-src 'none'`，导致浏览器在发起视频请求前直接拦截所有媒体；播放器统一错误提示又把它误报为网络异常。客户端源码和正式构建现均改为 `media-src 'self'`，服务端响应头也显式限定只允许本站媒体，仍禁止第三方媒体、frame 和 object。
 - 0.15.2 功能提交 `9b7b462` 已推送 GitHub `main` 并由永久受限发布器正式部署；本机与服务器各 36 项 Python 测试全过，Vite 构建和 npm 零漏洞审计通过。正式域名健康接口返回 0.15.2，线上 HTML 与响应头均为 `media-src 'self'`、不再含 `media-src 'none'`，Service Worker 缓存标记为 0.15.2。388 个 Git 外视频、详情和评论均未重传或改写。
+- 完成 `P2-BLOGGER-03` 主人资料查询与手机端。新增四个主人认证 GET：资料库状态、博主列表、单博主作品与 opaque work key 详情；查询使用 SQLite URI `mode=ro`，只展示最高 current 修订并严格排除 manifest、服务器路径、机器身份和密钥。手机端新增独立第八入口，形成博主→作品→详情三级页面，传输状态与处理状态分开显示，客户端不会推断或触发付费 ASR。
+- 即时 AI 已形成 0.16.0 本地候选，生产静态产物按源码构建同步完成。74 项 Python 测试、3 项前端契约测试、TypeScript/Vite 构建、Python 编译、项目记忆、差异检查和 npm 零漏洞审计通过；本轮仍未读取真实密钥、数据库或媒体，未联网传输或正式发布。
+- 独立安全审阅发现的评论字段泄漏、MIME 契约不闭合、complete 未复核摘要和慢连接耗尽线程问题均已修复。评论只接收北京冻结的 21 字段；媒体只接收 MP4/JPEG/PNG/WebP；complete 通过安全句柄重算完整 SHA-256；manifest/complete 先验 HMAC，服务采用 30 秒空闲读取超时和 32 并发硬上限。非法字段、非法 MIME、同长度篡改、父链链接及超并发负例均有回归测试。
+- 完成 `P2-BLOGGER-02` 新加坡传输第二阶段。现有回环服务在主人认证前独立分流 manifest、media、comments 和 complete 机器路由；每个请求均使用北京权威七行 HMAC，禁止 query/chunked，要求精确 Content-Length。机器 HMAC 不会获得 `/api` 权限，主人 Cookie 与 `X-Instant-AI` 也不能代替机器签名；见 ADR-0025。
+- 独立账本升级为 schema 3，新增 manifest missing map 对应的 artifact 状态、稳定 opaque work key、transport status 与唯一 processing queue。媒体/评论先流式写同文件系统 staging，校验压缩正文长度/hash、MP4/JPEG/PNG/WebP 签名或 gzip 解压长度/hash/NDJSON 条数，随后以服务端文件名执行 fsync + `os.replace`；断流清理、同内容幂等和冲突不覆盖均有测试。
+- complete 缺附件固定返回 409；齐全后只创建一个 `processing_status=awaiting_asr_approval` 并返回北京发送器严格回执，不调用 ffmpeg、豆包、ASR、模型或财经 AI 队列。生产密钥模板只引用 Git 外 `/etc/instant-ai/blogger-transfer.env`，本轮没有读取或配置真实密钥、数据或网络，也没有正式发布。
+- 按用户明确的北京采集、新加坡处理拆分方案完成 `P2-BLOGGER-01` 第一阶段。新增纯本地 `blogger-transfer/v1` 清单契约、HMAC-SHA256 验签、五分钟时间窗、nonce 防重放和独立 SQLite 接收账本；同一传输幂等，旧修订只记为 `stale` 而不会覆盖当前版本，同修订不同内容或同传输不同内容会拒绝。见 ADR-0024。
+- 新模块生产数据根固定为 `/var/lib/instant-ai/blogger-agent`，测试全部使用临时目录；它不导入即时财经新闻数据库或模型先生资料域。第一阶段没有 HTTP 或 artifact，后续由 ADR-0025 的隔离机器路由和本阶段主人只读查询补齐；所有阶段均未读取真实密钥、数据库或运行数据，也未调用 ffmpeg、豆包或其他 AI。
 - 0.15.1 已修复用户 iPhone 反复提示“本地视频加载失败”的协议缺口。生产旧版对媒体预探测 `HEAD` 返回 501，而视频文件本身已确认是 H.264 Constrained Baseline + AAC LC、`yuv420p`、MP4 快速启动布局且可完整解码；新版本为受保护视频、静态文件和 API 增加无正文 `HEAD` 响应，并保留登录校验与 HTTP Range 契约。
 - 本机与服务器各 36 项 Python 测试全过，Vite 构建、Python/JavaScript 语法、npm 零漏洞审计和差异检查通过。正式域名以 iPhone Safari 请求头实测作品 445：普通 `HEAD` 为 `200`/2,362,151 字节，`HEAD bytes=0-1` 为 `206 bytes 0-1/2362151`，随后 `GET bytes=0-1023` 为 `206`/1,024 字节；未登录 `HEAD` 继续返回 401。
 - 0.15.1 功能提交 `056213d` 已推送即时 AI 独立 GitHub `main`，既有永久受限发布器完成服务器测试、服务重启和健康检查；`https://grandpaamu.com/api/health` 返回 0.15.1。388 个 Git 外视频与约 9.8MB 模型先生资料均未重传或改写；时变罗盘只做只读健康检查，完整性正常且未修改。
@@ -38,12 +47,14 @@
 ## 当前阻塞
 
 - `P2-MODEL-09` 的代码、Git 推送和正式发布没有剩余阻塞；尚待所有者在 iPhone 上完全关闭旧页面后重新进入 0.15.2 做最后的真机播放确认。
+- `P2-BLOGGER-01/02/03` 本地代码没有剩余阻塞；生产尚未配置真实北京 HMAC 对等密钥，也未发布或传输真实资料。博主资料正式生命周期仍待所有者决定，ASR/AI 继续停在主人批准闸门前。
 - 服务器尚未安装 `ffmpeg`。已有正式/普通/豆包识别结果可查看，豆包凭据也已安全配置；但点击后对尚无结果的视频做现场豆包转写仍会因缺少音频提取程序而停止。该系统级依赖必须获得单独批准后才能安装和付费实测。
 - 普通 Whisper/OCR 的 Linux 运行组件体量和兼容性尚未评估，未获大型依赖批准前云端不安装这些组件。
 
 ## 需要用户批准的事项
 
 - 0.15.2 页面媒体策略修复已按用户本轮“正式发布”授权完成，不需要重新确认；388 个云端视频没有重传、改写或删除。
+- 当前三阶段本地实现与测试不需要真实凭据或费用批准。正式启用时必须通过 Git 外 root `0600` 文件配置北京对等密钥；自动豆包识别仍需所有者明确批准计费策略，complete 与主人只读页面都不触发任何付费调用。
 - 0.15.1 视频协议补丁已按用户当前要求正式发布，不需要重新确认；388 个云端视频没有重传、改写或删除。
 - 0.14.0 正式发布、388 个压缩视频同步和现有豆包语音凭据的 Git 外安全配置均已获得批准并完成，不需要重新确认。
 - 若要启用云端现场豆包转写，需要用户单独批准在该服务器安装 `ffmpeg` 并进行一次可能产生豆包费用的真实识别。
@@ -51,4 +62,4 @@
 
 ## 下一项唯一建议任务
 
-`P2-MODEL-09`：所有者在 iPhone 上完全关闭即时 AI 页面后重新进入模型先生，播放“大象起舞”并确认 0.15.2 已消除页面 CSP 禁播；若仍失败，再依据浏览器媒体错误码继续定位，不再使用笼统网络提示猜测。
+`P3-BLOGGER-01`：先把 0.16.0 源码检查点安全推送到即时 AI 现有 Git 仓库；只有所有者明确要求“正式发布”后，才通过既有受限发布器部署，并在 Git 外配置北京/新加坡对等身份做合成资料联调。真实豆包转写继续保持单独批准闸门。

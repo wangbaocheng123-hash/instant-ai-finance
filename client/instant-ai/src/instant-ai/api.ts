@@ -1,5 +1,6 @@
 import type {
-  AppStatus, AuthLoginResult, AuthStatus, FinanceItem, FinanceItemDetail, ModelMrChatConfig, ModelMrChatResult,
+  AppStatus, AuthLoginResult, AuthStatus, BloggerCreatorsResponse, BloggerCreatorWorksResponse,
+  BloggerLibraryStatus, BloggerWorkDetail, FinanceItem, FinanceItemDetail, ModelMrChatConfig, ModelMrChatResult,
   ModelMrStatus, ModelMrThoughtCategory, ModelMrTranscriptionResult, ModelMrWork, ModelMrWorkDetail,
   ReaderTranslationResult, SourceStatus,
   TranslationBatchResult, TranslationStatus,
@@ -33,6 +34,14 @@ export const instantApi = {
     method: 'POST',
     body: JSON.stringify({}),
   }),
+  bloggerLibraryStatus: () => request<BloggerLibraryStatus>('/api/blogger-library/status'),
+  bloggerCreators: () => request<BloggerCreatorsResponse>('/api/blogger-library/creators'),
+  bloggerCreatorWorks: (creatorId: string) => request<BloggerCreatorWorksResponse>(
+    `/api/blogger-library/creators/${encodeURIComponent(creatorId)}/works`,
+  ),
+  bloggerWork: (workKey: string) => request<BloggerWorkDetail>(
+    `/api/blogger-library/works/${encodeURIComponent(workKey)}`,
+  ),
   modelMrStatus: () => request<ModelMrStatus>('/api/model-mr/status'),
   modelMrWorks: (limit = 40) => request<{ items: ModelMrWork[]; count: number }>(`/api/model-mr/works?limit=${limit}`),
   modelMrWork: (id: number) => request<ModelMrWorkDetail>(`/api/model-mr/works/${id}`),

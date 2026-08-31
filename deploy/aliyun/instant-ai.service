@@ -13,6 +13,8 @@ Environment=PYTHONPATH=/opt/instant-ai/repository/product
 Environment=INSTANT_AI_LIBRARY_ROOT=/var/lib/instant-ai
 Environment=INSTANT_AI_AUTH_REQUIRED=1
 Environment=INSTANT_AI_AUTH_FILE=/var/lib/instant-ai/auth.json
+Environment=INSTANT_AI_BLOGGER_ROOT=/var/lib/instant-ai/blogger-agent
+EnvironmentFile=-/etc/instant-ai/blogger-transfer.env
 ExecStart=/usr/bin/python3 -c "from instant_ai.server import run_server; run_server()"
 Restart=on-failure
 RestartSec=5

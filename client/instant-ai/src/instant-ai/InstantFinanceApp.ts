@@ -1,4 +1,5 @@
 import { instantApi } from './api';
+import { BloggerPanel } from './BloggerPanel';
 import { FinancePanel } from './FinancePanel';
 import { ModelMrPanel } from './ModelMrPanel';
 import { WatchEventsPanel } from './WatchEventsPanel';
@@ -28,7 +29,12 @@ const WATCH_SECTION: SectionDefinition = {
 const MODEL_MR_SECTION: SectionDefinition = {
   id: 'model-mr', title: '模型先生', subtitle: 'WORKS · INVESTMENT THOUGHTS · AI', accent: '#7c5ce7',
 };
-const NAV_SECTIONS = SECTIONS.flatMap((section) => section.id === 'ai' ? [section, WATCH_SECTION, MODEL_MR_SECTION] : [section]);
+const BLOGGER_SECTION: SectionDefinition = {
+  id: 'blogger-library', title: '博主资料', subtitle: 'CREATORS · WORKS · TRANSFER STATUS', accent: '#0f8a7b',
+};
+const NAV_SECTIONS = SECTIONS.flatMap((section) => section.id === 'ai'
+  ? [section, WATCH_SECTION, MODEL_MR_SECTION, BLOGGER_SECTION]
+  : [section]);
 
 const formatFullTime = (value: string | null): string => {
   if (!value) return '时间待确认';
@@ -42,6 +48,7 @@ export class InstantFinanceApp {
   private readonly panels = new Map<string, FinancePanel>();
   private readonly watchPanel = new WatchEventsPanel();
   private readonly modelMrPanel = new ModelMrPanel();
+  private readonly bloggerPanel = new BloggerPanel();
   private readonly sectionItems = new Map<string, FinanceItem[]>();
   private latestItems: FinanceItem[] = [];
   private instantHotItems: FinanceItem[] = [];
@@ -127,6 +134,7 @@ export class InstantFinanceApp {
         <button type="button" data-target="ai"><span>AI</span><b>科技</b></button>
         <button type="button" data-target="watch-events"><span>重</span><b>重点</b></button>
         <button type="button" data-target="model-mr"><span>模</span><b>模型先生</b></button>
+        <button type="button" data-target="blogger-library"><span>博</span><b>博主</b></button>
       </nav>
       <div id="overlay" class="overlay hidden"><article id="overlayCard" class="overlay-card"></article></div>
       <div id="toast" class="toast hidden"></div>`;
@@ -156,6 +164,7 @@ export class InstantFinanceApp {
     this.watchPanel.setLoading();
     grid.append(this.watchPanel.element);
     grid.append(this.modelMrPanel.element);
+    grid.append(this.bloggerPanel.element);
   }
 
   private bindEvents(): void {
@@ -284,7 +293,12 @@ export class InstantFinanceApp {
   }
 
   private selectSection(sectionId: string, resetViewport = true): void {
-    if (!this.panels.has(sectionId) && sectionId !== WATCH_SECTION.id && sectionId !== MODEL_MR_SECTION.id) return;
+    if (
+      !this.panels.has(sectionId)
+      && sectionId !== WATCH_SECTION.id
+      && sectionId !== MODEL_MR_SECTION.id
+      && sectionId !== BLOGGER_SECTION.id
+    ) return;
     this.activeSectionId = sectionId;
 
     this.root.querySelectorAll<HTMLElement>('[data-target]').forEach((button) => {
@@ -305,6 +319,9 @@ export class InstantFinanceApp {
     const modelMrActive = sectionId === MODEL_MR_SECTION.id;
     this.modelMrPanel.element.hidden = !modelMrActive;
     this.modelMrPanel.element.classList.toggle('is-active', modelMrActive);
+    const bloggerActive = sectionId === BLOGGER_SECTION.id;
+    this.bloggerPanel.element.hidden = !bloggerActive;
+    this.bloggerPanel.element.classList.toggle('is-active', bloggerActive);
 
     if (resetViewport) window.scrollTo({ top: 0, behavior: 'auto' });
   }
@@ -329,6 +346,11 @@ export class InstantFinanceApp {
         await this.modelMrPanel.refresh();
       } catch (error) {
         this.modelMrPanel.setError(error instanceof Error ? error.message : '模型先生模块读取失败');
+      }
+      try {
+        await this.bloggerPanel.refresh();
+      } catch (error) {
+        this.bloggerPanel.setError(error instanceof Error ? error.message : '博主资料读取失败');
       }
       await Promise.all(SECTIONS.map(async (section) => {
         const panel = this.panels.get(section.id);

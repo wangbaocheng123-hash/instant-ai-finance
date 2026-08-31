@@ -26,6 +26,20 @@ Python 服务只监听云服务器自己的 `127.0.0.1:18765`。公网只通过�
 5. 只新增 `/opt/instant-ai`、`/var/lib/instant-ai`、`instant-ai.service`、独立 Caddy 站点与 systemd drop-in；原 Caddyfile 保持不变；
 6. 阿里云安全组只开放 HTTPS 所需端口，不开放 `18765`。
 
+## 北京博主传输对等配置
+
+`/internal/v1/transfers` 及其 artifact/complete 子路由只接受北京节点的七行 HMAC 请求，不接受主人 Cookie 或 `X-Instant-AI` 代替机器签名；反向地，HMAC 身份不会获得任何 `/api/*` 权限。Caddy 只负责现有 HTTPS 终止与回环反代，应用层强制清单 1 MiB、精确 `Content-Length`、禁用 chunked/query、正文摘要、五分钟时间窗及 nonce 防重放。
+
+生产密钥只放在 Git 外 `/etc/instant-ai/blogger-transfer.env`，由 root 持有并设为 `0600`。文件只允许以下三项，密钥至少 32 字节并以十六进制填写；不得把实际值写入仓库、命令历史、日志或回执：
+
+```text
+INSTANT_AI_BLOGGER_NODE_ID=beijing-collector-1
+INSTANT_AI_BLOGGER_KEY_ID=<已登记 key_id>
+INSTANT_AI_BLOGGER_HMAC_SECRET_HEX=<至少 64 个十六进制字符>
+```
+
+systemd 模板以可选 `EnvironmentFile` 读取它；文件不存在时主人站点仍可启动，但机器传输路由明确返回 503。博主接收账本、staging、artifact 与处理队列固定在 `/var/lib/instant-ai/blogger-agent`，不进入 Git，也不写即时财经数据库或模型先生资料域。
+
 ## 主人账户与模型先生主人资料库
 
 代码发布完成后，首次启用主人账户应在 Alibaba Cloud Client 的服务器终端以 root 运行：

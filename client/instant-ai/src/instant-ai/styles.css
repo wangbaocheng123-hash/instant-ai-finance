@@ -361,6 +361,63 @@ img { display: block; }
 .model-mr-unavailable p { margin: 0; color: #667085; font-size: 13px; }
 .model-mr-unavailable small { max-width: 520px; margin-top: 11px; color: #929bab; font-size: 11px; line-height: 1.6; }
 
+.blogger-panel { --panel-accent: #0f8a7b; }
+.blogger-header { border-top-color: #0f8a7b; }
+.blogger-body { background: #f5f9f8; }
+.blogger-view { min-height: 100%; padding: 12px; }
+.blogger-library-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; margin-bottom: 13px; }
+.blogger-library-summary > div { min-width: 0; min-height: 58px; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 3px; padding: 8px; border: 1px solid #d7e7e3; border-radius: 8px; background: #fff; }
+.blogger-library-summary b { color: #126f64; font-size: 20px; }
+.blogger-library-summary span { color: #71827f; text-align: center; font-size: 10px; }
+.blogger-view-heading { margin: 0 2px 10px; }
+.blogger-view-heading h3 { margin: 0; color: #172c29; font-size: 18px; }
+.blogger-view-heading p { margin: 4px 0 0; color: #758481; font-size: 11px; line-height: 1.5; }
+.blogger-card-list { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.blogger-card { width: 100%; min-width: 0; min-height: 76px; display: grid; grid-template-columns: minmax(0, 1fr) auto 22px; align-items: center; gap: 10px; padding: 12px 11px; border: 1px solid #dce6e4; border-left: 3px solid #55a79c; border-radius: 9px; background: #fff; cursor: pointer; text-align: left; }
+.blogger-card:hover { border-color: #9bc7c1; background: #f9fcfb; }
+.blogger-card-main { min-width: 0; }
+.blogger-card h3 { margin: 0; overflow: hidden; color: #1e302e; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; line-height: 1.45; }
+.blogger-card p { margin: 5px 0 0; overflow: hidden; color: #75827f; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.blogger-card-statuses { max-width: 230px; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
+.blogger-status-pill { padding: 4px 6px; border-radius: 5px; font-size: 9px; font-weight: 650; white-space: nowrap; }
+.blogger-status-pill.is-pending { background: #fff4dc; color: #8a5b10; }
+.blogger-status-pill.is-active { background: #e8f1ff; color: #245caa; }
+.blogger-status-pill.is-ready { background: #e8f7ee; color: #23734c; }
+.blogger-status-pill.is-error { background: #ffe9eb; color: #a92f3a; }
+.blogger-card-arrow { color: #7a928e; font-size: 25px; line-height: 1; }
+.blogger-back-button { min-height: 38px; margin: 0 0 10px; padding: 7px 10px; border: 1px solid #cfe0dc; border-radius: 7px; background: #fff; color: #176e63; cursor: pointer; font-size: 12px; font-weight: 650; }
+.blogger-back-button:hover { border-color: #88bdb6; background: #f5fbf9; }
+.blogger-work-detail { padding: 15px; border: 1px solid #d9e5e2; border-radius: 10px; background: #fff; }
+.blogger-detail-kicker { margin: 0; color: #188173; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.blogger-work-detail > h3 { margin: 7px 0 5px; color: #172c29; font-size: 20px; line-height: 1.55; }
+.blogger-work-detail > time { color: #7d8b88; font-size: 10px; }
+.blogger-detail-description { margin: 13px 0 0; padding: 11px 12px; border-left: 3px solid #55a79c; border-radius: 0 7px 7px 0; background: #f3f9f7; color: #3d5350; font-size: 13px; line-height: 1.75; white-space: pre-wrap; }
+.blogger-state-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 14px; }
+.blogger-state-card { min-width: 0; padding: 11px; border: 1px solid #dce6e4; border-radius: 8px; background: #fafcfc; }
+.blogger-state-card > span { display: block; color: #7d8b88; font-size: 9px; }
+.blogger-state-card > b { display: block; margin-top: 4px; color: #334b47; font-size: 14px; }
+.blogger-state-card > p { margin: 6px 0 0; color: #657571; font-size: 10px; line-height: 1.55; }
+.blogger-state-card.is-pending { border-color: #efdba9; background: #fffbf2; }
+.blogger-state-card.is-active { border-color: #bfd2ed; background: #f5f9ff; }
+.blogger-state-card.is-ready { border-color: #bfe0cd; background: #f3faf6; }
+.blogger-state-card.is-error { border-color: #edc1c5; background: #fff6f7; }
+.blogger-detail-section { margin-top: 12px; padding: 11px; border: 1px solid #e0e8e6; border-radius: 8px; background: #fbfcfc; }
+.blogger-detail-section h4 { margin: 0 0 8px; color: #3b514e; font-size: 12px; }
+.blogger-detail-section p { margin: 0; color: #667672; font-size: 11px; line-height: 1.65; }
+.blogger-transfer-facts > div { display: grid; gap: 5px; }
+.blogger-transfer-facts > div > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 5px; border-top: 1px solid #edf1f0; }
+.blogger-transfer-facts span { color: #7b8986; font-size: 10px; }
+.blogger-transfer-facts b { color: #3d514e; text-align: right; font-size: 10px; }
+.blogger-source-link { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; margin-top: 13px; padding: 8px 11px; border: 1px solid #89bdb6; border-radius: 7px; color: #176e63; text-decoration: none; font-size: 11px; font-weight: 650; }
+.blogger-boundary-note { margin: 13px 0 0; color: #84918f; font-size: 9px; line-height: 1.55; }
+.blogger-loading { min-height: 360px; }
+.blogger-view-error .panel-message { min-height: 300px; }
+.blogger-unavailable { min-height: 440px; display: flex; align-items: center; justify-content: center; flex-direction: column; padding: 30px; text-align: center; }
+.blogger-unavailable > span { width: 54px; height: 54px; display: grid; place-items: center; border-radius: 15px; background: #e4f4f1; color: #0f7b6e; font-size: 23px; font-weight: 750; }
+.blogger-unavailable h3 { margin: 14px 0 6px; color: #253b38; font-size: 18px; }
+.blogger-unavailable p { margin: 0; color: #667773; font-size: 13px; }
+.blogger-unavailable small { max-width: 520px; margin-top: 11px; color: #899793; font-size: 11px; line-height: 1.6; }
+
 .news-row { width: 100%; display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 11px; align-items: start; min-height: 108px; padding: 11px; border: 0; border-bottom: 1px solid #edf0f3; background: #fff; cursor: pointer; text-align: left; }
 .news-row:hover { background: #f7f9fc; }
 .news-row.is-read { opacity: .78; }
@@ -595,14 +652,17 @@ img { display: block; }
     bottom: 0;
     left: 0;
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(8, minmax(44px, 1fr));
     min-height: calc(62px + env(safe-area-inset-bottom));
+    overflow-x: auto;
     padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
     border-top: 1px solid #dfe5ec;
     background: rgba(255, 255, 255, .97);
     box-shadow: 0 -8px 24px rgba(24, 39, 58, .08);
     backdrop-filter: blur(16px);
+    scrollbar-width: none;
   }
+  .mobile-dock::-webkit-scrollbar { display: none; }
   .mobile-dock button { min-width: 0; min-height: 50px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border: 0; border-radius: 9px; background: transparent; color: #667085; }
   .mobile-dock button span { display: grid; place-items: center; min-width: 23px; height: 23px; padding: 0 4px; border-radius: 7px; background: #eef2f6; font-size: 11px; font-weight: 700; }
   .mobile-dock button b { overflow: visible; font-size: 9px; font-weight: 600; white-space: nowrap; }
@@ -646,6 +706,17 @@ img { display: block; }
   .model-chat-form textarea { min-height: 76px; }
   .model-chat-form p { grid-column: 1 / -1; }
   .model-chat-message { max-width: 90%; font-size: 14px; }
+  .blogger-view { padding: 9px; }
+  .blogger-library-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+  .blogger-library-summary > div { min-height: 54px; padding: 6px 4px; }
+  .blogger-library-summary b { font-size: 18px; }
+  .blogger-card { min-height: 88px; grid-template-columns: minmax(0, 1fr) 20px; gap: 7px; padding: 12px 10px; }
+  .blogger-card-statuses { grid-column: 1; max-width: none; justify-content: flex-start; }
+  .blogger-card-arrow { grid-column: 2; grid-row: 1 / span 2; }
+  .blogger-back-button, .blogger-source-link { min-height: 44px; }
+  .blogger-work-detail { padding: 13px 11px; }
+  .blogger-work-detail > h3 { font-size: 18px; }
+  .blogger-state-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 520px) {

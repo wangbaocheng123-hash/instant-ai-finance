@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'instant-ai-shell-v0.15.2';
+const SHELL_CACHE = 'instant-ai-shell-v0.16.0';
 const SHELL_ASSETS = ['/', '/app.js', '/styles.css', '/manifest.webmanifest', '/app-icon.svg'];
 
 self.addEventListener('install', (event) => {

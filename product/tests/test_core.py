@@ -514,7 +514,8 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("watch-pipeline", app)
         self.assertIn("送达罗盘", app)
         self.assertIn("已发现", app)
-        self.assertIn("repeat(7,1fr)", styles.replace(" ", ""))
+        self.assertIn("repeat(8,minmax(44px,1fr))", styles.replace(" ", ""))
+        self.assertIn("博主资料", app)
         self.assertNotIn("搜索公司、人物、商品或事件", app)
         self.assertNotIn("searchInput", app)
         self.assertNotIn("pulse-board", app)
@@ -533,7 +534,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.15.2", worker)
+        self.assertIn("instant-ai-shell-v0.16.0", worker)
 
 
 if __name__ == "__main__":

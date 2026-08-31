@@ -79,6 +79,106 @@ export interface AuthLoginResult {
   expires_at?: number;
 }
 
+export type BloggerTransferStatus =
+  | 'pending'
+  | 'manifest_received'
+  | 'transferring'
+  | 'verifying'
+  | 'verified'
+  | 'failed';
+
+export type BloggerProcessingStatus =
+  | 'awaiting_transfer'
+  | 'awaiting_asr_approval'
+  | 'transcribing'
+  | 'ready'
+  | 'failed';
+
+export interface BloggerStatusCounts {
+  creators: number;
+  works: number;
+  transferring: number;
+  awaiting_asr_approval: number;
+  ready: number;
+  failed: number;
+}
+
+export interface BloggerLibraryStatus {
+  available: boolean;
+  module: 'blogger-library';
+  mode: 'owner-read-only';
+  message: string;
+  counts: BloggerStatusCounts;
+}
+
+export interface BloggerCreatorStatusCounts {
+  works: number;
+  transferring: number;
+  awaiting_asr_approval: number;
+  ready: number;
+  failed: number;
+}
+
+export interface BloggerCreator {
+  creator_id: string;
+  display_name: string;
+  platform: string;
+  work_count: number;
+  latest_published_at: string | null;
+  latest_captured_at: string | null;
+  status_counts: BloggerCreatorStatusCounts;
+}
+
+export interface BloggerCreatorsResponse {
+  items: BloggerCreator[];
+  count: number;
+}
+
+export interface BloggerTransferSummary {
+  status: BloggerTransferStatus;
+  source_revision: number;
+  received_at: string | null;
+  media_expected: number;
+  media_received: number;
+  comments_expected: number;
+  comments_received: number;
+}
+
+export interface BloggerWork {
+  work_key: string;
+  creator_id: string;
+  source_work_id: string;
+  platform: string;
+  work_type: string;
+  title: string;
+  description: string;
+  source_url: string;
+  published_at: string | null;
+  captured_at: string;
+  transfer: BloggerTransferSummary;
+  processing_status: BloggerProcessingStatus;
+}
+
+export interface BloggerCreatorWorksResponse {
+  creator: BloggerCreator;
+  items: BloggerWork[];
+  count: number;
+}
+
+export interface BloggerCommentSnapshot {
+  captured_at: string | null;
+  complete: boolean;
+  expected_total: number;
+  captured_count: number;
+  top_level_count: number;
+  reply_groups: number;
+  missing_replies: number;
+}
+
+export interface BloggerWorkDetail extends BloggerWork {
+  comment_snapshot: BloggerCommentSnapshot | null;
+}
+
 export interface ModelMrStatus {
   available: boolean;
   module: string;
