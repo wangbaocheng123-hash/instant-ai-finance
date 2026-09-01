@@ -7,18 +7,28 @@ from pathlib import Path
 
 from instant_ai.database import connect, initialize
 from instant_ai.event_signal_delivery import deliver_event_signals, validate_compass_signal_url
-from instant_ai.official_monitor import monitor_official_channels, signal_fingerprint, validate_official_url
+from instant_ai.official_monitor import monitor_official_channels, signal_evidence, signal_fingerprint, validate_official_url
 from instant_ai.watch_events import list_watch_events, sync_watch_events
 
 
 class OfficialMonitorTests(unittest.TestCase):
     def test_allowlist_and_targeted_fingerprint_reduce_noise(self) -> None:
         self.assertEqual(validate_official_url("https://www.nvidia.com/en-eu/gtc/"), "https://www.nvidia.com/en-eu/gtc/")
+        self.assertEqual(
+            validate_official_url("https://adpemploymentreport.com/ner_production.json"),
+            "https://adpemploymentreport.com/ner_production.json",
+        )
+        self.assertEqual(
+            validate_official_url("https://www2.census.gov/retail/releases/historical/marts/"),
+            "https://www2.census.gov/retail/releases/historical/marts/",
+        )
         for unsafe in (
             "http://www.nvidia.com/en-eu/gtc/",
             "https://nvidia.com.evil.example/",
             "https://127.0.0.1/",
             "https://user:secret@www.nvidia.com/",
+            "https://adpemploymentreport.com.evil.example/ner_production.json",
+            "https://census.gov.evil.example/retail/",
         ):
             with self.assertRaises(ValueError):
                 validate_official_url(unsafe)
@@ -28,6 +38,36 @@ class OfficialMonitorTests(unittest.TestCase):
         self.assertEqual(first, second, "无关页面噪声不得触发重点事件变化。")
         self.assertFalse(first_signal)
         self.assertFalse(second_signal)
+
+    def test_new_macro_release_fingerprints_detect_material_official_changes(self) -> None:
+        adp_before = signal_evidence(
+            b'{"reportMonth":"July","title":"Private employers added 44,000 jobs in July"}',
+            "application/json",
+            ["Private employers", 'reportMonth":"August', "August 2026"],
+        )
+        adp_after = signal_evidence(
+            b'{"reportMonth":"August","title":"Private employers added 61,000 jobs in August",'
+            b'"card":"August 2026"}',
+            "application/json",
+            ["Private employers", 'reportMonth":"August', "August 2026"],
+        )
+        self.assertTrue(adp_before["signal_found"])
+        self.assertTrue(adp_after["signal_found"])
+        self.assertNotEqual(adp_before["fingerprint"], adp_after["fingerprint"])
+
+        census_before = signal_evidence(
+            b'<html><a href="adv2606.pdf">adv2606.pdf</a></html>',
+            "text/html",
+            ["adv2607.pdf"],
+        )
+        census_after = signal_evidence(
+            b'<html><a href="adv2606.pdf">adv2606.pdf</a><a href="adv2607.pdf">adv2607.pdf</a></html>',
+            "text/html",
+            ["adv2607.pdf"],
+        )
+        self.assertFalse(census_before["signal_found"])
+        self.assertTrue(census_after["signal_found"])
+        self.assertNotEqual(census_before["fingerprint"], census_after["fingerprint"])
 
     def test_official_channel_is_persisted_baselined_and_change_detected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

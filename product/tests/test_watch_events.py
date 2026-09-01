@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,47 @@ from instant_ai.watch_events import list_watch_events, scan_watch_events, sync_w
 
 
 class WatchEventTests(unittest.TestCase):
+    def test_macro_aliases_cover_adp_beige_book_and_retail_sales(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "macro-watch.db"
+            initialize(path)
+            payload = {
+                "ok": True,
+                "revision": 401,
+                "events": [
+                    {
+                        "eventKey": "zijin:manual:adp",
+                        "scope": "zijin",
+                        "date": "2026-09-02",
+                        "time": "20:15",
+                        "title": "美国8月ADP就业报告",
+                    },
+                    {
+                        "eventKey": "zijin:manual:beige",
+                        "scope": "zijin",
+                        "date": "2026-09-03",
+                        "time": "02:00",
+                        "title": "美联储褐皮书",
+                    },
+                    {
+                        "eventKey": "zijin:manual:retail",
+                        "scope": "zijin",
+                        "date": "2026-09-16",
+                        "time": "20:30",
+                        "title": "美国8月零售销售",
+                    },
+                ],
+            }
+            self.assertEqual(sync_watch_events(path=path, fetcher=lambda _: payload)["synced"], 3)
+            with connect(path) as connection:
+                rows = connection.execute(
+                    "SELECT title, monitor_terms_json FROM watch_events ORDER BY event_date"
+                ).fetchall()
+            terms = {row["title"]: set(json.loads(row["monitor_terms_json"])) for row in rows}
+            self.assertIn("adp", terms["美国8月ADP就业报告"])
+            self.assertIn("褐皮书", terms["美联储褐皮书"])
+            self.assertIn("retail sales", terms["美国8月零售销售"])
+
     def test_compass_events_are_isolated_persisted_and_matched(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "watch.db"
