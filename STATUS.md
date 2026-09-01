@@ -1,8 +1,8 @@
 # 项目状态
 
 - 最后更新：2026-09-01
-- 当前阶段：`P2/P3 — 即时 AI 0.17.0 生产稳定，0.17.1 唯一采集入口候选已验证`
-- 阶段状态：`LOCAL_0_17_1_VERIFIED / GITHUB_0_17_1_PUSHED / GRANDPAAMU_0_17_0_LIVE / BEIJING_COLLECTOR_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / CLS_WECHAT_PUBLIC_INDEX_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 当前阶段：`P2/P3 — 即时 AI 0.17.0 生产稳定，0.17.1 北京统一入口候选已验证`
+- 阶段状态：`LOCAL_0_17_1_VERIFIED / GITHUB_0_17_1_PUSHED / GRANDPAAMU_0_17_0_LIVE / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / CLS_WECHAT_PUBLIC_INDEX_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离；新加坡博主接收数据生产根固定为 `/var/lib/instant-ai/blogger-agent`，生命周期待后续决定
@@ -10,7 +10,7 @@
 
 ## 当前检查点
 
-- 完成 `P2-BLOGGER-05`。即时 AI 0.17.1 候选把“+ 新增博主”固定为唯一入口 `https://collector.amuyeye.com/`，不再生成 `/collector/` 后缀。北京生产 Caddy 已把根路径切到博主采集端，旧 `/collector/` 与 `/hub` 均以 308 跳回根路径；未登录根路径继续复用原主人登录。北京采集服务、Caddy 与健康接口正常，本轮没有启动采集或修改业务数据。
+- 完成 `P2-BLOGGER-05`。即时 AI 0.17.1 候选把“+ 新增博主”固定为唯一记忆入口 `https://collector.amuyeye.com/`。北京生产根路径是统一首页，同时显示“模型下载器”和“博主采集端”两张功能卡；博主端继续完整保留新增博主、抓取数量、评论上限、跟踪时间和保存并抓取。旧 `/hub` 以 308 跳回根路径，未登录继续复用原主人登录。两套服务、Caddy 与健康接口正常，本轮没有启动采集或修改业务数据。
 - 完成 `P2-BLOGGER-04` 与 ADR-0028。0.17.0 本地候选把博主详情从传输摘要升级为主人手机工作区：登录后直接播放已核验 MP4，支持普通/Range HEAD 和 GET；可编辑标题、保存正式视频原文、读取已有识别或在二次费用确认后调用豆包；评论提供本人互动、有效排行和全部评论三个视图。
 - 0.17.0 功能提交 `5d56048` 与文档检查点 `5871544` 已推送现有 `instant-ai-finance` 仓库 `main`。既有受限发布器把生产仓库从 `305b13b` 安全快进至 `5871544`；服务器 80 项 Python 测试全过，`instant-ai.service`、Caddy、回环与正式域名健康接口均返回 0.17.0。
 - 主人编辑内容写入 Git 外 `/var/lib/instant-ai/blogger-agent/database/blogger_owner.db`，不会修改北京传输清单和 artifact 账本。评论页面只返回重新编号与不可逆线程键，继续排除来源评论 ID、账号 ID、主页、服务器路径、原始 JSON、机器身份和密钥。博主切换保留在新加坡页面，“+ 新增博主”只进入北京采集端。

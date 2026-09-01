@@ -4,8 +4,8 @@
 
 ## 2026-09-01
 
-- 完成即时 AI 0.17.1 唯一采集入口候选：“+ 新增博主”只打开 `https://collector.amuyeye.com/`，生产静态产物和 Service Worker 缓存同步升级；旧 `/collector/` 地址不再由客户端生成。
-- 北京生产 Caddy 已把 `collector.amuyeye.com` 根路径切到博主采集端，继续复用原主人登录；旧 `/collector/` 与 `/hub` 均以 308 跳回根路径。北京采集服务和 Caddy 保持 active，根路径未登录时正确进入 `/login?next=/`。
+- 完成即时 AI 0.17.1 北京统一入口候选：“+ 新增博主”只打开 `https://collector.amuyeye.com/`，生产静态产物和 Service Worker 缓存同步升级；客户端不再要求用户记忆功能后缀。
+- 北京生产 Caddy 已把 `collector.amuyeye.com` 根路径设为统一首页，同时提供“模型下载器”和“博主采集端”两张功能卡并继续复用原主人登录。博主端保留新增博主、抓取数量、评论上限、跟踪时间、补抓评论和保存并抓取；旧 `/hub` 以 308 跳回根路径。两套服务和 Caddy 保持 active，根路径未登录时正确进入 `/login?next=/`。
 - 本机 80 项 Python、4 项前端契约、Vite 构建、JavaScript 语法、项目记忆检查及北京 196 项测试通过。本轮没有启动真实采集、ASR 或 AI，没有修改业务资料；即时 AI 生产仍为 0.17.0，未绕过受限发布规则部署 0.17.1。
 
 ## 2026-08-31
