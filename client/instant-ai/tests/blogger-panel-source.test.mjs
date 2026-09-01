@@ -46,7 +46,8 @@ test('creator switching and add creator stay anchored to the Beijing collector',
   const panel = await readSource('src/instant-ai/BloggerPanel.ts');
   assert.match(panel, /blogger-creator-switch/u);
   assert.match(panel, /\+ 新增博主/u);
-  assert.match(panel, /https:\/\/collector\.amuyeye\.com\/collector\//u);
+  assert.match(panel, /https:\/\/collector\.amuyeye\.com\//u);
+  assert.doesNotMatch(panel, /collector\.amuyeye\.com\/collector/u);
   assert.match(panel, /dataset\.creatorId = creator\.creator_id/u);
 });
 

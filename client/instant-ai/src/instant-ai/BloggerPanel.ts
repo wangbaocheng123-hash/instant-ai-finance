@@ -193,7 +193,7 @@ export class BloggerPanel {
   private addCreatorLink(): HTMLAnchorElement {
     const link = document.createElement('a');
     link.className = 'blogger-add-creator';
-    link.href = 'https://collector.amuyeye.com/collector/';
+    link.href = 'https://collector.amuyeye.com/';
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
     link.textContent = '+ 新增博主';
