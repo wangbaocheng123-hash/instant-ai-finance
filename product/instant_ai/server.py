@@ -54,6 +54,7 @@ from .blogger_mcp_oauth import (
     BloggerOAuthError,
 )
 from .blogger_mcp_protocol import attach_oauth_challenge, handle_message as handle_mcp_message
+from .oauth_diagnostics import oauth_diagnostic_snapshot, record_oauth_event
 
 
 HOST = "127.0.0.1"
@@ -69,6 +70,7 @@ COLLECTION_STATE: dict[str, object] = {
     "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
 }
 BLOGGER_MCP_OAUTH = BloggerMcpOAuth(AUTH)
+LOCAL_OAUTH_DIAGNOSTICS_PATH = "/api/internal/oauth-diagnostics"
 
 
 class BoundedThreadingHTTPServer(ThreadingHTTPServer):
@@ -183,6 +185,20 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         forwarded = self.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip()
         return forwarded or self.client_address[0]
 
+    def _strictly_local_request(self) -> bool:
+        return (
+            self.client_address[0] in {"127.0.0.1", "::1"}
+            and not self.headers.get("X-Forwarded-For", "").strip()
+            and not self.headers.get("X-Forwarded-Proto", "").strip()
+        )
+
+    @staticmethod
+    def _oauth_client_id(payload: Mapping[str, object]) -> str:
+        value = payload.get("client_id", "")
+        if isinstance(value, list):
+            return str(value[0]) if len(value) == 1 else ""
+        return str(value or "")
+
     def _require_auth(self) -> bool:
         if not AUTH.required:
             return True
@@ -283,12 +299,18 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
         try:
             request = BLOGGER_MCP_OAUTH.parse_authorization_request(query)
         except BloggerOAuthError as error:
+            record_oauth_event(
+                "authorize",
+                f"error_{error.code}",
+                client_id=self._oauth_client_id(query),
+            )
             self._html(
                 f"<!doctype html><meta charset=utf-8><title>授权请求无效</title>"
                 f"<p>授权请求无效：{html.escape(error.description)}</p>",
                 HTTPStatus.BAD_REQUEST,
             )
             return True
+        record_oauth_event("authorize", "page_served", client_id=request.client_id)
         self._html(self._oauth_authorize_page(request))
         return True
 
@@ -309,7 +331,13 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
                 payload = json.loads(body or b"{}")
                 if not isinstance(payload, dict):
                     raise BloggerOAuthError("invalid_client_metadata", "DCR 请求必须是对象。")
-                self._json(BLOGGER_MCP_OAUTH.register(payload), HTTPStatus.CREATED)
+                registration = BLOGGER_MCP_OAUTH.register(payload)
+                record_oauth_event(
+                    "register",
+                    "client_created",
+                    client_id=str(registration.get("client_id") or ""),
+                )
+                self._json(registration, HTTPStatus.CREATED)
                 return True
 
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().casefold()
@@ -317,7 +345,13 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
                 raise BloggerOAuthError("invalid_request", "OAuth 请求需要表单编码。")
             payload = parse_qs(body.decode("utf-8"), keep_blank_values=True, max_num_fields=32)
             if path == TOKEN_PATH:
-                self._json(BLOGGER_MCP_OAUTH.exchange(payload))
+                token_result = BLOGGER_MCP_OAUTH.exchange(payload)
+                record_oauth_event(
+                    "token",
+                    "issued",
+                    client_id=self._oauth_client_id(payload),
+                )
+                self._json(token_result)
                 return True
 
             request = BLOGGER_MCP_OAUTH.parse_authorization_request(payload)
@@ -328,6 +362,11 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
                 username = str((payload.get("username") or [""])[0])
                 password = str((payload.get("password") or [""])[0])
                 if not AUTH.login_allowed(client_key):
+                    record_oauth_event(
+                        "authorize",
+                        "rate_limited",
+                        client_id=request.client_id,
+                    )
                     self._html(
                         self._oauth_authorize_page(request, error="尝试次数过多，请稍后再试。"),
                         HTTPStatus.TOO_MANY_REQUESTS,
@@ -335,6 +374,11 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
                     return True
                 if not AUTH.authenticate(username, password):
                     AUTH.record_failed_login(client_key)
+                    record_oauth_event(
+                        "authorize",
+                        "credentials_rejected",
+                        client_id=request.client_id,
+                    )
                     self._html(
                         self._oauth_authorize_page(request, error="主人账号或密码不正确。"),
                         HTTPStatus.OK,
@@ -344,6 +388,11 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
                 token, session = AUTH.create_session(username)
                 session_cookie = AUTH.session_cookie(token, secure=self._secure_request())
             location = BLOGGER_MCP_OAUTH.authorization_redirect(request, session.username)
+            record_oauth_event(
+                "authorize",
+                "redirect_issued",
+                client_id=request.client_id,
+            )
             self.send_response(HTTPStatus.FOUND)
             self.send_header("Location", location)
             if session_cookie:
@@ -357,6 +406,11 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
         except BloggerOAuthError as caught:
             oauth_error = caught
         assert oauth_error is not None
+        record_oauth_event(
+            "token" if path == TOKEN_PATH else "register" if path == REGISTER_PATH else "authorize",
+            f"error_{oauth_error.code}",
+            client_id=self._oauth_client_id(payload) if "payload" in locals() and isinstance(payload, dict) else "",
+        )
         self._json(
             {"error": oauth_error.code, "error_description": oauth_error.description},
             HTTPStatus.BAD_REQUEST,
@@ -657,7 +711,12 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
             return
         if self._handle_mcp_get(path):
             return
-        if path == "/api/health":
+        if path == LOCAL_OAUTH_DIAGNOSTICS_PATH:
+            if not self._strictly_local_request():
+                self._not_found()
+                return
+            self._json(oauth_diagnostic_snapshot())
+        elif path == "/api/health":
             self._json({"ok": True, "version": __version__, "auth_required": AUTH.required})
         elif path == "/api/auth/status":
             self._json(AUTH.status(self.headers.get("Cookie", "")))

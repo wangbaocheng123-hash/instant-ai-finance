@@ -23,6 +23,11 @@ from instant_ai.blogger_mcp_oauth import (
     BloggerOAuthStore,
 )
 from instant_ai.blogger_mcp_protocol import attach_oauth_challenge, handle_message, tool_definitions
+from instant_ai.oauth_diagnostics import (
+    clear_oauth_diagnostics_for_tests,
+    oauth_diagnostic_snapshot,
+    record_oauth_event,
+)
 from instant_ai.server import InstantAIHandler
 
 
@@ -58,6 +63,7 @@ class FakeLibrary:
 
 class BloggerMcpCloudTests(unittest.TestCase):
     def setUp(self) -> None:
+        clear_oauth_diagnostics_for_tests()
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)
         auth_file = root / "auth.json"
@@ -67,6 +73,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
         self.oauth = BloggerMcpOAuth(self.auth, self.store)
 
     def tearDown(self) -> None:
+        clear_oauth_diagnostics_for_tests()
         self.temporary.cleanup()
 
     def handler_request(
@@ -366,6 +373,43 @@ class BloggerMcpCloudTests(unittest.TestCase):
         self.assertIn("oauth-protected-resource", headers["WWW-Authenticate"])
         self.assertEqual(json.loads(body)["error"]["code"], -32001)
 
+    def test_oauth_diagnostics_are_bounded_anonymous_and_loopback_only(self) -> None:
+        raw_client_id = "mcp-client-" + "sensitive-client-identifier"
+        for index in range(70):
+            record_oauth_event(
+                "authorize",
+                "page_served",
+                client_id=f"{raw_client_id}-{index}",
+            )
+        snapshot = oauth_diagnostic_snapshot()
+        self.assertEqual(snapshot["schema"], "instant-ai-oauth-diagnostics/v1")
+        self.assertEqual(snapshot["retention"], "memory_only")
+        self.assertEqual(len(snapshot["events"]), 64)
+        self.assertNotIn(raw_client_id, json.dumps(snapshot))
+        self.assertEqual(set(snapshot["events"][0]), {"at", "stage", "outcome", "client_ref"})
+
+        status, _headers, body = self.handler_request(
+            "GET", "/api/internal/oauth-diagnostics"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(json.loads(body)["events"]), 64)
+
+        status, _headers, body = self.handler_request(
+            "GET",
+            "/api/internal/oauth-diagnostics",
+            headers={"X-Forwarded-For": "203.0.113.7", "X-Forwarded-Proto": "https"},
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(json.loads(body)["error"], "not_found")
+
+        status, _headers, body = self.handler_request(
+            "GET",
+            "/api/internal/oauth-diagnostics",
+            headers={"X-Forwarded-Proto": "https"},
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(json.loads(body)["error"], "not_found")
+
     def test_http_oauth_flow_unlocks_cloud_tool_call(self) -> None:
         registration_body = json.dumps(
             {"redirect_uris": [CALLBACK], "token_endpoint_auth_method": "none"}
@@ -491,6 +535,20 @@ class BloggerMcpCloudTests(unittest.TestCase):
         self.assertEqual(status, 302)
         self.assertNotIn("Set-Cookie", headers)
         self.assertEqual(parse_qs(urlparse(headers["Location"]).query)["state"], ["state-http-again"])
+
+        observed = {
+            (event["stage"], event["outcome"])
+            for event in oauth_diagnostic_snapshot()["events"]
+        }
+        self.assertTrue(
+            {
+                ("register", "client_created"),
+                ("authorize", "page_served"),
+                ("authorize", "credentials_rejected"),
+                ("authorize", "redirect_issued"),
+                ("token", "issued"),
+            }.issubset(observed)
+        )
 
 
 if __name__ == "__main__":
