@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import io
 import json
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -495,7 +497,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
         self.assertIn("主人账号或密码不正确".encode(), body)
 
         form = {**authorization, "username": "amu", "password": "correct horse battery staple"}
-        status, headers, _body = self.handler_request(
+        status, headers, body = self.handler_request(
             "POST",
             "/oauth/authorize",
             urlencode(form).encode(),
@@ -504,13 +506,18 @@ class BloggerMcpCloudTests(unittest.TestCase):
                 "X-Forwarded-Proto": "https",
             },
         )
-        self.assertEqual(status, 302)
+        self.assertEqual(status, 200)
         self.assertIn(f"{SESSION_COOKIE_NAME}=", headers["Set-Cookie"])
         self.assertIn("Max-Age=2592000", headers["Set-Cookie"])
         self.assertIn("HttpOnly", headers["Set-Cookie"])
         self.assertIn("SameSite=Strict", headers["Set-Cookie"])
         self.assertIn("Secure", headers["Set-Cookie"])
-        redirect = urlparse(headers["Location"])
+        self.assertNotIn("Location", headers)
+        self.assertIn("账号验证成功".encode(), body)
+        self.assertIn("返回 ChatGPT 完成授权".encode(), body)
+        callback_match = re.search(rb'<a id="oauth-callback" class="callback" href="([^"]+)"', body)
+        self.assertIsNotNone(callback_match)
+        redirect = urlparse(html.unescape(callback_match.group(1).decode("utf-8")))
         values = parse_qs(redirect.query)
         self.assertEqual(values["state"], ["state-http"])
         self.assertNotIn("iss", values)
@@ -564,7 +571,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
         self.assertIn("已登录：amu".encode(), body)
         self.assertNotIn('name="password"'.encode(), body)
 
-        status, headers, _body = self.handler_request(
+        status, headers, body = self.handler_request(
             "POST",
             "/oauth/authorize",
             urlencode(authorization).encode(),
@@ -573,9 +580,12 @@ class BloggerMcpCloudTests(unittest.TestCase):
                 "Cookie": owner_cookie,
             },
         )
-        self.assertEqual(status, 302)
+        self.assertEqual(status, 200)
         self.assertNotIn("Set-Cookie", headers)
-        self.assertEqual(parse_qs(urlparse(headers["Location"]).query)["state"], ["state-http-again"])
+        callback_match = re.search(rb'<a id="oauth-callback" class="callback" href="([^"]+)"', body)
+        self.assertIsNotNone(callback_match)
+        callback_location = html.unescape(callback_match.group(1).decode("utf-8"))
+        self.assertEqual(parse_qs(urlparse(callback_location).query)["state"], ["state-http-again"])
 
         observed = {
             (event["stage"], event["outcome"])
@@ -586,10 +596,39 @@ class BloggerMcpCloudTests(unittest.TestCase):
                 ("register", "client_created_callback_id"),
                 ("authorize", "page_served_callback_id"),
                 ("authorize", "credentials_rejected"),
-                ("authorize", "redirect_issued_callback_id"),
+                ("authorize", "callback_link_shown_callback_id"),
                 ("token", "issued"),
             }.issubset(observed)
         )
+
+    def test_stable_callback_keeps_http_redirect(self) -> None:
+        registration = self.oauth.register(
+            {"redirect_uris": [CALLBACK], "token_endpoint_auth_method": "none"}
+        )
+        verifier = "s" * 43
+        authorization = {
+            "response_type": "code",
+            "client_id": registration["client_id"],
+            "redirect_uri": CALLBACK,
+            "state": "stable-state",
+            "code_challenge": pkce(verifier),
+            "code_challenge_method": "S256",
+            "resource": MCP_RESOURCE,
+            "scope": MCP_SCOPE,
+            "username": "amu",
+            "password": "correct horse battery staple",
+        }
+        status, headers, body = self.handler_request(
+            "POST",
+            "/oauth/authorize",
+            urlencode(authorization).encode(),
+            {"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        self.assertEqual(status, 302)
+        self.assertEqual(body, b"")
+        values = parse_qs(urlparse(headers["Location"]).query)
+        self.assertEqual(values["state"], ["stable-state"])
+        self.assertEqual(values["iss"], ["https://grandpaamu.com"])
 
 
 if __name__ == "__main__":

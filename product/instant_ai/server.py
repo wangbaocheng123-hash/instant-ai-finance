@@ -296,6 +296,25 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
 {error_html}<form method="post" action="{AUTHORIZE_PATH}">{hidden_html}{credentials}<button type="submit">确认授权</button></form>
 </main></body></html>"""
 
+    @staticmethod
+    def _oauth_callback_page(location: str) -> str:
+        callback = html.escape(location, quote=True)
+        return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>完成 ChatGPT 授权</title><style>
+body{{font-family:system-ui,sans-serif;background:#f4f7fb;color:#152033;margin:0;padding:24px}}
+main{{max-width:430px;margin:8vh auto;background:#fff;border-radius:18px;padding:28px;box-shadow:0 14px 40px #17304a1f}}
+h1{{font-size:22px;margin:0 0 12px}}p{{line-height:1.65;color:#526172}}
+.success{{background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:12px;color:#047857;font-weight:700}}
+.callback{{box-sizing:border-box;display:block;width:100%;margin-top:20px;border-radius:11px;padding:13px;background:#2563eb;color:white;text-align:center;text-decoration:none;font-size:16px;font-weight:700}}
+small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
+</style></head><body><main><h1>账号验证成功</h1>
+<p class="success">即时 AI 已完成主人身份验证。</p>
+<p>请点击下面的按钮，返回 ChatGPT 完成本次连接授权。</p>
+<a id="oauth-callback" class="callback" href="{callback}" rel="noreferrer">返回 ChatGPT 完成授权</a>
+<small>请直接点击按钮，不要复制地址，也不要刷新或重复提交密码。</small>
+</main></body></html>"""
+
     def _handle_oauth_get(self, path: str, query: Mapping[str, list[str]]) -> bool:
         if path in PROTECTED_RESOURCE_PATHS:
             self._json(BLOGGER_MCP_OAUTH.protected_resource_metadata())
@@ -404,9 +423,19 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
                 token, session = AUTH.create_session(username)
                 session_cookie = AUTH.session_cookie(token, secure=self._secure_request())
             location = BLOGGER_MCP_OAUTH.authorization_redirect(request, session.username)
+            callback_mode = self._oauth_callback_mode(request.redirect_uri)
+            if callback_mode == "callback_id":
+                record_oauth_event(
+                    "authorize",
+                    "callback_link_shown_callback_id",
+                    client_id=request.client_id,
+                )
+                response_headers = {"Set-Cookie": session_cookie} if session_cookie else None
+                self._html(self._oauth_callback_page(location), headers=response_headers)
+                return True
             record_oauth_event(
                 "authorize",
-                f"redirect_issued_{self._oauth_callback_mode(request.redirect_uri)}",
+                f"redirect_issued_{callback_mode}",
                 client_id=request.client_id,
             )
             self.send_response(HTTPStatus.FOUND)
