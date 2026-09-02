@@ -9,11 +9,28 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from instant_ai.auth import OwnerAuth, SESSION_COOKIE_NAME, SESSION_SECONDS, configure_owner, generate_owner_password
+from instant_ai.auth import (
+    MIN_OWNER_PASSWORD_LENGTH,
+    OwnerAuth,
+    SESSION_COOKIE_NAME,
+    SESSION_SECONDS,
+    configure_owner,
+    generate_owner_password,
+)
 from instant_ai.server import InstantAIHandler
 
 
 class OwnerAuthTests(unittest.TestCase):
+    def test_owner_password_minimum_is_nine_characters(self) -> None:
+        self.assertEqual(MIN_OWNER_PASSWORD_LENGTH, 9)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "auth.json"
+            with self.assertRaisesRegex(ValueError, "至少需要 9 个字符"):
+                configure_owner("owner", "12345678", path)
+
+            configure_owner("owner", "123456789", path)
+            self.assertTrue(OwnerAuth(required=True, path=path).authenticate("owner", "123456789"))
+
     def test_generated_password_is_long_and_not_a_fixed_default(self) -> None:
         first = generate_owner_password()
         second = generate_owner_password()

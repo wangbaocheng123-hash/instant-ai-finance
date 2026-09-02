@@ -15,6 +15,8 @@ Python 服务只监听云服务器自己的 `127.0.0.1:18765`。公网只通过�
 
 0.18.0 起，同一服务还在正式域名的 `/mcp` 提供“博主智能体（云端）”只读 Streamable HTTP MCP。它复用现有主人账号，通过 OAuth 2.1 authorization-code + PKCE S256 授权，不开放新端口、不需要 ChatGPT API Key，也不允许匿名读取博主文字。OAuth DCR 只接受 ChatGPT 官方回调；客户端登记和一次性授权码摘要保存在 Git 外 `/var/lib/instant-ai/blogger-agent/database/blogger_oauth.db`。使用方法见 `docs/BLOGGER_CLOUD_MCP_USAGE.md` 与 ADR-0030。
 
+主人账户配置脚本会在终端隐藏读取两次密码；手动密码至少 9 个字符，自动生成密码仍至少 24 个字符。密码不得放入命令参数、Git 或普通日志。
+
 正式手机入口为 `https://grandpaamu.com/`；`https://www.grandpaamu.com/` 永久跳转到根域名。原 `sslip.io` 地址继续作为服务器公网 IP 不变时的应急入口。`grandpaamu.com` 的根记录与 `www` 记录都必须指向当前即时 AI 云服务器公网 IP。
 
 ## 部署闸门

@@ -22,6 +22,7 @@ from .paths import LIBRARY_ROOT
 SESSION_COOKIE_NAME = "instant_ai_owner_session"
 SESSION_DAYS = 30
 SESSION_SECONDS = SESSION_DAYS * 24 * 60 * 60
+MIN_OWNER_PASSWORD_LENGTH = 9
 AUTH_FILE = Path(os.environ.get("INSTANT_AI_AUTH_FILE", str(LIBRARY_ROOT / "auth.json")))
 
 
@@ -52,8 +53,8 @@ def configure_owner(username: str, password: str, path: Path = AUTH_FILE) -> dic
     username = username.strip()
     if not username or len(username) > 64:
         raise ValueError("主人账户名称必须为 1—64 个字符。")
-    if len(password) < 12:
-        raise ValueError("主人密码至少需要 12 个字符。")
+    if len(password) < MIN_OWNER_PASSWORD_LENGTH:
+        raise ValueError(f"主人密码至少需要 {MIN_OWNER_PASSWORD_LENGTH} 个字符。")
 
     salt = secrets.token_bytes(16)
     payload = {
@@ -355,7 +356,7 @@ def main() -> None:
     if args.generate_password:
         first = generate_owner_password()
     else:
-        first = getpass.getpass("请输入主人密码（至少 12 个字符）：")
+        first = getpass.getpass(f"请输入主人密码（至少 {MIN_OWNER_PASSWORD_LENGTH} 个字符）：")
         second = getpass.getpass("请再次输入主人密码：")
         if first != second:
             raise SystemExit("两次输入的密码不一致。")
