@@ -192,7 +192,7 @@ class DatabaseTests(unittest.TestCase):
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             self.assertEqual(source_count, len(DEFAULT_SOURCES))
-            self.assertEqual(version, "9")
+            self.assertEqual(version, "10")
             with connect(path) as connection:
                 tables = {
                     row[0]
@@ -605,7 +605,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.18.0", worker)
+        self.assertIn("instant-ai-shell-v0.18.1", worker)
 
 
 if __name__ == "__main__":

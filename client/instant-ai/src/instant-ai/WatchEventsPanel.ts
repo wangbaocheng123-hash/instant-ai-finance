@@ -113,10 +113,12 @@ export class WatchEventsPanel {
       candidate.textContent = event.candidate_status;
       badges.append(candidate);
     }
-    if (event.latest_signal) {
+    if (event.latest_signal || event.analysis_feedback?.status) {
       const pipeline = document.createElement('span');
-      pipeline.className = `watch-pipeline signal-${event.latest_signal.status}`;
-      pipeline.textContent = event.pipeline_status;
+      pipeline.className = event.analysis_feedback?.status
+        ? `watch-pipeline compass-${event.analysis_feedback.status}`
+        : `watch-pipeline signal-${event.latest_signal?.status}`;
+      pipeline.textContent = this.pipelineLabel(event);
       badges.append(pipeline);
     }
 
@@ -126,6 +128,16 @@ export class WatchEventsPanel {
     meta.className = 'watch-event-meta';
     meta.textContent = `${date.full} · ${event.category || '重点事件'} · 重要性 ${event.importance}/5`;
     content.append(badges, title, meta);
+
+    if (event.analysis_feedback?.status) {
+      const feedback = document.createElement('p');
+      feedback.className = `watch-analysis-feedback compass-${event.analysis_feedback.status}`;
+      const attempts = ['retrying', 'failed'].includes(event.analysis_feedback.status)
+        ? `（第 ${event.analysis_feedback.attemptCount}/${event.analysis_feedback.maxAttempts} 次）`
+        : '';
+      feedback.textContent = `${event.pipeline_status}${attempts}`;
+      content.append(feedback);
+    }
 
     if (event.monitoring?.coverage === 'verified') {
       content.append(this.officialMonitor(event));
@@ -198,6 +210,20 @@ export class WatchEventsPanel {
     }
     box.append(facts, channels);
     return box;
+  }
+
+  private pipelineLabel(event: WatchEvent): string {
+    const labels: Record<string, string> = {
+      received: '罗盘已收到',
+      analyzing: 'Codex 分析中',
+      retrying: 'Codex 自动重试',
+      published: '报告已回填',
+      skipped: '核验后跳过',
+      failed: '需要人工复查',
+    };
+    return event.analysis_feedback?.status
+      ? labels[event.analysis_feedback.status] || '罗盘处理中'
+      : event.pipeline_status;
   }
 
   private fact(label: string, value: string): HTMLElement {

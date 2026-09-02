@@ -429,6 +429,14 @@ export interface WatchEventMatch {
   matched_at: string;
 }
 
+export interface WatchEventAnalysisFeedback {
+  status: 'received' | 'analyzing' | 'retrying' | 'published' | 'skipped' | 'failed';
+  message: string;
+  attemptCount: number;
+  maxAttempts: number;
+  updatedAt: string;
+}
+
 export interface WatchEvent {
   event_key: string;
   scope: 'home' | 'zijin';
@@ -453,6 +461,7 @@ export interface WatchEvent {
   official_status: 'changed' | 'error' | 'reachable' | 'pending' | 'unconfigured';
   candidate_status: string;
   pipeline_status: string;
+  analysis_feedback: Partial<WatchEventAnalysisFeedback>;
   latest_signal: {
     signal_id: string;
     detected_at: string;

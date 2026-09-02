@@ -86,6 +86,13 @@ class WatchEventTests(unittest.TestCase):
                         "status": "planned",
                         "note": "已确认",
                         "sources": [{"name": "NVIDIA", "url": "https://www.nvidia.com/gtc/"}],
+                        "analysisFeedback": {
+                            "status": "retrying",
+                            "message": "本轮核验暂未完成，系统将在 5 分钟后自动重试。",
+                            "attemptCount": 1,
+                            "maxAttempts": 3,
+                            "updatedAt": now,
+                        },
                     },
                     {
                         "eventKey": "zijin:research:pmi",
@@ -111,10 +118,15 @@ class WatchEventTests(unittest.TestCase):
             self.assertEqual(listing["counts"]["total"], 2)
             self.assertEqual(listing["counts"]["home"], 1)
             self.assertEqual(listing["counts"]["zijin"], 1)
+            self.assertEqual(listing["events"][0]["event_key"], "home:timeline:gtc",
+                             "最近 24 小时有罗盘反馈的事件必须临时置顶。")
             gtc = next(event for event in listing["events"] if event["scope"] == "home")
             self.assertEqual(gtc["match_count"], 1)
             self.assertEqual(gtc["latest_matches"][0]["item_id"], 1)
             self.assertIn("nvidia", gtc["latest_matches"][0]["matched_terms"])
+            self.assertEqual(gtc["analysis_feedback"]["status"], "retrying")
+            self.assertEqual(gtc["analysis_feedback"]["attemptCount"], 1)
+            self.assertIn("5 分钟后自动重试", gtc["pipeline_status"])
             self.assertNotIn("holdings", gtc)
 
             reduced = {**payload, "revision": 314, "events": payload["events"][:1]}

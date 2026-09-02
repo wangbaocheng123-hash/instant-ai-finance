@@ -12,7 +12,7 @@ from urllib.parse import quote_plus
 from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensure_layout
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -451,6 +451,7 @@ def initialize(path: Path | str | None = None) -> None:
                 note TEXT NOT NULL DEFAULT '',
                 sources_json TEXT NOT NULL DEFAULT '[]',
                 monitoring_json TEXT NOT NULL DEFAULT '{}',
+                analysis_feedback_json TEXT NOT NULL DEFAULT '{}',
                 monitor_terms_json TEXT NOT NULL DEFAULT '[]',
                 source_updated_at TEXT NOT NULL DEFAULT '',
                 is_active INTEGER NOT NULL DEFAULT 1,
@@ -553,6 +554,8 @@ def initialize(path: Path | str | None = None) -> None:
         }
         if "monitoring_json" not in watch_event_columns:
             connection.execute("ALTER TABLE watch_events ADD COLUMN monitoring_json TEXT NOT NULL DEFAULT '{}'")
+        if "analysis_feedback_json" not in watch_event_columns:
+            connection.execute("ALTER TABLE watch_events ADD COLUMN analysis_feedback_json TEXT NOT NULL DEFAULT '{}'")
         watch_channel_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(watch_event_channels)").fetchall()
         }

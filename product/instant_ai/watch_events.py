@@ -18,6 +18,7 @@ from .official_monitor import monitor_official_channels, validate_official_url
 DEFAULT_COMPASS_EVENTS_URL = "http://127.0.0.1:32180/api/v1/watch-events"
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+ANALYSIS_FEEDBACK_STATUSES = {"received", "analyzing", "retrying", "published", "skipped", "failed"}
 
 ALIAS_GROUPS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("semicon",), ("semicon",)),
@@ -143,6 +144,26 @@ def _normalized_monitoring(raw: object) -> dict[str, Any]:
     }
 
 
+def _normalized_analysis_feedback(raw: object) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    status = str(raw.get("status") or "").strip()
+    if status not in ANALYSIS_FEEDBACK_STATUSES:
+        return {}
+    try:
+        attempt_count = max(0, min(10, int(raw.get("attemptCount") or 0)))
+        max_attempts = max(1, min(10, int(raw.get("maxAttempts") or 3)))
+    except (TypeError, ValueError):
+        attempt_count, max_attempts = 0, 3
+    return {
+        "status": status,
+        "message": str(raw.get("message") or "").strip()[:600],
+        "attemptCount": attempt_count,
+        "maxAttempts": max_attempts,
+        "updatedAt": str(raw.get("updatedAt") or "").strip()[:50],
+    }
+
+
 def _derive_monitor_terms(event: dict[str, Any]) -> list[str]:
     corpus = _normalize(" ".join((event.get("title", ""), event.get("note", ""), event.get("category", ""))))
     terms: set[str] = set()
@@ -241,6 +262,7 @@ def _normalized_event(raw: object) -> dict[str, Any] | None:
         "note": str(raw.get("note") or "").strip()[:4000],
         "sources": sources,
         "monitoring": _normalized_monitoring(raw.get("monitoring")),
+        "analysis_feedback": _normalized_analysis_feedback(raw.get("analysisFeedback")),
         "source_updated_at": str(raw.get("updatedAt") or "").strip()[:100],
     }
     normalized["monitor_terms"] = _derive_monitor_terms(normalized)
@@ -274,8 +296,9 @@ def sync_watch_events(
                     INSERT INTO watch_events(
                         event_key, scope, source_kind, source_event_id, title, event_date,
                         event_time, category, importance, event_status, note, sources_json,
-                        monitoring_json, monitor_terms_json, source_updated_at, is_active, last_synced_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                        monitoring_json, analysis_feedback_json, monitor_terms_json,
+                        source_updated_at, is_active, last_synced_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                     ON CONFLICT(event_key) DO UPDATE SET
                         scope=excluded.scope, source_kind=excluded.source_kind,
                         source_event_id=excluded.source_event_id, title=excluded.title,
@@ -284,6 +307,7 @@ def sync_watch_events(
                         event_status=excluded.event_status, note=excluded.note,
                         sources_json=excluded.sources_json,
                         monitoring_json=excluded.monitoring_json,
+                        analysis_feedback_json=excluded.analysis_feedback_json,
                         monitor_terms_json=excluded.monitor_terms_json,
                         source_updated_at=excluded.source_updated_at,
                         is_active=1, last_synced_at=excluded.last_synced_at
@@ -294,6 +318,7 @@ def sync_watch_events(
                         event["importance"], event["event_status"], event["note"],
                         json.dumps(event["sources"], ensure_ascii=False),
                         json.dumps(public_monitoring, ensure_ascii=False),
+                        json.dumps(event["analysis_feedback"], ensure_ascii=False),
                         json.dumps(event["monitor_terms"], ensure_ascii=False), event["source_updated_at"], attempted_at,
                     ),
                 )
@@ -455,6 +480,19 @@ def _recent_change(value: object, *, now: datetime) -> bool:
         return False
 
 
+def _event_activity_timestamp(event: dict[str, Any]) -> float:
+    feedback = event.get("analysis_feedback") if isinstance(event.get("analysis_feedback"), dict) else {}
+    signal = event.get("latest_signal") if isinstance(event.get("latest_signal"), dict) else {}
+    value = feedback.get("updatedAt") or signal.get("detected_at") or ""
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=ZoneInfo("UTC"))
+        return parsed.timestamp()
+    except ValueError:
+        return 0.0
+
+
 def list_watch_events(*, path: object = None) -> dict[str, Any]:
     with connect(path) as connection:
         rows = connection.execute(
@@ -475,6 +513,7 @@ def list_watch_events(*, path: object = None) -> dict[str, Any]:
             event = dict(row)
             event["sources"] = json.loads(event.pop("sources_json") or "[]")
             event["monitoring"] = json.loads(event.pop("monitoring_json") or "{}")
+            event["analysis_feedback"] = json.loads(event.pop("analysis_feedback_json") or "{}")
             event.pop("monitor_terms_json", None)
             event["is_active"] = bool(event["is_active"])
             match_rows = connection.execute(
@@ -557,7 +596,17 @@ def list_watch_events(*, path: object = None) -> dict[str, Any]:
         else:
             event["candidate_status"] = ""
         signal = event["latest_signal"]
-        if signal and signal["status"] == "delivered":
+        feedback = event["analysis_feedback"]
+        if feedback:
+            event["pipeline_status"] = feedback.get("message") or {
+                "received": "罗盘已收到，等待 Codex 分析",
+                "analyzing": "Codex 正在核验并生成报告",
+                "retrying": "Codex 暂未核验完成，系统将自动重试",
+                "published": "Codex 报告已回填罗盘",
+                "skipped": "Codex 已核验，本次无需新报告",
+                "failed": "Codex 连续核验失败，需要人工复查",
+            }.get(feedback.get("status"), "罗盘正在处理")
+        elif signal and signal["status"] == "delivered":
             event["pipeline_status"] = "官方变化已送达罗盘"
         elif signal and signal["status"] == "failed":
             event["pipeline_status"] = "官方变化待重试送达"
@@ -565,6 +614,12 @@ def list_watch_events(*, path: object = None) -> dict[str, Any]:
             event["pipeline_status"] = "官方变化等待送达罗盘"
         else:
             event["pipeline_status"] = "尚未产生官方变化信号"
+    now_timestamp = now_utc.timestamp()
+    events.sort(key=lambda event: (
+        0 if now_timestamp - 24 * 60 * 60 <= _event_activity_timestamp(event) <= now_timestamp else 1,
+        -_event_activity_timestamp(event),
+        event["event_date"], event["event_time"], -event["importance"], event["title"],
+    ))
     return {
         "events": events,
         "counts": {
