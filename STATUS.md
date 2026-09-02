@@ -2,6 +2,7 @@
 
 - 最后更新：2026-09-02
 - 当前阶段：`P2/P3 — 即时 AI 0.18.0 正式生产，0.18.1 ChatGPT OAuth 兼容修复待发布`
+- 0.18.1 本地候选已修复 ADP 官方结果送达后被永久跳过的状态机缺口：已认证官方片段可作为一手证据，搜索索引滞后进入五分钟重试而不是 `skip`，最多三次并持久化原因；即时 AI schema 10 显示罗盘/Codex 回填状态并临时置顶最近变化。即时 AI 92 项 Python 测试、Vite 构建和罗盘完整 `check.sh` 均通过；两个仓库都只形成待发布提交，本轮未正式发布。
 - 所有者已明确要求把主人密码最低长度调整为 9 个字符，并把 OAuth 主人账号改为指定用户名。代码只调整长度策略；真实密码仍必须在隐藏终端提示中输入，不进入 Git、聊天、命令参数或普通日志。
 - 阶段状态：`GRANDPAAMU_0_18_0_LIVE / BLOGGER_OAUTH_DCR_FIX_0_18_1_READY / CHATGPT_CONNECTION_TOKEN_EXCHANGE_PENDING / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / CLS_WECHAT_PUBLIC_INDEX_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
@@ -64,7 +65,7 @@
 ## 当前阻塞
 
 - `P3-BLOGGER-02` 已把连接故障定位并修复为 0.18.1 本地候选；当前生产仍是 0.18.0，必须获得所有者明确的“正式发布即时 AI 0.18.1”指令后才能通过受限发布器上线。上线后需要删除当前未完成令牌交换的插件外壳并重建一次连接，以取得新的专用 DCR 客户端；不得读取 Cookie、密码或改用 API Key。
-- 9 月宏观重点事件和即时 AI 官方监测补丁已随 0.18.0 正式发布；时变罗盘的 Codex 回填修复仍属于独立仓库与独立发布范围，本次未修改或发布罗盘。
+- 9 月宏观重点事件和即时 AI 官方监测补丁已随 0.18.0 正式发布；本轮新增的 0.18.1 展示反馈与时变罗盘 Codex 三态重试修复仍属于两个独立待发布版本，均未正式发布。
 - `P2-MODEL-09` 的代码、Git 推送和正式发布没有剩余阻塞；尚待所有者在 iPhone 上完全关闭旧页面后重新进入 0.15.2 做最后的真机播放确认。
 - 博主资料正式生命周期仍待所有者决定，但不影响 0.17.0 当前功能；播放器、原文与评论工作区已正式上线。
 - 服务器已安装 `/usr/bin/ffmpeg` 6.1.1，李爱琳rene最新作品已完成识别并保存 939 字正式原文；现场豆包调用仍坚持页面二次费用确认，不会由 MCP 或自动任务触发。
