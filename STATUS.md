@@ -1,12 +1,12 @@
 # 项目状态
 
 - 最后更新：2026-09-03
-- 当前阶段：`P2/P3 — 即时 AI 0.18.3 正式生产，0.18.4 callback-ID OAuth 兼容候选待发布`
-- 0.18.3 真实重试已精确定位：新客户端注册、授权页和主人凭据全部成功，服务器连续三次发出 ChatGPT 稳定回调，但没有任何 `/oauth/token` 请求；账号、密码、确认按钮和服务端 token 交换逻辑均已排除，断点位于共享稳定回调返回插件创建器的客户端阶段。0.18.4 本地候选不再为新连接声明稳定回调能力，使 OpenAI 按官方兼容路径分配每连接独有的 callback-ID URI；旧稳定客户端继续兼容。诊断会匿名标记实际回调模式，完整 95 项 Python 回归、Vite 构建及 npm 零漏洞审计已通过，尚未正式发布。
+- 当前阶段：`P2/P3 — 即时 AI 0.18.4 正式生产，等待新建 callback-ID 连接验收`
+- 0.18.3 真实重试已精确定位：新客户端注册、授权页和主人凭据全部成功，服务器连续三次发出 ChatGPT 稳定回调，但没有任何 `/oauth/token` 请求；账号、密码、确认按钮和服务端 token 交换逻辑均已排除。0.18.4 callback-ID 兼容修复现已正式上线，生产提交 `6ef35e9`；服务器 95 项回归、正式健康、Service Worker、MCP `initialize`、OAuth 元数据、服务状态、本机/公网诊断隔离均通过。新连接会使用每连接独有的 callback-ID URI，旧稳定客户端继续兼容；下一步必须删除旧失败连接后新建，不能复用旧授权页面。
 - 0.18.2 已正式上线并消除 OAuth 授权页的账号歧义：页面直接从当前 Git 外单主人配置带入并锁定账号，主人只输入密码；错误凭据在原页醒目显示。授权成功后保存 30 天安全主人 Cookie，不再丢弃刚创建的网页登录会话；MCP access token 与网页 Cookie 继续严格隔离。受限发布器安全快进至 `8bd242f`，服务器 93 项回归、公网 OAuth/MCP 协议及真实授权页结构均通过；未读取或重置生产账号密码。
 - 0.18.1 已修复 ADP 官方结果送达后被永久跳过的状态机缺口：已认证官方片段可作为一手证据，搜索索引滞后进入五分钟重试而不是 `skip`，最多三次并持久化原因；即时 AI schema 10 显示罗盘/Codex 回填状态并临时置顶最近变化。即时 AI 一侧已正式上线；时变罗盘三态重试仍是独立待发布候选，须另行取得正式发布授权。
 - 所有者已明确要求把主人密码最低长度调整为 9 个字符，并把 OAuth 主人账号改为指定用户名。代码只调整长度策略；真实密码仍必须在隐藏终端提示中输入，不进入 Git、聊天、命令参数或普通日志。
-- 阶段状态：`GRANDPAAMU_0_18_3_LIVE / BLOGGER_OAUTH_DIAGNOSTICS_0_18_3_LIVE / BLOGGER_CALLBACK_ID_0_18_4_CANDIDATE / CHATGPT_CONNECTION_REBUILD_PENDING / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / CLS_WECHAT_PUBLIC_INDEX_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 阶段状态：`GRANDPAAMU_0_18_4_LIVE / BLOGGER_OAUTH_DIAGNOSTICS_0_18_4_LIVE / BLOGGER_CALLBACK_ID_0_18_4_LIVE / CHATGPT_CONNECTION_REBUILD_PENDING / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / CLS_WECHAT_PUBLIC_INDEX_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离；新加坡博主接收数据生产根固定为 `/var/lib/instant-ai/blogger-agent`，生命周期待后续决定
