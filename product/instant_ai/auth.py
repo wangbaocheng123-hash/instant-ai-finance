@@ -154,6 +154,91 @@ class OwnerAuth:
         signature = _b64encode(hmac.new(self._session_secret(config), payload.encode("ascii"), hashlib.sha256).digest())
         return f"{payload}.{signature}", session
 
+    def create_oauth_token(
+        self,
+        username: str,
+        *,
+        audience: str,
+        scopes: tuple[str, ...],
+        now: int | None = None,
+    ) -> tuple[str, Session]:
+        """Create a signed owner-only MCP token without exposing the auth secret."""
+        config = self._load_config()
+        if config is None or username.strip() != str(config.get("username") or ""):
+            raise ValueError("账户配置不可用。")
+        if not audience.startswith("https://") or not scopes:
+            raise ValueError("OAuth 令牌范围无效。")
+        issued_at = int(time.time()) if now is None else int(now)
+        session = Session(
+            username=username.strip(),
+            issued_at=issued_at,
+            expires_at=issued_at + SESSION_SECONDS,
+        )
+        payload = _b64encode(
+            json.dumps(
+                {
+                    "typ": "mcp_oauth",
+                    "u": session.username,
+                    "iat": session.issued_at,
+                    "exp": session.expires_at,
+                    "aud": audience,
+                    "scope": " ".join(sorted(set(scopes))),
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        signing_input = f"mcp-oauth-v1.{payload}".encode("ascii")
+        signature = _b64encode(
+            hmac.new(self._session_secret(config), signing_input, hashlib.sha256).digest()
+        )
+        return f"{payload}.{signature}", session
+
+    def oauth_session(
+        self,
+        token: str,
+        *,
+        audience: str,
+        required_scope: str,
+        now: int | None = None,
+    ) -> Session | None:
+        """Verify a signed MCP token, including audience, expiry and scope."""
+        if not self.required:
+            return None
+        config = self._load_config()
+        if config is None:
+            return None
+        try:
+            payload, signature = str(token or "").split(".", 1)
+            signing_input = f"mcp-oauth-v1.{payload}".encode("ascii")
+            expected = _b64encode(
+                hmac.new(self._session_secret(config), signing_input, hashlib.sha256).digest()
+            )
+            if not hmac.compare_digest(signature, expected):
+                return None
+            raw = json.loads(_b64decode(payload))
+            if raw.get("typ") != "mcp_oauth" or raw.get("aud") != audience:
+                return None
+            scopes = set(str(raw.get("scope") or "").split())
+            if required_scope not in scopes:
+                return None
+            session = Session(
+                username=str(raw["u"]),
+                issued_at=int(raw["iat"]),
+                expires_at=int(raw["exp"]),
+            )
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+        current = int(time.time()) if now is None else int(now)
+        if (
+            session.username != str(config.get("username") or "")
+            or session.issued_at > current + 60
+            or session.expires_at <= current
+            or session.expires_at - session.issued_at != SESSION_SECONDS
+        ):
+            return None
+        return session
+
     def session(self, cookie_header: str, *, now: int | None = None) -> Session | None:
         if not self.required:
             current = int(time.time()) if now is None else int(now)

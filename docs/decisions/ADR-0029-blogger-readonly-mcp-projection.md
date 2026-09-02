@@ -1,6 +1,6 @@
 # ADR-0029：博主云端正式原文的只读 MCP 投影
 
-- 状态：`ACCEPTED`
+- 状态：`ACCEPTED_FOR_LEGACY_WINDOWS_BRIDGE`；ChatGPT 手机/电脑直连云端由 ADR-0030 扩展
 - 日期：2026-09-02
 - 决策者：产品所有者
 

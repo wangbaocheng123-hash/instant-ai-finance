@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import html
 import mimetypes
 import re
 import threading
@@ -43,6 +44,16 @@ from .blogger_mcp import GET_PATH as BLOGGER_MCP_GET_PATH
 from .blogger_mcp import PATHS as BLOGGER_MCP_PATHS
 from .blogger_mcp import SEARCH_PATH as BLOGGER_MCP_SEARCH_PATH
 from .blogger_mcp import authorize as authorize_blogger_mcp
+from .blogger_mcp_oauth import (
+    AUTHORIZATION_METADATA_PATH,
+    AUTHORIZE_PATH,
+    PROTECTED_RESOURCE_PATHS,
+    REGISTER_PATH,
+    TOKEN_PATH,
+    BloggerMcpOAuth,
+    BloggerOAuthError,
+)
+from .blogger_mcp_protocol import attach_oauth_challenge, handle_message as handle_mcp_message
 
 
 HOST = "127.0.0.1"
@@ -57,6 +68,7 @@ COLLECTION_STATE: dict[str, object] = {
     "mode": "automatic",
     "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
 }
+BLOGGER_MCP_OAUTH = BloggerMcpOAuth(AUTH)
 
 
 class BoundedThreadingHTTPServer(ThreadingHTTPServer):
@@ -184,6 +196,224 @@ class InstantAIHandler(BaseHTTPRequestHandler):
 
     def _not_found(self) -> None:
         self._json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+
+    def _html(self, content: str, status: int = 200, headers: Mapping[str, str] | None = None) -> None:
+        body = content.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
+        )
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _read_limited_body(self, *, maximum: int) -> bytes | None:
+        try:
+            content_length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            self._json({"error": "invalid_content_length"}, HTTPStatus.BAD_REQUEST)
+            return None
+        if content_length < 0 or content_length > maximum:
+            self._json({"error": "request_too_large"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            return None
+        return self.rfile.read(content_length)
+
+    def _oauth_authorize_page(self, request, *, error: str = "") -> str:
+        owner_session = AUTH.session(self.headers.get("Cookie", ""))
+        hidden = {
+            "response_type": "code",
+            "client_id": request.client_id,
+            "redirect_uri": request.redirect_uri,
+            "state": request.state,
+            "code_challenge": request.code_challenge,
+            "code_challenge_method": "S256",
+            "resource": request.resource,
+            "scope": request.scope,
+        }
+        hidden_html = "".join(
+            f'<input type="hidden" name="{html.escape(name)}" value="{html.escape(value, quote=True)}">'
+            for name, value in hidden.items()
+        )
+        if owner_session is None:
+            credentials = """
+              <label>主人账号<input name="username" autocomplete="username" required></label>
+              <label>主人密码<input type="password" name="password" autocomplete="current-password" required></label>
+            """
+            identity = "请使用即时 AI 现有主人账号授权。"
+        else:
+            credentials = ""
+            identity = f"已登录：{html.escape(owner_session.username)}"
+        error_html = f'<p class="error">{html.escape(error)}</p>' if error else ""
+        return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>授权博主智能体（云端）</title><style>
+body{{font-family:system-ui,sans-serif;background:#f4f7fb;color:#152033;margin:0;padding:24px}}
+main{{max-width:430px;margin:8vh auto;background:#fff;border-radius:18px;padding:28px;box-shadow:0 14px 40px #17304a1f}}
+h1{{font-size:22px;margin:0 0 12px}}p{{line-height:1.65;color:#526172}}label{{display:block;margin:14px 0;color:#334155}}
+input{{box-sizing:border-box;width:100%;margin-top:7px;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px}}
+button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;color:white;font-size:16px;font-weight:700}}
+.scope{{background:#eff6ff;border-radius:10px;padding:12px;color:#1e40af}}.error{{color:#b91c1c}}
+</style></head><body><main><h1>授权博主智能体（云端）</h1>
+<p>{identity}</p><p class="scope">只读权限：查询新加坡即时 AI 中的博主、作品标题和视频文字。不会采集、转写、修改或读取评论与视频文件。</p>
+{error_html}<form method="post" action="{AUTHORIZE_PATH}">{hidden_html}{credentials}<button type="submit">确认授权</button></form>
+</main></body></html>"""
+
+    def _handle_oauth_get(self, path: str, query: Mapping[str, list[str]]) -> bool:
+        if path in PROTECTED_RESOURCE_PATHS:
+            self._json(BLOGGER_MCP_OAUTH.protected_resource_metadata())
+            return True
+        if path == AUTHORIZATION_METADATA_PATH:
+            self._json(BLOGGER_MCP_OAUTH.authorization_server_metadata())
+            return True
+        if path != AUTHORIZE_PATH:
+            return False
+        try:
+            request = BLOGGER_MCP_OAUTH.parse_authorization_request(query)
+        except BloggerOAuthError as error:
+            self._html(
+                f"<!doctype html><meta charset=utf-8><title>授权请求无效</title>"
+                f"<p>授权请求无效：{html.escape(error.description)}</p>",
+                HTTPStatus.BAD_REQUEST,
+            )
+            return True
+        self._html(self._oauth_authorize_page(request))
+        return True
+
+    def _handle_oauth_post(self, path: str) -> bool:
+        if path not in {REGISTER_PATH, TOKEN_PATH, AUTHORIZE_PATH}:
+            return False
+        if not self._host_allowed():
+            self._json({"error": "invalid_host"}, HTTPStatus.BAD_REQUEST)
+            return True
+        body = self._read_limited_body(maximum=32 * 1024)
+        if body is None:
+            return True
+        oauth_error: BloggerOAuthError | None = None
+        try:
+            if path == REGISTER_PATH:
+                if self.headers.get("Content-Type", "").split(";", 1)[0].strip().casefold() != "application/json":
+                    raise BloggerOAuthError("invalid_client_metadata", "DCR 需要 JSON。")
+                payload = json.loads(body or b"{}")
+                if not isinstance(payload, dict):
+                    raise BloggerOAuthError("invalid_client_metadata", "DCR 请求必须是对象。")
+                self._json(BLOGGER_MCP_OAUTH.register(payload), HTTPStatus.CREATED)
+                return True
+
+            content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().casefold()
+            if content_type != "application/x-www-form-urlencoded":
+                raise BloggerOAuthError("invalid_request", "OAuth 请求需要表单编码。")
+            payload = parse_qs(body.decode("utf-8"), keep_blank_values=True, max_num_fields=32)
+            if path == TOKEN_PATH:
+                self._json(BLOGGER_MCP_OAUTH.exchange(payload))
+                return True
+
+            request = BLOGGER_MCP_OAUTH.parse_authorization_request(payload)
+            session = AUTH.session(self.headers.get("Cookie", ""))
+            if session is None:
+                client_key = self._client_key()
+                username = str((payload.get("username") or [""])[0])
+                password = str((payload.get("password") or [""])[0])
+                if not AUTH.login_allowed(client_key):
+                    self._html(
+                        self._oauth_authorize_page(request, error="尝试次数过多，请稍后再试。"),
+                        HTTPStatus.TOO_MANY_REQUESTS,
+                    )
+                    return True
+                if not AUTH.authenticate(username, password):
+                    AUTH.record_failed_login(client_key)
+                    self._html(
+                        self._oauth_authorize_page(request, error="主人账号或密码不正确。"),
+                        HTTPStatus.UNAUTHORIZED,
+                    )
+                    return True
+                AUTH.clear_failed_logins(client_key)
+                _token, session = AUTH.create_session(username)
+            location = BLOGGER_MCP_OAUTH.authorization_redirect(request, session.username)
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", location)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return True
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            oauth_error = BloggerOAuthError("invalid_request", "请求正文无效。")
+        except BloggerOAuthError as caught:
+            oauth_error = caught
+        assert oauth_error is not None
+        self._json(
+            {"error": oauth_error.code, "error_description": oauth_error.description},
+            HTTPStatus.BAD_REQUEST,
+        )
+        return True
+
+    def _handle_mcp(self, path: str) -> bool:
+        if path != "/mcp":
+            return False
+        if not self._host_allowed():
+            self._json({"error": "invalid_host"}, HTTPStatus.BAD_REQUEST)
+            return True
+        body = self._read_limited_body(maximum=64 * 1024)
+        if body is None:
+            return True
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().casefold()
+        if content_type != "application/json":
+            self._json({"error": "json_required"}, HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+            return True
+        try:
+            message = json.loads(body or b"{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._json({"error": "invalid_json"}, HTTPStatus.BAD_REQUEST)
+            return True
+        if not isinstance(message, dict):
+            self._json({"error": "json_object_required"}, HTTPStatus.BAD_REQUEST)
+            return True
+        authenticated = BLOGGER_MCP_OAUTH.bearer_session(self.headers.get("Authorization", "")) is not None
+        response = handle_mcp_message(
+            message,
+            library=BLOGGER_LIBRARY,
+            version=__version__,
+            authenticated=authenticated,
+        )
+        if response is None:
+            self.send_response(HTTPStatus.ACCEPTED)
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return True
+        error = response.get("error")
+        oauth_required = isinstance(error, dict) and int(error.get("code", 0)) == -32001
+        if oauth_required:
+            challenge = BLOGGER_MCP_OAUTH.challenge()
+            response = attach_oauth_challenge(response, challenge)
+            self._json(
+                response,
+                HTTPStatus.UNAUTHORIZED,
+                headers={"WWW-Authenticate": challenge},
+            )
+        else:
+            self._json(response)
+        return True
+
+    def _handle_mcp_get(self, path: str) -> bool:
+        if path != "/mcp":
+            return False
+        if not self._host_allowed():
+            self._json({"error": "invalid_host"}, HTTPStatus.BAD_REQUEST)
+            return True
+        self._json(
+            {"error": "mcp_get_stream_not_supported", "use": "POST"},
+            HTTPStatus.METHOD_NOT_ALLOWED,
+            headers={"Allow": "POST"},
+        )
+        return True
 
     def _handle_blogger_transfer(self) -> bool:
         if not BloggerTransferHTTP.is_candidate(self.path):
@@ -414,6 +644,10 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
 
+        if self._handle_oauth_get(path, query):
+            return
+        if self._handle_mcp_get(path):
+            return
         if path == "/api/health":
             self._json({"ok": True, "version": __version__, "auth_required": AUTH.required})
         elif path == "/api/auth/status":
@@ -551,6 +785,10 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         if self._handle_blogger_transfer():
             return
         path = urlparse(self.path).path
+        if self._handle_oauth_post(path):
+            return
+        if self._handle_mcp(path):
+            return
         if self._handle_blogger_mcp(path):
             return
         if not self._host_allowed() or self.headers.get("X-Instant-AI") != "1":

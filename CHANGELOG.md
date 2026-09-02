@@ -4,6 +4,9 @@
 
 ## 2026-09-02
 
+- 完成即时 AI 0.18.0 的 ChatGPT 直连新加坡博主 MCP 候选。真实调用确认旧“博主智能体”仍连接 Windows 本地库并返回旧记录；新入口固定为 `https://grandpaamu.com/mcp`，手机和电脑不再依赖本地服务、8775 端口或电脑开机。
+- 新增 Streamable HTTP MCP 的 initialize、工具发现和两个只读工具：搜索当前云端博主视频、按 `cloud-video:` 编号读取完整文字。工具声明只读、幂等、非破坏，继续排除评论、媒体、路径、manifest、机器身份、Cookie、密钥、财经与罗盘资料，也不会触发采集、ASR、豆包或 AI。
+- 新增 OAuth 2.1 authorization-code + PKCE S256 单主人授权，复用即时 AI 现有主人账号。DCR 只允许 ChatGPT 官方回调，授权 token 与网页 Cookie 双向隔离并验证签名、主人、受众、权限和过期；Git 外只保存客户端登记与一次性授权码摘要，不需要读取、复制或配置 OpenAI API Key。新增 ADR-0030 与手机使用说明；6 项新回归和完整 91 项 Python 测试通过（1 项 Windows symlink 条件跳过）。生产仍为 0.17.0，尚未正式发布或建立 ChatGPT 云端连接。
 - 完成即时 AI 0.18.0 博主云端 MCP 候选。新增独立 Bearer 保护的只读 search/get 投影，只输出博主、标题、公开来源、日期、处理状态和正式视频原文；正式原文缺失时仅返回明确标记的未确认转写。
 - Windows 博主 MCP 现在按需合并本地历史库与新加坡最新作品，云端记录使用 `cloud-video:` 编号并可通过原读取工具取得完整原文。没有复制数据库、评论或视频，也没有定时轮询、自动采集、ASR 或 AI 调用。
 - 新增服务器 root `0600` 原子配置脚本与 Windows DPAPI 凭据读取/配置流程。即时 AI 85 项 Python 测试（1 项 Windows symlink 条件跳过）与博主智能体 201 项测试（2 项跳过）通过；本轮尚未正式发布生产或写入真实凭据。
