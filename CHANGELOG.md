@@ -5,6 +5,7 @@
 ## 2026-09-03
 
 - 正式发布即时 AI 0.18.3 OAuth 脱敏诊断：受限发布器把生产仓库从 `8bd242f` 安全快进到 `0253813`，服务器完整 94 项 Python 回归通过，正式健康接口、Service Worker 与 MCP `initialize` 均返回 0.18.3；即时 AI 和 Caddy 服务均为 active。诊断快照最多 64 条、只存内存、仅服务器无代理回环可读，公网实测返回 404；不记录 URL、IP、账号、密码、授权码、state、PKCE、Cookie、token 或业务资料。OAuth 元数据、两项只读工具与未授权 401 challenge 验收正常，待所有者只重试一次后读取阶段结果。
+- 0.18.3 真实诊断已定位断点：新连接 DCR 成功、授权页正常、主人凭据通过，服务器在 3 秒内三次发出同一客户端的稳定回调，但 ChatGPT/Codex 从未请求 `/oauth/token`；因此账号、密码、按钮和令牌端点均不是本次断点。完成 0.18.4 callback-ID 兼容候选：新连接不再声明 RFC 9207 稳定回调能力，由 OpenAI 分配每连接独有的 `/connector/oauth/{callback_id}`；旧稳定回调继续兼容并保留精确 `iss`。匿名诊断同步区分 stable/callback-ID，完整 95 项 Python 回归、Vite 构建及 npm 零漏洞审计通过，尚未正式发布。
 
 ## 2026-09-02
 

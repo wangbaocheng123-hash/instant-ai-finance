@@ -32,6 +32,7 @@ from instant_ai.server import InstantAIHandler
 
 
 CALLBACK = "https://chatgpt.com/connector_platform_oauth_redirect"
+CALLBACK_ID = "https://chatgpt.com/connector/oauth/instant-ai-test-callback"
 
 
 def pkce(value: str) -> str:
@@ -192,6 +193,46 @@ class BloggerMcpCloudTests(unittest.TestCase):
             resource=MCP_RESOURCE,
         )
         self.assertEqual(row["username"], "amu")
+
+    def test_new_connectors_use_callback_id_mode_and_legacy_stable_clients_keep_issuer(self) -> None:
+        metadata = self.oauth.authorization_server_metadata()
+        self.assertNotIn("authorization_response_iss_parameter_supported", metadata)
+
+        verifier = "c" * 43
+        callback_client = self.oauth.register(
+            {"redirect_uris": [CALLBACK_ID], "token_endpoint_auth_method": "none"}
+        )["client_id"]
+        callback_request = self.oauth.parse_authorization_request(
+            {
+                "response_type": ["code"],
+                "client_id": [callback_client],
+                "redirect_uri": [CALLBACK_ID],
+                "state": ["callback-id-state"],
+                "code_challenge": [pkce(verifier)],
+                "code_challenge_method": ["S256"],
+                "resource": [MCP_RESOURCE],
+                "scope": [MCP_SCOPE],
+            }
+        )
+        callback_location = self.oauth.authorization_redirect(callback_request, "amu")
+        callback_values = parse_qs(urlparse(callback_location).query)
+        self.assertEqual(callback_values["state"], ["callback-id-state"])
+        self.assertNotIn("iss", callback_values)
+
+        stable_client = self.oauth.register(
+            {"redirect_uris": [CALLBACK], "token_endpoint_auth_method": "none"}
+        )["client_id"]
+        stable_request = AuthorizationRequest(
+            client_id=stable_client,
+            redirect_uri=CALLBACK,
+            state="stable-state",
+            code_challenge=pkce(verifier),
+            resource=MCP_RESOURCE,
+            scope=MCP_SCOPE,
+        )
+        stable_location = self.oauth.authorization_redirect(stable_request, "amu")
+        stable_values = parse_qs(urlparse(stable_location).query)
+        self.assertEqual(stable_values["iss"], ["https://grandpaamu.com"])
 
     def test_dcr_issues_a_dedicated_client_per_connector_and_migrates_legacy_store(self) -> None:
         legacy_path = Path(self.temporary.name) / "legacy_oauth.db"
@@ -412,7 +453,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
 
     def test_http_oauth_flow_unlocks_cloud_tool_call(self) -> None:
         registration_body = json.dumps(
-            {"redirect_uris": [CALLBACK], "token_endpoint_auth_method": "none"}
+            {"redirect_uris": [CALLBACK_ID], "token_endpoint_auth_method": "none"}
         ).encode()
         status, _headers, body = self.handler_request(
             "POST",
@@ -426,7 +467,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
         authorization = {
             "response_type": "code",
             "client_id": client_id,
-            "redirect_uri": CALLBACK,
+            "redirect_uri": CALLBACK_ID,
             "state": "state-http",
             "code_challenge": pkce(verifier),
             "code_challenge_method": "S256",
@@ -472,13 +513,13 @@ class BloggerMcpCloudTests(unittest.TestCase):
         redirect = urlparse(headers["Location"])
         values = parse_qs(redirect.query)
         self.assertEqual(values["state"], ["state-http"])
-        self.assertEqual(values["iss"], ["https://grandpaamu.com"])
+        self.assertNotIn("iss", values)
 
         token_form = {
             "grant_type": "authorization_code",
             "code": values["code"][0],
             "client_id": client_id,
-            "redirect_uri": CALLBACK,
+            "redirect_uri": CALLBACK_ID,
             "code_verifier": verifier,
             "resource": MCP_RESOURCE,
         }
@@ -542,10 +583,10 @@ class BloggerMcpCloudTests(unittest.TestCase):
         }
         self.assertTrue(
             {
-                ("register", "client_created"),
-                ("authorize", "page_served"),
+                ("register", "client_created_callback_id"),
+                ("authorize", "page_served_callback_id"),
                 ("authorize", "credentials_rejected"),
-                ("authorize", "redirect_issued"),
+                ("authorize", "redirect_issued_callback_id"),
                 ("token", "issued"),
             }.issubset(observed)
         )

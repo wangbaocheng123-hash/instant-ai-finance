@@ -199,6 +199,15 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             return str(value[0]) if len(value) == 1 else ""
         return str(value or "")
 
+    @staticmethod
+    def _oauth_callback_mode(redirect_uri: str) -> str:
+        value = str(redirect_uri or "")
+        if value.startswith("https://chatgpt.com/connector/oauth/"):
+            return "callback_id"
+        if value == "https://chatgpt.com/connector_platform_oauth_redirect":
+            return "stable"
+        return "unknown"
+
     def _require_auth(self) -> bool:
         if not AUTH.required:
             return True
@@ -310,7 +319,11 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
                 HTTPStatus.BAD_REQUEST,
             )
             return True
-        record_oauth_event("authorize", "page_served", client_id=request.client_id)
+        record_oauth_event(
+            "authorize",
+            f"page_served_{self._oauth_callback_mode(request.redirect_uri)}",
+            client_id=request.client_id,
+        )
         self._html(self._oauth_authorize_page(request))
         return True
 
@@ -332,9 +345,12 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
                 if not isinstance(payload, dict):
                     raise BloggerOAuthError("invalid_client_metadata", "DCR 请求必须是对象。")
                 registration = BLOGGER_MCP_OAUTH.register(payload)
+                callback_mode = self._oauth_callback_mode(
+                    str(registration["redirect_uris"][0])
+                )
                 record_oauth_event(
                     "register",
-                    "client_created",
+                    f"client_created_{callback_mode}",
                     client_id=str(registration.get("client_id") or ""),
                 )
                 self._json(registration, HTTPStatus.CREATED)
@@ -390,7 +406,7 @@ button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;c
             location = BLOGGER_MCP_OAUTH.authorization_redirect(request, session.username)
             record_oauth_event(
                 "authorize",
-                "redirect_issued",
+                f"redirect_issued_{self._oauth_callback_mode(request.redirect_uri)}",
                 client_id=request.client_id,
             )
             self.send_response(HTTPStatus.FOUND)

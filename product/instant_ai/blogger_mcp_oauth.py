@@ -232,9 +232,11 @@ class BloggerMcpOAuth:
 
     @staticmethod
     def authorization_server_metadata() -> dict[str, Any]:
+        # Do not advertise RFC 9207 issuer identification for new connectors.
+        # ChatGPT then assigns a callback-id-specific redirect URI instead of
+        # routing every development connector through its shared stable callback.
         return {
             "issuer": ISSUER,
-            "authorization_response_iss_parameter_supported": True,
             "authorization_endpoint": f"{PUBLIC_ORIGIN}{AUTHORIZE_PATH}",
             "token_endpoint": f"{PUBLIC_ORIGIN}{TOKEN_PATH}",
             "registration_endpoint": f"{PUBLIC_ORIGIN}{REGISTER_PATH}",
@@ -290,7 +292,12 @@ class BloggerMcpOAuth:
 
     def authorization_redirect(self, request: AuthorizationRequest, username: str) -> str:
         code = self.store.issue_code(request, username)
-        return f"{request.redirect_uri}?{urlencode({'code': code, 'state': request.state, 'iss': ISSUER})}"
+        parameters = {"code": code, "state": request.state}
+        # Preserve already registered stable-callback clients while new clients
+        # use callback-id redirects selected from the metadata above.
+        if request.redirect_uri == _STABLE_CHATGPT_CALLBACK:
+            parameters["iss"] = ISSUER
+        return f"{request.redirect_uri}?{urlencode(parameters)}"
 
     def exchange(self, payload: Mapping[str, list[str]]) -> dict[str, Any]:
         def one(name: str) -> str:
