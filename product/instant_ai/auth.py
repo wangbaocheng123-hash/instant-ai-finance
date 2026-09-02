@@ -113,6 +113,12 @@ class OwnerAuth:
     def setup_required(self) -> bool:
         return self.required and self._load_config() is None
 
+    @property
+    def configured_username(self) -> str:
+        """Return the single configured owner name for first-party login forms."""
+        config = self._load_config()
+        return str(config.get("username") or "") if config is not None else ""
+
     def status(self, cookie_header: str = "") -> dict[str, Any]:
         session = self.session(cookie_header)
         return {

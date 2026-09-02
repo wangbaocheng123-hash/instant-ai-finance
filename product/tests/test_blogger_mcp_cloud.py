@@ -394,15 +394,37 @@ class BloggerMcpCloudTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertIn("确认授权".encode(), body)
+        self.assertIn(b'name="username" value="amu"', body)
+        self.assertIn(b'readonly aria-readonly="true"', body)
+
+        wrong_form = {**authorization, "username": "amu", "password": "wrong password"}
+        status, wrong_headers, body = self.handler_request(
+            "POST",
+            "/oauth/authorize",
+            urlencode(wrong_form).encode(),
+            {"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        self.assertEqual(status, 200)
+        self.assertNotIn("Location", wrong_headers)
+        self.assertIn('role="alert"'.encode(), body)
+        self.assertIn("主人账号或密码不正确".encode(), body)
 
         form = {**authorization, "username": "amu", "password": "correct horse battery staple"}
         status, headers, _body = self.handler_request(
             "POST",
             "/oauth/authorize",
             urlencode(form).encode(),
-            {"Content-Type": "application/x-www-form-urlencoded"},
+            {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Forwarded-Proto": "https",
+            },
         )
         self.assertEqual(status, 302)
+        self.assertIn(f"{SESSION_COOKIE_NAME}=", headers["Set-Cookie"])
+        self.assertIn("Max-Age=2592000", headers["Set-Cookie"])
+        self.assertIn("HttpOnly", headers["Set-Cookie"])
+        self.assertIn("SameSite=Strict", headers["Set-Cookie"])
+        self.assertIn("Secure", headers["Set-Cookie"])
         redirect = urlparse(headers["Location"])
         values = parse_qs(redirect.query)
         self.assertEqual(values["state"], ["state-http"])
@@ -445,6 +467,30 @@ class BloggerMcpCloudTests(unittest.TestCase):
         self.assertEqual(status, 200)
         result = json.loads(body)["result"]["structuredContent"]
         self.assertEqual(result["items"][0]["creator"], "李爱琳rene")
+
+        owner_cookie = headers.get("Set-Cookie", "").split(";", 1)[0]
+        authorization["state"] = "state-http-again"
+        status, _headers, body = self.handler_request(
+            "GET",
+            "/oauth/authorize?" + urlencode(authorization),
+            headers={"Cookie": owner_cookie},
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("已登录：amu".encode(), body)
+        self.assertNotIn('name="password"'.encode(), body)
+
+        status, headers, _body = self.handler_request(
+            "POST",
+            "/oauth/authorize",
+            urlencode(authorization).encode(),
+            {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Cookie": owner_cookie,
+            },
+        )
+        self.assertEqual(status, 302)
+        self.assertNotIn("Set-Cookie", headers)
+        self.assertEqual(parse_qs(urlparse(headers["Location"]).query)["state"], ["state-http-again"])
 
 
 if __name__ == "__main__":
