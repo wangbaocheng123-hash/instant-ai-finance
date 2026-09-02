@@ -4,6 +4,9 @@
 
 ## 2026-09-02
 
+- 所有者明确要求正式发布即时 AI 0.18.0。既有受限发布器把新加坡生产仓库从 `800af50` 安全快进到 `578cd56`，服务器 91 项 Python 测试全部通过；`instant-ai.service`、`caddy.service`、回环健康和正式域名均正常，正式版本为 0.18.0。
+- 公网 `https://grandpaamu.com/mcp` 已完成生产验收：OAuth 元数据、MCP initialize、两个只读工具、GET 405、未授权 401 和 OAuth challenge 均符合预期。生产资料只读查询命中李爱琳rene最新作品，状态 `ready`、正式原文 `official` 且已核验，全文 939 字；没有输出原文、凭据或业务路径，也没有触发采集、ASR、豆包或 AI。
+- ChatGPT 账号内的一次性云端连接仍待完成。本机应用内浏览器组件缺少匹配服务，自动打开 ChatGPT 设置失败后已停止；服务器端无需再改，后续只需添加 `https://grandpaamu.com/mcp` 并使用现有主人账号完成 OAuth 授权，不需要新建项目或配置 API Key。
 - 完成即时 AI 0.18.0 的 ChatGPT 直连新加坡博主 MCP 候选。真实调用确认旧“博主智能体”仍连接 Windows 本地库并返回旧记录；新入口固定为 `https://grandpaamu.com/mcp`，手机和电脑不再依赖本地服务、8775 端口或电脑开机。
 - 新增 Streamable HTTP MCP 的 initialize、工具发现和两个只读工具：搜索当前云端博主视频、按 `cloud-video:` 编号读取完整文字。工具声明只读、幂等、非破坏，继续排除评论、媒体、路径、manifest、机器身份、Cookie、密钥、财经与罗盘资料，也不会触发采集、ASR、豆包或 AI。
 - 新增 OAuth 2.1 authorization-code + PKCE S256 单主人授权，复用即时 AI 现有主人账号。DCR 只允许 ChatGPT 官方回调，授权 token 与网页 Cookie 双向隔离并验证签名、主人、受众、权限和过期；Git 外只保存客户端登记与一次性授权码摘要，不需要读取、复制或配置 OpenAI API Key。新增 ADR-0030 与手机使用说明；6 项新回归和完整 91 项 Python 测试通过（1 项 Windows symlink 条件跳过）。生产仍为 0.17.0，尚未正式发布或建立 ChatGPT 云端连接。

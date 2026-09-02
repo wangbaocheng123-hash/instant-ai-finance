@@ -1,8 +1,8 @@
 # 项目状态
 
 - 最后更新：2026-09-02
-- 当前阶段：`P2/P3 — 即时 AI 0.17.0 生产稳定，0.18.0 ChatGPT 直连云端 MCP 候选已验证`
-- 阶段状态：`LOCAL_0_18_0_VERIFIED / GRANDPAAMU_0_17_0_LIVE / BLOGGER_DIRECT_CLOUD_MCP_OAUTH_CANDIDATE / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / CLS_WECHAT_PUBLIC_INDEX_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 当前阶段：`P2/P3 — 即时 AI 0.18.0 正式生产，ChatGPT 直连云端 MCP 已上线`
+- 阶段状态：`GRANDPAAMU_0_18_0_LIVE / BLOGGER_DIRECT_CLOUD_MCP_OAUTH_LIVE / CHATGPT_CONNECTION_PENDING_OWNER_AUTH / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / CLS_WECHAT_PUBLIC_INDEX_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离；新加坡博主接收数据生产根固定为 `/var/lib/instant-ai/blogger-agent`，生命周期待后续决定
@@ -10,7 +10,10 @@
 
 ## 当前检查点
 
-- 完成 `P2-BLOGGER-07` 与 ADR-0030。真实调用确认当前 ChatGPT “博主智能体”仍连接 Windows 本地旧库，查询李爱琳最新视频返回旧的其他博主记录；0.18.0 候选现新增 `https://grandpaamu.com/mcp` 直连新加坡的只读 Streamable HTTP MCP，并复用现有单主人登录完成 OAuth 2.1 authorization-code + PKCE S256。手机与电脑以后选择同一“博主智能体（云端）”连接，不依赖电脑开机、8775 端口、DPAPI 或 OpenAI API Key。新增 6 项 MCP/OAuth 回归，完整 Python 91 项通过、1 项平台相关跳过；生产仍为 0.17.0，尚未正式发布或在 ChatGPT 中建立连接。
+- 所有者明确要求“正式发布即时 AI 0.18.0”。受限发布通道检查返回 `CODEX_CLOUD_PUBLISH_READY`，生产仓库从 `800af50` 安全快进到 `578cd56`；服务器 91 项 Python 测试全部通过，`instant-ai.service` 与 `caddy.service` active，回环和正式域名健康接口均返回 0.18.0。
+- 正式公网 `https://grandpaamu.com/mcp` 已按 Streamable HTTP 工作：OAuth protected-resource 与 authorization-server 元数据正确，`initialize` 返回“博主智能体（云端）”，工具列表固定为 `search_blogger_videos` 与 `get_blogger_video_text`，GET 返回 405，未授权工具调用返回 401 和 OAuth challenge。生产资料只读实测命中李爱琳rene最新作品，状态 `ready`、正式原文 `official` 且已核验，全文 939 字；未输出原文、Cookie、密码或密钥。
+- ChatGPT 中的一次性连接尚未建立：本机应用内浏览器组件缺少匹配的 browser service，自动进入 ChatGPT 设置失败后已停止重试。服务器端、OAuth 与真实资料均已就绪；下一步只需在同一 ChatGPT 账号添加 `https://grandpaamu.com/mcp` 并使用现有主人账号授权，不需要新建项目或输入 API Key。
+- 完成 `P2-BLOGGER-07` 与 ADR-0030。真实调用确认当前 ChatGPT “博主智能体”仍连接 Windows 本地旧库，查询李爱琳最新视频返回旧的其他博主记录；0.18.0 正式生产现已提供 `https://grandpaamu.com/mcp` 直连新加坡的只读 Streamable HTTP MCP，并复用现有单主人登录完成 OAuth 2.1 authorization-code + PKCE S256。手机与电脑以后选择同一“博主智能体（云端）”连接，不依赖电脑开机、8775 端口、DPAPI 或 OpenAI API Key。新增 6 项 MCP/OAuth 回归，完整 Python 91 项通过、1 项平台相关跳过；只剩 ChatGPT 账号内建立连接与一次主人授权。
 - 完成 `P2-BLOGGER-06` 与 ADR-0029。0.18.0 候选增加只读、独立 Bearer 保护的博主云端 MCP 投影；Windows 博主 MCP 可把本地历史与新加坡最新作品合并检索，并以 `cloud-video:` 读取正式视频原文。接口不返回评论/媒体/路径/manifest/机器身份，不提供写入、采集、ASR 或 AI；服务器凭据固定 root `0600`，本机只存 DPAPI 密文。即时 AI 85 项、博主智能体 201 项测试通过，尚未正式发布或配置真实凭据。
 - `P2-WATCH-05` 已完成本地实现与验证。罗盘开发接口现有 47 个重点事件：首页 14、紫金 33；新增“美国8月ADP就业报告”“美联储褐皮书”“美国8月零售销售”三项均带独立官方渠道。即时 AI 已允许 ADP 与 Census 官方域名、补齐三组中英文事件别名，并能分别以 ADP 官方 JSON、Federal Reserve 褐皮书页及 Census 官方发布目录建立基线和识别实质变化。82 项 Python 测试全部通过；本轮尚未正式发布。
 - Codex 回填故障已定位为时变罗盘常驻分析代理未随版本切换重启，旧代理继续返回 `watchItems`，而新工作进程要求 `report`。罗盘开发版已加入版本固定、报告契约版本校验、旧临时代理清理、15 分钟失败退避和真实 Codex 结构化输出回归；生产仍保持现状，等待所有者明确“正式发布”后通过规定发布器更新。
@@ -58,15 +61,16 @@
 
 ## 当前阻塞
 
-- `P3-BLOGGER-02` 尚缺即时 AI 0.18.0 的明确正式发布口令；在此之前生产保持 0.17.0，`/mcp` 与 OAuth 连接尚未上线。直连方案复用主人认证，不需要写入或复制 OpenAI API Key。
-- 9 月宏观重点事件、即时 AI 官方监测补丁及罗盘 Codex 回填修复均已通过本地检查，但尚未获得本轮正式发布口令；生产不会在授权前改变。
+- `P3-BLOGGER-02` 的服务器发布与真实资料验收已完成；只剩 ChatGPT 账号内的一次性 MCP 连接和主人 OAuth 授权。本机应用内浏览器组件当前缺失，无法在本轮自动完成网页设置；不得因此读取浏览器 Cookie、保存密码或改用 API Key。
+- 9 月宏观重点事件和即时 AI 官方监测补丁已随 0.18.0 正式发布；时变罗盘的 Codex 回填修复仍属于独立仓库与独立发布范围，本次未修改或发布罗盘。
 - `P2-MODEL-09` 的代码、Git 推送和正式发布没有剩余阻塞；尚待所有者在 iPhone 上完全关闭旧页面后重新进入 0.15.2 做最后的真机播放确认。
 - 博主资料正式生命周期仍待所有者决定，但不影响 0.17.0 当前功能；播放器、原文与评论工作区已正式上线。
-- 服务器尚未安装 `ffmpeg`。已有正式/普通/豆包识别结果可查看，豆包凭据也已安全配置；但点击后对尚无结果的视频做现场豆包转写仍会因缺少音频提取程序而停止。该系统级依赖必须获得单独批准后才能安装和付费实测。
+- 服务器已安装 `/usr/bin/ffmpeg` 6.1.1，李爱琳rene最新作品已完成识别并保存 939 字正式原文；现场豆包调用仍坚持页面二次费用确认，不会由 MCP 或自动任务触发。
 - 普通 Whisper/OCR 的 Linux 运行组件体量和兼容性尚未评估，未获大型依赖批准前云端不安装这些组件。
 
 ## 需要用户批准的事项
 
+- 0.18.0 已按所有者明确的正式发布口令上线；发布与 MCP 只读验收没有触发采集、ASR、豆包或财经 AI。
 - 0.17.0 已按所有者明确的“正式发布”授权完成上线；发布和只读验收没有自动调用付费 ASR。
 - 0.15.2 页面媒体策略修复已按用户本轮“正式发布”授权完成，不需要重新确认；388 个云端视频没有重传、改写或删除。
 - 当前三阶段本地实现与测试不需要真实凭据或费用批准。正式启用时必须通过 Git 外 root `0600` 文件配置北京对等密钥；自动豆包识别仍需所有者明确批准计费策略，complete 与主人只读页面都不触发任何付费调用。
@@ -77,4 +81,4 @@
 
 ## 下一项唯一建议任务
 
-`P3-BLOGGER-02`：所有者明确“正式发布即时 AI 0.18.0”后，使用既有受限发布器上线 `/mcp` 与 OAuth；随后在 ChatGPT 开发者模式建立“博主智能体（云端）”连接，并实测手机/电脑 GPT 能搜索和读取李爱琳rene最新一条正式视频原文。
+`P3-BLOGGER-02`：在与手机相同的 ChatGPT 账号中建立“博主智能体（云端）”连接，地址为 `https://grandpaamu.com/mcp`；使用现有即时 AI 主人账号完成一次 OAuth 授权后，在 GPT 对话中真实调用并核对李爱琳rene最新一条 939 字正式视频原文。
