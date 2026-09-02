@@ -4,6 +4,7 @@ import hashlib
 import http.client
 import gzip
 import json
+import os
 import sqlite3
 import tempfile
 import threading
@@ -403,6 +404,122 @@ class BloggerLibraryTests(unittest.TestCase):
         self.assertTrue(cached["cached"])
         self.assertEqual(cached["text"], "正式视频原文")
         self.assertTrue(self.library.owner_database_path.is_file())
+
+    def test_mcp_projection_searches_latest_official_text_and_exposes_only_whitelisted_fields(self) -> None:
+        _, work_key = self._insert_work(
+            "mcp-official",
+            source_work_id="work-mcp-official",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+            processing_status="ready",
+        )
+        self.library.save_title(work_key, "全球债市与华尔街交易员")
+        self.library.save_video_text(work_key, "债市再掀抛售，加息预期升温，华尔街交易员保持冷静。")
+
+        result = self.library.search_for_mcp("测试博主最新的视频文字", limit=3)
+        self.assertEqual(result["query_mode"], "latest")
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["items"][0]["record_id"], f"cloud-video:{work_key}")
+        self.assertEqual(result["items"][0]["original_status"], "official")
+
+        complete = self.library.get_for_mcp(f"cloud-video:{work_key}")
+        self.assertTrue(complete["found"])
+        self.assertTrue(complete["video_original"]["verified"])
+        self.assertIn("债市再掀抛售", complete["video_original"]["text"])
+        encoded = json.dumps(complete, ensure_ascii=False)
+        for forbidden in (
+            "comments", "manifest", "collector_node_id", "collector_key_id",
+            "stored_relative_path", "source_filename", str(self.root), "C:\\Users",
+        ):
+            self.assertNotIn(forbidden, encoded)
+
+    def test_mcp_creator_search_accepts_li_ailin_name_variant_without_rene_suffix(self) -> None:
+        transfer_id, work_key = self._insert_work(
+            "li-ailin",
+            source_work_id="7680678242151337279",
+            revision=1,
+            processing_status="ready",
+        )
+        with closing(sqlite3.connect(self.store.database_path)) as connection, connection:
+            row = connection.execute(
+                "SELECT manifest_json FROM transfers WHERE transfer_id=?", (transfer_id,)
+            ).fetchone()
+            manifest = json.loads(row[0])
+            manifest["creator"]["display_name"] = "李爱琳rene"
+            connection.execute(
+                "UPDATE transfers SET creator_display_name=?, manifest_json=? WHERE transfer_id=?",
+                ("李爱琳rene", json.dumps(manifest, ensure_ascii=False), transfer_id),
+            )
+        self.library.save_video_text(work_key, "全球债市再掀抛售，华尔街交易员并不慌张。")
+
+        result = self.library.search_for_mcp("尤其是我们最近抓取的这个李艾琳的这条视频文字", limit=1)
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["items"][0]["source_work_id"], "7680678242151337279")
+        self.assertEqual(result["items"][0]["original_status"], "official")
+
+    def test_mcp_http_requires_dedicated_bearer_token_not_owner_cookie(self) -> None:
+        _, work_key = self._insert_work(
+            "mcp-route",
+            source_work_id="work-mcp-route",
+            revision=1,
+            processing_status="ready",
+        )
+        self.library.save_video_text(work_key, "这是云端正式视频原文。")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), InstantAIHandler)
+        server.blogger_transfer = None
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        token = "a" * 64
+        with patch.dict(os.environ, {"INSTANT_AI_BLOGGER_MCP_TOKEN": token}, clear=False), patch(
+            "instant_ai.server.AUTH", FakeOwnerAuth()
+        ), patch("instant_ai.server.BLOGGER_LIBRARY", self.library), patch(
+            "instant_ai.server.queue_analysis", Mock(side_effect=AssertionError("AI called"))
+        ):
+            thread.start()
+            try:
+                body = json.dumps({"question": "测试博主最新视频", "limit": 1}).encode("utf-8")
+                for authorization, expected in (("", 401), ("Bearer wrong", 401), (f"Bearer {token}", 200)):
+                    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                    connection.request(
+                        "POST",
+                        "/api/mcp/blogger/search",
+                        body=body,
+                        headers={
+                            "Authorization": authorization,
+                            "Content-Length": str(len(body)),
+                            "Content-Type": "application/json",
+                            "Cookie": "owner=yes",
+                        },
+                    )
+                    response = connection.getresponse()
+                    payload = json.loads(response.read())
+                    self.assertEqual(response.status, expected)
+                    if expected == 200:
+                        self.assertEqual(payload["items"][0]["record_id"], f"cloud-video:{work_key}")
+                    connection.close()
+
+                body = json.dumps({"record_id": f"cloud-video:{work_key}"}).encode("utf-8")
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                connection.request(
+                    "POST",
+                    "/api/mcp/blogger/get",
+                    body=body,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Length": str(len(body)),
+                        "Content-Type": "application/json",
+                    },
+                )
+                response = connection.getresponse()
+                payload = json.loads(response.read())
+                self.assertEqual(response.status, 200)
+                self.assertEqual(payload["video_original"]["text"], "这是云端正式视频原文。")
+                connection.close()
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
 
     def test_whitelist_never_exposes_paths_manifest_or_machine_identity(self) -> None:
         _, work_key = self._insert_work(

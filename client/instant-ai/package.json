@@ -1,7 +1,7 @@
 {
   "name": "instant-ai-world-monitor",
   "private": true,
-  "version": "0.17.1",
+  "version": "0.18.0",
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {

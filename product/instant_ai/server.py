@@ -39,6 +39,10 @@ from .watch_events import list_watch_events, refresh_watch_events
 from .model_mr import MODEL_MR, ModelMrUnavailable
 from .blogger_http import BloggerTransferHTTP
 from .blogger_library import BLOGGER_LIBRARY, BloggerLibraryUnavailable
+from .blogger_mcp import GET_PATH as BLOGGER_MCP_GET_PATH
+from .blogger_mcp import PATHS as BLOGGER_MCP_PATHS
+from .blogger_mcp import SEARCH_PATH as BLOGGER_MCP_SEARCH_PATH
+from .blogger_mcp import authorize as authorize_blogger_mcp
 
 
 HOST = "127.0.0.1"
@@ -199,6 +203,62 @@ class InstantAIHandler(BaseHTTPRequestHandler):
             response.status,
             headers={"Connection": "close"},
         )
+        return True
+
+    def _handle_blogger_mcp(self, path: str) -> bool:
+        if path not in BLOGGER_MCP_PATHS:
+            return False
+        if not self._host_allowed():
+            self._json({"error": "invalid_host"}, HTTPStatus.BAD_REQUEST)
+            return True
+        try:
+            content_length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            self._json({"error": "invalid_content_length"}, HTTPStatus.BAD_REQUEST)
+            return True
+        if content_length < 0 or content_length > 64 * 1024:
+            self._json({"error": "request_too_large"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            return True
+        auth_result = authorize_blogger_mcp(self.headers.get("Authorization", ""))
+        if auth_result == "not_configured":
+            self.rfile.read(content_length)
+            self.close_connection = True
+            self._json({"error": "blogger_mcp_not_configured"}, HTTPStatus.SERVICE_UNAVAILABLE)
+            return True
+        if auth_result != "ok":
+            self.rfile.read(content_length)
+            self.close_connection = True
+            self._json({"error": "authentication_required"}, HTTPStatus.UNAUTHORIZED)
+            return True
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().casefold()
+        if content_type != "application/json":
+            self._json({"error": "json_required"}, HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+            return True
+        try:
+            payload = json.loads(self.rfile.read(content_length) or b"{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._json({"error": "invalid_json"}, HTTPStatus.BAD_REQUEST)
+            return True
+        if not isinstance(payload, dict):
+            self._json({"error": "json_object_required"}, HTTPStatus.BAD_REQUEST)
+            return True
+        try:
+            if path == BLOGGER_MCP_SEARCH_PATH:
+                result = BLOGGER_LIBRARY.search_for_mcp(
+                    str(payload.get("question") or ""),
+                    int(payload.get("limit") or 10),
+                )
+            elif path == BLOGGER_MCP_GET_PATH:
+                result = BLOGGER_LIBRARY.get_for_mcp(str(payload.get("record_id") or ""))
+            else:  # pragma: no cover - PATHS and explicit routes stay in lockstep.
+                return False
+        except (TypeError, ValueError) as error:
+            self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return True
+        except BloggerLibraryUnavailable:
+            self._json({"error": "blogger_library_unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
+            return True
+        self._json(result)
         return True
 
     def _serve_static(self, path: str) -> None:
@@ -489,6 +549,9 @@ class InstantAIHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if self._handle_blogger_transfer():
+            return
+        path = urlparse(self.path).path
+        if self._handle_blogger_mcp(path):
             return
         if not self._host_allowed() or self.headers.get("X-Instant-AI") != "1":
             self._json({"error": "request_rejected"}, HTTPStatus.FORBIDDEN)

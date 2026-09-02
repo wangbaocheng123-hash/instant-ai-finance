@@ -4,6 +4,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import uuid
 from contextlib import closing, contextmanager
@@ -21,6 +22,7 @@ MODULE_MODE = "owner-mobile-library"
 MAX_CURRENT_ROWS = 10_000
 MAX_PUBLIC_COMMENTS = 10_000
 MAX_VIDEO_TEXT_LENGTH = 200_000
+MCP_RECORD_PREFIX = "cloud-video:"
 
 _REQUIRED_TABLES = {"schema_meta", "transfers", "artifacts", "processing_queue"}
 _PROCESSING_STATUSES = {
@@ -115,6 +117,41 @@ def _canonical_creator_id(value: object) -> str | None:
         return None
     canonical = str(parsed)
     return canonical if text.casefold() == canonical else None
+
+
+def _search_text(value: object) -> str:
+    """Normalize owner-facing text for small, deterministic MCP searches."""
+    return re.sub(r"[\W_]+", "", _text(value).casefold()).replace("艾", "爱")
+
+
+def _creator_aliases(value: object) -> list[str]:
+    raw = _text(value).strip().casefold().replace("艾", "爱")
+    aliases = {
+        _search_text(raw),
+        _search_text(re.sub(r"[^\u3400-\u9fff]+", "", raw)),
+        _search_text(re.sub(r"[^a-z0-9]+", "", raw)),
+    }
+    return sorted((alias for alias in aliases if len(alias) >= 2), key=len, reverse=True)
+
+
+_MCP_QUERY_NOISE = (
+    "请帮我", "帮我", "请", "查询", "查找", "搜索", "看看", "看一下", "一下", "尤其是", "我们",
+    "最新的", "最近的", "最新", "最近", "刚刚", "今天", "视频原文", "识别文字",
+    "正式原文", "视频文字", "原文", "文字", "视频", "博主", "作品", "内容", "关于",
+    "一条", "一篇", "一部", "这条", "这篇", "这部", "这个", "抓取", "采集",
+    "怎么说", "怎么看", "说了什么", "是什么", "的", "了", "吗",
+)
+
+
+def _mcp_query_terms(question: str, creator_names: list[str]) -> list[str]:
+    value = _search_text(question)
+    for creator_name in creator_names:
+        name = _search_text(creator_name)
+        if name:
+            value = value.replace(name, "")
+    for noise in _MCP_QUERY_NOISE:
+        value = value.replace(_search_text(noise), "")
+    return [value] if len(value) >= 2 else []
 
 
 class BloggerLibrary:
@@ -272,6 +309,155 @@ class BloggerLibrary:
             }
         )
         return detail
+
+    def search_for_mcp(self, question: str, limit: int = 10) -> dict[str, Any]:
+        """Search the current cloud blogger library without exposing private artifacts.
+
+        This projection intentionally excludes comments, media files, filesystem paths,
+        transfer identities and the raw manifest. It reads only the current accepted
+        work plus its owner-saved official text (or a clearly marked transcript fallback).
+        """
+        value = str(question or "").strip()
+        if not value:
+            raise ValueError("question_required")
+        safe_limit = max(1, min(int(limit), 30))
+        try:
+            with self._connect() as connection:
+                works = self._sort_works(self._current_works(connection))
+        except BloggerLibraryUnavailable:
+            raise
+
+        creator_names = sorted(
+            {
+                alias
+                for work in works
+                for alias in _creator_aliases(work.get("creator_display_name"))
+            },
+            key=len,
+            reverse=True,
+        )
+        normalized_question = _search_text(value)
+        latest_requested = any(marker in value for marker in ("最新", "最近", "刚刚", "今天"))
+        query_terms = _mcp_query_terms(value, creator_names)
+        items: list[dict[str, Any]] = []
+        for work in works:
+            creator = _text(work.get("creator_display_name")).strip()
+            creator_aliases = _creator_aliases(creator)
+            public = self._public_work(work)
+            owner = self._owner_content(public["work_key"])
+            official = _text(owner.get("video_text")).strip()
+            transcript = _text(owner.get("transcript_text")).strip()
+            searchable = _search_text(" ".join((
+                creator,
+                public["title"],
+                public["description"],
+                public["source_work_id"],
+                official,
+                transcript,
+            )))
+            creator_match = any(alias in normalized_question for alias in creator_aliases)
+            term_matches = [term for term in query_terms if term in searchable]
+            if query_terms and not term_matches:
+                continue
+            if not query_terms and not latest_requested and not creator_match:
+                continue
+            if latest_requested and creator_names and any(
+                name in normalized_question for name in creator_names
+            ) and not creator_match:
+                continue
+            text_value = official or transcript
+            matched_in: list[str] = []
+            if creator_match:
+                matched_in.append("creator")
+            if any(term in _search_text(public["title"]) for term in term_matches):
+                matched_in.append("title")
+            if any(term in _search_text(text_value) for term in term_matches):
+                matched_in.append("video_original" if official else "transcript")
+            score = 100.0 if creator_match else 20.0
+            score += 30.0 * len(term_matches)
+            if latest_requested:
+                score += 10.0
+            items.append({
+                "record_id": f"{MCP_RECORD_PREFIX}{public['work_key']}",
+                "source": "instant-ai-cloud-blogger",
+                "creator": creator,
+                "title": public["title"],
+                "published_at": public["published_at"],
+                "captured_at": public["captured_at"],
+                "source_work_id": public["source_work_id"],
+                "source_url": public["source_url"],
+                "processing_status": public["processing_status"],
+                "original_status": "official" if official else ("transcript_unconfirmed" if transcript else "missing"),
+                "original_excerpt": text_value[:360],
+                "matched_in": matched_in or (["recency"] if latest_requested else []),
+                "relevance_score": score,
+            })
+
+        items.sort(
+            key=lambda item: (
+                _timestamp_order(item.get("published_at") or item.get("captured_at")),
+                float(item.get("relevance_score") or 0),
+            ) if latest_requested else (
+                float(item.get("relevance_score") or 0),
+                _timestamp_order(item.get("published_at") or item.get("captured_at")),
+            ),
+            reverse=True,
+        )
+        selected = items[:safe_limit]
+        return {
+            "available": True,
+            "query": value,
+            "query_mode": "latest" if latest_requested else "relevance",
+            "count": len(selected),
+            "items": selected,
+            "evidence_note": "云端博主原文为只读证据；official 可直接引用，transcript_unconfirmed 需先核对。",
+        }
+
+    def get_for_mcp(self, record_id: str) -> dict[str, Any]:
+        """Return one whitelisted cloud record for the read-only MCP bridge."""
+        value = str(record_id or "").strip()
+        work_key = value[len(MCP_RECORD_PREFIX):] if value.startswith(MCP_RECORD_PREFIX) else value
+        if not self._valid_work_key(work_key):
+            return {"found": False, "record_id": value}
+        try:
+            with self._connect() as connection:
+                works = self._current_works(connection, work_key=work_key)
+        except BloggerLibraryUnavailable:
+            raise
+        if not works:
+            return {"found": False, "record_id": value}
+        work = works[0]
+        public = self._public_work(work)
+        owner = self._owner_content(work_key)
+        official = _text(owner.get("video_text")).strip()
+        transcript = _text(owner.get("transcript_text")).strip()
+        text_value = official or transcript
+        return {
+            "found": True,
+            "record_id": f"{MCP_RECORD_PREFIX}{work_key}",
+            "source": "instant-ai-cloud-blogger",
+            "work": {
+                "creator": _text(work.get("creator_display_name")).strip(),
+                "title": public["title"],
+                "source_work_id": public["source_work_id"],
+                "source_url": public["source_url"],
+                "published_at": public["published_at"],
+                "captured_at": public["captured_at"],
+                "processing_status": public["processing_status"],
+            },
+            "video_original": {
+                "text": text_value,
+                "verified": bool(official),
+                "status": "official" if official else ("transcript_unconfirmed" if transcript else "missing"),
+                "source": "owner_saved" if official else (_text(owner.get("transcript_engine")) or ""),
+                "updated_at": _text(owner.get("updated_at")) or _text(owner.get("transcript_created_at")),
+            },
+            "evidence_note": (
+                "这是主人已保存的正式视频原文。" if official else
+                "这是尚未确认为正式原文的识别文字，引用前需要核对。" if transcript else
+                "这条作品尚无可读取的视频文字。"
+            ),
+        }
 
     @staticmethod
     def _valid_work_key(work_key: object) -> bool:
