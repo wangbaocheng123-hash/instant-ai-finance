@@ -73,7 +73,7 @@ class BloggerOAuthStore:
             """
             CREATE TABLE IF NOT EXISTS oauth_clients (
                 client_id TEXT PRIMARY KEY,
-                redirect_uri TEXT NOT NULL UNIQUE,
+                redirect_uri TEXT NOT NULL,
                 created_at INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS oauth_codes (
@@ -88,18 +88,50 @@ class BloggerOAuthStore:
             );
             """
         )
+        self._remove_legacy_redirect_uniqueness(connection)
         return connection
+
+    @staticmethod
+    def _remove_legacy_redirect_uniqueness(connection: sqlite3.Connection) -> None:
+        """Migrate the original one-client-per-callback schema in place.
+
+        ChatGPT's stable callback URI is shared by many connector instances, while
+        DCR requires a dedicated client id for every instance.  The first schema
+        incorrectly made the callback unique, so existing production databases
+        need a lossless table rebuild before new registrations can be independent.
+        """
+        redirect_unique = False
+        for index in connection.execute("PRAGMA index_list(oauth_clients)").fetchall():
+            if not int(index["unique"]):
+                continue
+            columns = connection.execute(
+                f'PRAGMA index_info("{str(index["name"]).replace(chr(34), chr(34) * 2)}")'
+            ).fetchall()
+            if [str(column["name"]) for column in columns] == ["redirect_uri"]:
+                redirect_unique = True
+                break
+        if not redirect_unique:
+            return
+        connection.executescript(
+            """
+            BEGIN IMMEDIATE;
+            ALTER TABLE oauth_clients RENAME TO oauth_clients_legacy;
+            CREATE TABLE oauth_clients (
+                client_id TEXT PRIMARY KEY,
+                redirect_uri TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            INSERT INTO oauth_clients(client_id, redirect_uri, created_at)
+            SELECT client_id, redirect_uri, created_at FROM oauth_clients_legacy;
+            DROP TABLE oauth_clients_legacy;
+            COMMIT;
+            """
+        )
 
     def register_client(self, redirect_uri: str) -> str:
         if not self.valid_redirect_uri(redirect_uri):
             raise BloggerOAuthError("invalid_redirect_uri", "只允许 ChatGPT 官方 OAuth 回调地址。")
         with self._lock, closing(self._connect()) as connection, connection:
-            existing = connection.execute(
-                "SELECT client_id FROM oauth_clients WHERE redirect_uri = ?",
-                (redirect_uri,),
-            ).fetchone()
-            if existing is not None:
-                return str(existing["client_id"])
             client_id = f"mcp-client-{secrets.token_urlsafe(32)}"
             connection.execute(
                 "INSERT INTO oauth_clients(client_id, redirect_uri, created_at) VALUES (?, ?, ?)",
@@ -160,25 +192,24 @@ class BloggerOAuthStore:
                 "SELECT * FROM oauth_codes WHERE code_hash = ?",
                 (code_hash,),
             ).fetchone()
-            if row is not None:
-                connection.execute("DELETE FROM oauth_codes WHERE code_hash = ?", (code_hash,))
             connection.execute("DELETE FROM oauth_codes WHERE expires_at <= ?", (now,))
-        if row is None or int(row["expires_at"]) <= now:
-            raise BloggerOAuthError("invalid_grant", "授权码无效或已过期。")
-        if (
-            row["client_id"] != client_id
-            or row["redirect_uri"] != redirect_uri
-            or row["resource"] != resource
-        ):
-            raise BloggerOAuthError("invalid_grant", "授权码与客户端或资源不匹配。")
-        verifier = str(code_verifier or "")
-        if not _PKCE_VERIFIER.fullmatch(verifier):
-            raise BloggerOAuthError("invalid_grant", "PKCE 校验失败。")
-        digest = hashlib.sha256(verifier.encode("ascii")).digest()
-        challenge = _urlsafe(digest)
-        if not secrets.compare_digest(challenge, str(row["code_challenge"])):
-            raise BloggerOAuthError("invalid_grant", "PKCE 校验失败。")
-        return dict(row)
+            if row is None or int(row["expires_at"]) <= now:
+                raise BloggerOAuthError("invalid_grant", "授权码无效或已过期。")
+            if (
+                row["client_id"] != client_id
+                or row["redirect_uri"] != redirect_uri
+                or row["resource"] != resource
+            ):
+                raise BloggerOAuthError("invalid_grant", "授权码与客户端或资源不匹配。")
+            verifier = str(code_verifier or "")
+            if not _PKCE_VERIFIER.fullmatch(verifier):
+                raise BloggerOAuthError("invalid_grant", "PKCE 校验失败。")
+            digest = hashlib.sha256(verifier.encode("ascii")).digest()
+            challenge = _urlsafe(digest)
+            if not secrets.compare_digest(challenge, str(row["code_challenge"])):
+                raise BloggerOAuthError("invalid_grant", "PKCE 校验失败。")
+            connection.execute("DELETE FROM oauth_codes WHERE code_hash = ?", (code_hash,))
+            return dict(row)
 
     @staticmethod
     def valid_redirect_uri(value: str) -> bool:
@@ -300,7 +331,10 @@ class BloggerMcpOAuth:
     @staticmethod
     def challenge() -> str:
         metadata = f"{PUBLIC_ORIGIN}/.well-known/oauth-protected-resource"
-        return f'Bearer resource_metadata="{metadata}", scope="{MCP_SCOPE}"'
+        return (
+            f'Bearer resource_metadata="{metadata}", scope="{MCP_SCOPE}", '
+            'error="invalid_token", error_description="Owner authorization required"'
+        )
 
 
 def _urlsafe(value: bytes) -> str:
