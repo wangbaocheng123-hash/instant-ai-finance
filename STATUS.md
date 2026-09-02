@@ -1,10 +1,10 @@
 # 项目状态
 
 - 最后更新：2026-09-02
-- 当前阶段：`P2/P3 — 即时 AI 0.18.0 正式生产，0.18.1 ChatGPT OAuth 兼容修复待发布`
-- 0.18.1 本地候选已修复 ADP 官方结果送达后被永久跳过的状态机缺口：已认证官方片段可作为一手证据，搜索索引滞后进入五分钟重试而不是 `skip`，最多三次并持久化原因；即时 AI schema 10 显示罗盘/Codex 回填状态并临时置顶最近变化。即时 AI 92 项 Python 测试、Vite 构建和罗盘完整 `check.sh` 均通过；两个仓库都只形成待发布提交，本轮未正式发布。
+- 当前阶段：`P2/P3 — 即时 AI 0.18.1 正式生产，ChatGPT 云端连接待重建验收`
+- 0.18.1 已修复 ADP 官方结果送达后被永久跳过的状态机缺口：已认证官方片段可作为一手证据，搜索索引滞后进入五分钟重试而不是 `skip`，最多三次并持久化原因；即时 AI schema 10 显示罗盘/Codex 回填状态并临时置顶最近变化。即时 AI 一侧已正式上线；时变罗盘三态重试仍是独立待发布候选，须另行取得正式发布授权。
 - 所有者已明确要求把主人密码最低长度调整为 9 个字符，并把 OAuth 主人账号改为指定用户名。代码只调整长度策略；真实密码仍必须在隐藏终端提示中输入，不进入 Git、聊天、命令参数或普通日志。
-- 阶段状态：`GRANDPAAMU_0_18_0_LIVE / BLOGGER_OAUTH_DCR_FIX_0_18_1_READY / CHATGPT_CONNECTION_TOKEN_EXCHANGE_PENDING / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / CLS_WECHAT_PUBLIC_INDEX_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 阶段状态：`GRANDPAAMU_0_18_1_LIVE / BLOGGER_OAUTH_DCR_FIX_0_18_1_LIVE / CHATGPT_CONNECTION_REBUILD_PENDING / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / CLS_WECHAT_PUBLIC_INDEX_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离；新加坡博主接收数据生产根固定为 `/var/lib/instant-ai/blogger-agent`，生命周期待后续决定
@@ -12,7 +12,8 @@
 
 ## 当前检查点
 
-- 真实 ChatGPT 重建连接已复现 OAuth 循环：主人授权 POST 成功并返回 ChatGPT 稳定回调，但回调后的令牌交换没有完成；新插件外壳已经进入“已安装”，本任务仍无法发现其博主工具。对照 OpenAI 当前 DCR 契约后确认，旧实现错误地按稳定回调地址复用同一个 `client_id`，而 ChatGPT 要求每个 connector instance 获得专用客户端。0.18.1 本地候选已改为每次 DCR 生成独立客户端，并自动无损迁移生产旧表；无效 PKCE 尝试不再提前销毁授权码，运行挑战补齐 `error` 与 `error_description`。针对性 7 项及隔离资料根下完整 93 项 Python 测试通过；尚未正式发布。
+- 真实 ChatGPT 重建连接曾复现 OAuth 循环：主人授权 POST 成功并返回 ChatGPT 稳定回调，但回调后的令牌交换没有完成；旧插件外壳已进入“已安装”，当时仍无法发现博主工具。根因修复现已随 0.18.1 正式上线：每次 DCR 生成独立客户端并自动无损迁移生产旧表；无效 PKCE 尝试不再提前销毁授权码，运行挑战补齐 `error` 与 `error_description`。发布前针对性 7 项及隔离资料根完整 93 项 Python 测试通过；下一步只需删除旧外壳并重建连接做真实授权验收。
+- 所有者已明确要求“正式发布即时 AI 0.18.1”。GitHub `main` 基线为 `62aaaae`；正式 `https://grandpaamu.com/api/health` 与 Service Worker 返回 0.18.1。公网 OAuth 元数据、MCP `initialize`、两个只读工具、GET 405、未授权 401 与标准挑战均通过，`initialize` 明确报告服务版本 0.18.1。主人密码、业务资料、时变罗盘、域名和云控制面均未修改，也未触发采集、ASR、豆包或 AI。
 - 所有者明确要求“正式发布即时 AI 0.18.0”。受限发布通道检查返回 `CODEX_CLOUD_PUBLISH_READY`，生产仓库从 `800af50` 安全快进到 `578cd56`；服务器 91 项 Python 测试全部通过，`instant-ai.service` 与 `caddy.service` active，回环和正式域名健康接口均返回 0.18.0。
 - 正式公网 `https://grandpaamu.com/mcp` 已按 Streamable HTTP 工作：OAuth protected-resource 与 authorization-server 元数据正确，`initialize` 返回“博主智能体（云端）”，工具列表固定为 `search_blogger_videos` 与 `get_blogger_video_text`，GET 返回 405，未授权工具调用返回 401 和 OAuth challenge。生产资料只读实测命中李爱琳rene最新作品，状态 `ready`、正式原文 `official` 且已核验，全文 939 字；未输出原文、Cookie、密码或密钥。
 - ChatGPT 中的一次性连接尚未建立：本机应用内浏览器组件缺少匹配的 browser service，自动进入 ChatGPT 设置失败后已停止重试。服务器端、OAuth 与真实资料均已就绪；下一步只需在同一 ChatGPT 账号添加 `https://grandpaamu.com/mcp` 并使用现有主人账号授权，不需要新建项目或输入 API Key。
@@ -64,8 +65,8 @@
 
 ## 当前阻塞
 
-- `P3-BLOGGER-02` 已把连接故障定位并修复为 0.18.1 本地候选；当前生产仍是 0.18.0，必须获得所有者明确的“正式发布即时 AI 0.18.1”指令后才能通过受限发布器上线。上线后需要删除当前未完成令牌交换的插件外壳并重建一次连接，以取得新的专用 DCR 客户端；不得读取 Cookie、密码或改用 API Key。
-- 9 月宏观重点事件和即时 AI 官方监测补丁已随 0.18.0 正式发布；本轮新增的 0.18.1 展示反馈与时变罗盘 Codex 三态重试修复仍属于两个独立待发布版本，均未正式发布。
+- `P3-BLOGGER-02` 的 0.18.1 服务端修复已正式上线；剩余阻塞仅是删除当前未完成令牌交换的旧插件外壳并重建一次连接，以取得新的专用 DCR 客户端，再做李爱琳rene最新 939 字正式原文只读核验；不得读取 Cookie、密码或改用 API Key。
+- 9 月宏观重点事件和即时 AI 官方监测补丁已随 0.18.0 上线，0.18.1 的反馈展示现也已上线；时变罗盘 Codex 三态重试修复属于另一个仓库和发布器，仍待单独正式发布授权。
 - `P2-MODEL-09` 的代码、Git 推送和正式发布没有剩余阻塞；尚待所有者在 iPhone 上完全关闭旧页面后重新进入 0.15.2 做最后的真机播放确认。
 - 博主资料正式生命周期仍待所有者决定，但不影响 0.17.0 当前功能；播放器、原文与评论工作区已正式上线。
 - 服务器已安装 `/usr/bin/ffmpeg` 6.1.1，李爱琳rene最新作品已完成识别并保存 939 字正式原文；现场豆包调用仍坚持页面二次费用确认，不会由 MCP 或自动任务触发。
@@ -73,7 +74,7 @@
 
 ## 需要用户批准的事项
 
-- 0.18.1 OAuth/DCR 兼容修复尚未正式发布；需要所有者明确说“正式发布即时 AI 0.18.1”。发布只更新即时 AI 代码、运行服务器测试并重启 `instant-ai.service`，不修改时变罗盘、域名、业务资料或主人密码。
+- 0.18.1 OAuth/DCR 兼容修复已按所有者本轮明确授权正式上线，不需要再次确认；公网协议验收通过，未修改时变罗盘、域名、业务资料或主人密码。
 - 0.18.0 已按所有者明确的正式发布口令上线；发布与 MCP 只读验收没有触发采集、ASR、豆包或财经 AI。
 - 0.17.0 已按所有者明确的“正式发布”授权完成上线；发布和只读验收没有自动调用付费 ASR。
 - 0.15.2 页面媒体策略修复已按用户本轮“正式发布”授权完成，不需要重新确认；388 个云端视频没有重传、改写或删除。
@@ -85,4 +86,4 @@
 
 ## 下一项唯一建议任务
 
-`P3-BLOGGER-02`：取得所有者明确发布授权后，把 0.18.1 OAuth/DCR 修复正式发布；随后删除当前未完成连接的“博主智能体（云端）”外壳，以 `https://grandpaamu.com/mcp` 重建并完成主人授权，最后真实调用核对李爱琳rene最新一条 939 字正式视频原文。
+`P3-BLOGGER-02`：删除当前未完成连接的“博主智能体（云端）”旧外壳，以 `https://grandpaamu.com/mcp` 重建并完成主人授权，最后真实调用核对李爱琳rene最新一条 939 字正式视频原文。
