@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import json
+import sqlite3
 import tempfile
 import unittest
 from email.message import Message
@@ -176,6 +177,57 @@ class BloggerMcpCloudTests(unittest.TestCase):
                 resource=MCP_RESOURCE,
             )
         self.assertEqual(wrong_verifier.exception.code, "invalid_grant")
+        row = self.store.consume_code(
+            code,
+            client_id=client_id,
+            redirect_uri=CALLBACK,
+            code_verifier="v" * 43,
+            resource=MCP_RESOURCE,
+        )
+        self.assertEqual(row["username"], "amu")
+
+    def test_dcr_issues_a_dedicated_client_per_connector_and_migrates_legacy_store(self) -> None:
+        legacy_path = Path(self.temporary.name) / "legacy_oauth.db"
+        connection = sqlite3.connect(legacy_path)
+        try:
+            connection.executescript(
+                """
+                CREATE TABLE oauth_clients (
+                    client_id TEXT PRIMARY KEY,
+                    redirect_uri TEXT NOT NULL UNIQUE,
+                    created_at INTEGER NOT NULL
+                );
+                CREATE TABLE oauth_codes (
+                    code_hash TEXT PRIMARY KEY,
+                    client_id TEXT NOT NULL,
+                    redirect_uri TEXT NOT NULL,
+                    code_challenge TEXT NOT NULL,
+                    resource TEXT NOT NULL,
+                    scope TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    expires_at INTEGER NOT NULL
+                );
+                """
+            )
+            connection.execute(
+                "INSERT INTO oauth_clients(client_id, redirect_uri, created_at) VALUES (?, ?, ?)",
+                ("mcp-client-" + "a" * 32, CALLBACK, 1),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        migrated = BloggerMcpOAuth(self.auth, BloggerOAuthStore(legacy_path))
+        first = migrated.register(
+            {"redirect_uris": [CALLBACK], "token_endpoint_auth_method": "none"}
+        )["client_id"]
+        second = migrated.register(
+            {"redirect_uris": [CALLBACK], "token_endpoint_auth_method": "none"}
+        )["client_id"]
+        self.assertNotEqual(first, second)
+        self.assertNotEqual(first, "mcp-client-" + "a" * 32)
+        self.assertTrue(migrated.store.validate_client(first, CALLBACK))
+        self.assertTrue(migrated.store.validate_client(second, CALLBACK))
 
     def test_pkce_accepts_the_full_rfc_verifier_character_set(self) -> None:
         client_id = self.oauth.register(
@@ -235,7 +287,11 @@ class BloggerMcpCloudTests(unittest.TestCase):
             "params": {"name": "search_blogger_videos", "arguments": {"question": "李爱琳最新视频"}},
         }
         denied = handle_message(call, library=FakeLibrary(), version="0.18.0", authenticated=False)
-        challenge = 'Bearer resource_metadata="https://grandpaamu.com/.well-known/oauth-protected-resource", scope="blogger.read"'
+        challenge = (
+            'Bearer resource_metadata="https://grandpaamu.com/.well-known/oauth-protected-resource", '
+            'scope="blogger.read", error="invalid_token", '
+            'error_description="Owner authorization required"'
+        )
         denied = attach_oauth_challenge(denied, challenge)
         self.assertEqual(denied["error"]["code"], -32001)
         self.assertEqual(denied["error"]["data"]["_meta"]["mcp/www_authenticate"], [challenge])
