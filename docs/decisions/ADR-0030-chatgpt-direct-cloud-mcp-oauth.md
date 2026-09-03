@@ -1,5 +1,7 @@
 # ADR-0030：ChatGPT 直接连接新加坡博主 MCP 与单主人 OAuth
 
+> 0.19.0 起，ADR-0032 在同一 OAuth/MCP 连接上增加模型先生三个只读工具；本 ADR 的博主工具与 OAuth 安全边界继续有效。
+
 - 状态：`ACCEPTED`
 - 日期：2026-09-02
 - 决策者：产品所有者
@@ -13,7 +15,7 @@ ADR-0029 先建立了新加坡只读 REST 投影，并由 Windows 本地博主 M
 ## 决定
 
 1. 即时 AI 0.18.0 候选在现有正式域名增加 Streamable HTTP MCP 入口 `https://grandpaamu.com/mcp`，不新建域名、仓库、应用或入站端口。
-2. MCP 只提供两个工具：`search_blogger_videos` 搜索当前云端博主作品，`get_blogger_video_text` 读取一条完整视频文字。二者均标记只读、幂等、非破坏、无开放网络动作。
+2. 0.18.x 的 MCP 提供两个博主工具：`search_blogger_videos` 搜索当前云端博主作品，`get_blogger_video_text` 读取一条完整视频文字。二者均标记只读、幂等、非破坏、无开放网络动作；0.19.0 的追加工具见 ADR-0032。
 3. 工具只返回 ADR-0029 已批准的博主、标题、公开作品 ID/链接、日期、处理状态和正式原文或明确标记的未确认转写。继续禁止评论、媒体文件、文件路径、manifest、机器身份、Cookie、密钥、财经资料和罗盘资料。
 4. MCP 工具使用 OAuth 2.1 authorization-code + PKCE S256。授权页复用即时 AI 现有单主人账号；不增加注册、用户表、邮箱、团队、角色或第二套主人密码。
 5. OAuth 通过标准 protected-resource metadata、authorization-server metadata 与 DCR 工作。DCR 只接受 ChatGPT 官方稳定或 callback-id 回调地址，公共客户端不发 client secret；授权响应固定回传精确 issuer，token 固定绑定 `https://grandpaamu.com/mcp` audience 与 `blogger.read` scope。

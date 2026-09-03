@@ -64,6 +64,36 @@ class FakeLibrary:
         }
 
 
+class FakeModelMrLibrary:
+    def search_works_for_mcp(self, question: str, limit: int):
+        return {
+            "query": question,
+            "count": 1,
+            "items": [
+                {
+                    "record_id": "model-mr-work:445",
+                    "title": "模型先生最新作品",
+                    "original_status": "official",
+                }
+            ][:limit],
+        }
+
+    def get_work_for_mcp(self, record_id: str):
+        return {
+            "found": True,
+            "record_id": record_id,
+            "video_original": {"text": "模型先生正式原文", "verified": True, "status": "official"},
+            "interpretation": {"text": "已有投资解读"},
+        }
+
+    def list_thoughts_for_mcp(self, query: str, limit: int):
+        return {
+            "query": query,
+            "count": 1,
+            "items": [{"id": 1, "name": "周期判断"}][:limit],
+        }
+
+
 class BloggerMcpCloudTests(unittest.TestCase):
     def setUp(self) -> None:
         clear_oauth_diagnostics_for_tests()
@@ -110,6 +140,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
             patch("instant_ai.server.AUTH", self.auth),
             patch("instant_ai.server.BLOGGER_MCP_OAUTH", self.oauth),
             patch("instant_ai.server.BLOGGER_LIBRARY", FakeLibrary()),
+            patch("instant_ai.server.MODEL_MR_MCP", FakeModelMrLibrary()),
         ):
             getattr(handler, f"do_{method}")()
         return statuses[-1], response_headers, handler.wfile.getvalue()
@@ -304,7 +335,16 @@ class BloggerMcpCloudTests(unittest.TestCase):
 
     def test_mcp_lists_read_only_oauth_tools_and_requires_auth_only_for_calls(self) -> None:
         tools = tool_definitions()
-        self.assertEqual({tool["name"] for tool in tools}, {"search_blogger_videos", "get_blogger_video_text"})
+        self.assertEqual(
+            {tool["name"] for tool in tools},
+            {
+                "search_blogger_videos",
+                "get_blogger_video_text",
+                "search_model_mr_works",
+                "get_model_mr_work_text",
+                "list_model_mr_investment_thoughts",
+            },
+        )
         for tool in tools:
             self.assertTrue(tool["annotations"]["readOnlyHint"])
             self.assertFalse(tool["annotations"]["destructiveHint"])
@@ -318,17 +358,19 @@ class BloggerMcpCloudTests(unittest.TestCase):
                 "params": {"protocolVersion": "2025-06-18"},
             },
             library=FakeLibrary(),
+            model_mr_library=FakeModelMrLibrary(),
             version="0.18.0",
             authenticated=False,
         )
-        self.assertEqual(initialized["result"]["serverInfo"]["title"], "博主智能体（云端）")
+        self.assertEqual(initialized["result"]["serverInfo"]["title"], "即时 AI 资料智能体（云端）")
         listed = handle_message(
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
             library=FakeLibrary(),
+            model_mr_library=FakeModelMrLibrary(),
             version="0.18.0",
             authenticated=False,
         )
-        self.assertEqual(len(listed["result"]["tools"]), 2)
+        self.assertEqual(len(listed["result"]["tools"]), 5)
 
         call = {
             "jsonrpc": "2.0",
@@ -336,7 +378,13 @@ class BloggerMcpCloudTests(unittest.TestCase):
             "method": "tools/call",
             "params": {"name": "search_blogger_videos", "arguments": {"question": "李爱琳最新视频"}},
         }
-        denied = handle_message(call, library=FakeLibrary(), version="0.18.0", authenticated=False)
+        denied = handle_message(
+            call,
+            library=FakeLibrary(),
+            model_mr_library=FakeModelMrLibrary(),
+            version="0.18.0",
+            authenticated=False,
+        )
         challenge = (
             'Bearer resource_metadata="https://grandpaamu.com/.well-known/oauth-protected-resource", '
             'scope="blogger.read", error="invalid_token", '
@@ -346,7 +394,13 @@ class BloggerMcpCloudTests(unittest.TestCase):
         self.assertEqual(denied["error"]["code"], -32001)
         self.assertEqual(denied["error"]["data"]["_meta"]["mcp/www_authenticate"], [challenge])
 
-        allowed = handle_message(call, library=FakeLibrary(), version="0.18.0", authenticated=True)
+        allowed = handle_message(
+            call,
+            library=FakeLibrary(),
+            model_mr_library=FakeModelMrLibrary(),
+            version="0.18.0",
+            authenticated=True,
+        )
         self.assertFalse(allowed["result"]["isError"])
         self.assertEqual(allowed["result"]["structuredContent"]["items"][0]["creator"], "李爱琳rene")
         detail = handle_message(
@@ -360,10 +414,62 @@ class BloggerMcpCloudTests(unittest.TestCase):
                 },
             },
             library=FakeLibrary(),
+            model_mr_library=FakeModelMrLibrary(),
             version="0.18.0",
             authenticated=True,
         )
         self.assertEqual(detail["result"]["structuredContent"]["video_original"]["text"], "正式视频原文")
+
+        model_search = handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "tools/call",
+                "params": {"name": "search_model_mr_works", "arguments": {"question": "最新作品"}},
+            },
+            library=FakeLibrary(),
+            model_mr_library=FakeModelMrLibrary(),
+            version="0.19.0",
+            authenticated=True,
+        )
+        self.assertEqual(
+            model_search["result"]["structuredContent"]["items"][0]["record_id"],
+            "model-mr-work:445",
+        )
+
+        model_detail = handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_model_mr_work_text",
+                    "arguments": {"record_id": "model-mr-work:445"},
+                },
+            },
+            library=FakeLibrary(),
+            model_mr_library=FakeModelMrLibrary(),
+            version="0.19.0",
+            authenticated=True,
+        )
+        self.assertEqual(
+            model_detail["result"]["structuredContent"]["video_original"]["text"],
+            "模型先生正式原文",
+        )
+
+        thoughts = handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {"name": "list_model_mr_investment_thoughts", "arguments": {}},
+            },
+            library=FakeLibrary(),
+            model_mr_library=FakeModelMrLibrary(),
+            version="0.19.0",
+            authenticated=True,
+        )
+        self.assertEqual(thoughts["result"]["structuredContent"]["items"][0]["name"], "周期判断")
 
     def test_http_surface_exposes_metadata_and_challenges_private_tool_calls(self) -> None:
         status, headers, body = self.handler_request(
@@ -393,7 +499,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
             {"Content-Type": "application/json"},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(json.loads(body)["result"]["serverInfo"]["title"], "博主智能体（云端）")
+        self.assertEqual(json.loads(body)["result"]["serverInfo"]["title"], "即时 AI 资料智能体（云端）")
 
         call = json.dumps(
             {
@@ -483,6 +589,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
         self.assertIn("确认授权".encode(), body)
         self.assertIn(b'name="username" value="amu"', body)
         self.assertIn(b'readonly aria-readonly="true"', body)
+        self.assertIn("模型先生的作品文字和投资思路".encode(), body)
 
         wrong_form = {**authorization, "username": "amu", "password": "wrong password"}
         status, wrong_headers, body = self.handler_request(
@@ -559,6 +666,27 @@ class BloggerMcpCloudTests(unittest.TestCase):
         self.assertEqual(status, 200)
         result = json.loads(body)["result"]["structuredContent"]
         self.assertEqual(result["items"][0]["creator"], "李爱琳rene")
+
+        model_call = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_model_mr_works",
+                    "arguments": {"question": "模型先生最新一条作品", "limit": 1},
+                },
+            }
+        ).encode()
+        status, _headers, body = self.handler_request(
+            "POST",
+            "/mcp",
+            model_call,
+            {"Content-Type": "application/json", "Authorization": f"Bearer {access_token}"},
+        )
+        self.assertEqual(status, 200)
+        model_result = json.loads(body)["result"]["structuredContent"]
+        self.assertEqual(model_result["items"][0]["record_id"], "model-mr-work:445")
 
         owner_cookie = headers.get("Set-Cookie", "").split(";", 1)[0]
         authorization["state"] = "state-http-again"

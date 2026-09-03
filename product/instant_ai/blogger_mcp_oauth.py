@@ -20,6 +20,10 @@ from .blogger_ingest import DEFAULT_BLOGGER_AGENT_ROOT
 PUBLIC_ORIGIN = os.environ.get("INSTANT_AI_PUBLIC_ORIGIN", "https://grandpaamu.com").rstrip("/")
 ISSUER = PUBLIC_ORIGIN
 MCP_RESOURCE = f"{PUBLIC_ORIGIN}/mcp"
+# Compatibility scope retained so the owner's already connected ChatGPT client
+# can discover the expanded read-only Instant AI library without another login.
+# The authorization page is the authoritative description of the Blogger +
+# Model Mr data boundary; no write or paid operation is granted by this scope.
 MCP_SCOPE = "blogger.read"
 AUTHORIZE_PATH = "/oauth/authorize"
 TOKEN_PATH = "/oauth/token"

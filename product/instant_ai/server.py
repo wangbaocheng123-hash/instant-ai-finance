@@ -54,6 +54,7 @@ from .blogger_mcp_oauth import (
     BloggerOAuthError,
 )
 from .blogger_mcp_protocol import attach_oauth_challenge, handle_message as handle_mcp_message
+from .model_mr_mcp import MODEL_MR_MCP
 from .oauth_diagnostics import oauth_diagnostic_snapshot, record_oauth_event
 
 
@@ -283,7 +284,7 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         error_html = f'<p class="error" role="alert" aria-live="assertive">{html.escape(error)}</p>' if error else ""
         return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>授权博主智能体（云端）</title><style>
+<title>授权即时 AI 资料智能体（云端）</title><style>
 body{{font-family:system-ui,sans-serif;background:#f4f7fb;color:#152033;margin:0;padding:24px}}
 main{{max-width:430px;margin:8vh auto;background:#fff;border-radius:18px;padding:28px;box-shadow:0 14px 40px #17304a1f}}
 h1{{font-size:22px;margin:0 0 12px}}p{{line-height:1.65;color:#526172}}label{{display:block;margin:14px 0;color:#334155}}
@@ -291,8 +292,8 @@ input{{box-sizing:border-box;width:100%;margin-top:7px;padding:12px;border:1px s
 input[readonly]{{background:#f8fafc;color:#475569}}small{{display:block;margin:-6px 0 14px;color:#64748b;line-height:1.5}}
 button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;color:white;font-size:16px;font-weight:700}}
 .scope{{background:#eff6ff;border-radius:10px;padding:12px;color:#1e40af}}.error{{border:1px solid #fecaca;border-radius:10px;background:#fef2f2;padding:12px;color:#b91c1c;font-weight:700}}
-</style></head><body><main><h1>授权博主智能体（云端）</h1>
-<p>{identity}</p><p class="scope">只读权限：查询新加坡即时 AI 中的博主、作品标题和视频文字。不会采集、转写、修改或读取评论与视频文件。</p>
+</style></head><body><main><h1>授权即时 AI 资料智能体（云端）</h1>
+<p>{identity}</p><p class="scope">只读权限：查询新加坡即时 AI 中的博主资料，以及模型先生的作品文字和投资思路。不会采集、转写、调用 AI、修改资料或读取评论与视频文件。</p>
 {error_html}<form method="post" action="{AUTHORIZE_PATH}">{hidden_html}{credentials}<button type="submit">确认授权</button></form>
 </main></body></html>"""
 
@@ -487,6 +488,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         response = handle_mcp_message(
             message,
             library=BLOGGER_LIBRARY,
+            model_mr_library=MODEL_MR_MCP,
             version=__version__,
             authenticated=authenticated,
         )

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Mapping
 
 from .blogger_library import BloggerLibrary, BloggerLibraryUnavailable
 from .blogger_mcp_oauth import MCP_SCOPE
+from .model_mr_mcp import ModelMrMcpLibrary, ModelMrMcpUnavailable
 
 
 SERVER_NAME = "instant-ai-blogger-cloud"
-SERVER_TITLE = "博主智能体（云端）"
+# Keep the protocol name stable for existing ChatGPT connections. The title is
+# owner-facing and now reflects the combined Blogger + Model Mr read surface.
+SERVER_TITLE = "即时 AI 资料智能体（云端）"
 SUPPORTED_PROTOCOLS = {"2025-03-26", "2025-06-18", "2025-11-25"}
 DEFAULT_PROTOCOL = "2025-06-18"
 
@@ -77,6 +81,92 @@ def tool_definitions() -> list[dict[str, Any]]:
             "securitySchemes": security,
             "_meta": {"securitySchemes": security},
         },
+        {
+            "name": "search_model_mr_works",
+            "title": "查询模型先生作品",
+            "description": (
+                "只读搜索即时 AI 模型先生资料库中的作品标题、关键词、正式视频原文、"
+                "未确认转写和已有投资解读。适合查询最新作品或按主题找内容；"
+                "不会读取评论和媒体，也不会触发识别、AI 或写入。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000,
+                        "description": "自然语言查询，例如：查询模型先生最新一条作品原文。",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 30,
+                        "default": 10,
+                    },
+                },
+                "required": ["question"],
+                "additionalProperties": False,
+            },
+            "outputSchema": {"type": "object", "additionalProperties": True},
+            "annotations": {"title": "查询模型先生作品", **common_annotations},
+            "securitySchemes": security,
+            "_meta": {"securitySchemes": security},
+        },
+        {
+            "name": "get_model_mr_work_text",
+            "title": "读取模型先生作品完整文字",
+            "description": (
+                "根据 search_model_mr_works 返回的 model-mr-work: 编号，"
+                "只读返回完整正式原文或明确标记的未确认文字，并同时返回已有投资解读。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "record_id": {
+                        "type": "string",
+                        "pattern": "^model-mr-work:[1-9][0-9]{0,11}$",
+                        "description": "搜索结果中的 model-mr-work: 编号。",
+                    }
+                },
+                "required": ["record_id"],
+                "additionalProperties": False,
+            },
+            "outputSchema": {"type": "object", "additionalProperties": True},
+            "annotations": {"title": "读取模型先生作品完整文字", **common_annotations},
+            "securitySchemes": security,
+            "_meta": {"securitySchemes": security},
+        },
+        {
+            "name": "list_model_mr_investment_thoughts",
+            "title": "查询模型先生投资思路",
+            "description": (
+                "只读列出或按主题筛选模型先生已保存的投资思路分类和说明。"
+                "这是资料索引，不调用 AI，也不生成即时买卖建议。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "maxLength": 2000,
+                        "default": "",
+                        "description": "可选主题；留空时列出全部思路分类。",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 300,
+                        "default": 100,
+                    },
+                },
+                "additionalProperties": False,
+            },
+            "outputSchema": {"type": "object", "additionalProperties": True},
+            "annotations": {"title": "查询模型先生投资思路", **common_annotations},
+            "securitySchemes": security,
+            "_meta": {"securitySchemes": security},
+        },
     ]
 
 
@@ -84,6 +174,7 @@ def handle_message(
     message: Mapping[str, Any],
     *,
     library: BloggerLibrary,
+    model_mr_library: ModelMrMcpLibrary,
     version: str,
     authenticated: bool,
 ) -> dict[str, Any] | None:
@@ -109,8 +200,9 @@ def handle_message(
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": {"name": SERVER_NAME, "title": SERVER_TITLE, "version": version},
                 "instructions": (
-                    "这是即时 AI 新加坡端的单主人只读博主资料库。"
-                    "先搜索，再用 cloud-video: 编号读取完整文字；不得把未确认转写冒充正式原文。"
+                    "这是即时 AI 新加坡端的单主人只读资料库，包含博主智能体和模型先生。"
+                    "先搜索，再用 cloud-video: 或 model-mr-work: 编号读取完整文字；"
+                    "不得把未确认转写冒充正式原文。"
                 ),
             },
         )
@@ -149,12 +241,41 @@ def handle_message(
             if not record_id.startswith("cloud-video:"):
                 raise ValueError("record_id_invalid")
             result = library.get_for_mcp(record_id)
+        elif name == "search_model_mr_works":
+            question = str(arguments.get("question") or "").strip()
+            if not question or len(question) > 2000:
+                raise ValueError("question_required")
+            try:
+                limit = int(arguments.get("limit", 10))
+            except (TypeError, ValueError) as error:
+                raise ValueError("limit_invalid") from error
+            if limit < 1 or limit > 30:
+                raise ValueError("limit_invalid")
+            result = model_mr_library.search_works_for_mcp(question, limit)
+        elif name == "get_model_mr_work_text":
+            record_id = str(arguments.get("record_id") or "")
+            if re.fullmatch(r"model-mr-work:[1-9][0-9]{0,11}", record_id) is None:
+                raise ValueError("record_id_invalid")
+            result = model_mr_library.get_work_for_mcp(record_id)
+        elif name == "list_model_mr_investment_thoughts":
+            query = str(arguments.get("query") or "").strip()
+            if len(query) > 2000:
+                raise ValueError("query_invalid")
+            try:
+                limit = int(arguments.get("limit", 100))
+            except (TypeError, ValueError) as error:
+                raise ValueError("limit_invalid") from error
+            if limit < 1 or limit > 300:
+                raise ValueError("limit_invalid")
+            result = model_mr_library.list_thoughts_for_mcp(query, limit)
         else:
             return _tool_error(request_id, "tool_not_found")
     except ValueError as error:
         return _tool_error(request_id, str(error))
     except BloggerLibraryUnavailable:
         return _tool_error(request_id, "blogger_library_unavailable")
+    except ModelMrMcpUnavailable:
+        return _tool_error(request_id, "model_mr_library_unavailable")
 
     text = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
     return _result(
