@@ -1,6 +1,6 @@
 # ADR-0032：模型先生只读云端 MCP 与统一即时 AI 资料连接
 
-- 状态：`ACCEPTED_FOR_0_19_0_CANDIDATE`
+- 状态：`ACCEPTED_AND_LIVE`
 - 日期：2026-09-03
 - 决策者：产品所有者
 
@@ -18,7 +18,7 @@
 3. 返回字段限定为作品编号、标题、说明、公开原链接、发布时间、关键词、正式原文或明确标记的未确认文字、已有投资解读，以及投资思路的分类字段。禁止返回评论、媒体文件与路径、评论排行、粉丝资料、原始 JSON、数据库字段、Cookie、密钥、本机路径和管理状态。
 4. 五个工具全部标记 `readOnlyHint=true`、`destructiveHint=false`、`idempotentHint=true`、`openWorldHint=false`。`official` 才可作为已确认原文直接引用；`video_text_unconfirmed` 和 `transcript_unconfirmed` 必须显式提示需核对。
 5. 复用 ADR-0030 的单主人 OAuth、同一资源地址和同一主人账号，不建立第二套账号、密码、域名、仓库或插件。为使所有者已经成功连接的 ChatGPT 客户端无需重复授权，0.19.0 暂时保留兼容 scope 名 `blogger.read`；授权页已改为完整说明博主和模型先生的只读范围。协议 `serverInfo.name` 保持稳定，显示标题升级为统一名称。
-6. 版本为 0.19.0 候选。只有所有者另行明确要求正式发布后，才允许通过即时 AI 既有受限发布器上线；发布后在 ChatGPT 连接中点击 Refresh 验证五个工具。
+6. 0.19.0 已在所有者明确授权后通过即时 AI 既有受限发布器正式上线。已有 ChatGPT 开发者模式连接只需点击 Refresh 重新发现五个工具，不另建插件；任何启用这一连接的对话或 GPT 均可调用博主与模型先生工具，资料域只在查询层统一，底层仍保持隔离。
 
 ## 理由
 
