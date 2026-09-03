@@ -578,6 +578,10 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("豆包识别文字", app)
         self.assertIn("抖音原链接", app)
         self.assertIn("model-work-detail", styles)
+        self.assertIn("继续向下滑自动加载", app)
+        self.assertIn("IntersectionObserver", app)
+        self.assertIn("model-work-loader", styles)
+        self.assertIn("offset=", app)
         self.assertIn("主人账户登录", app)
         self.assertIn("30 天", app)
         self.assertIn("显示密码", app)
@@ -605,7 +609,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.19.1", worker)
+        self.assertIn("instant-ai-shell-v0.19.2", worker)
 
 
 if __name__ == "__main__":

@@ -787,7 +787,8 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         elif path == "/api/model-mr/works":
             try:
                 limit = int(query.get("limit", ["40"])[0])
-                self._json(MODEL_MR.works(limit=limit))
+                offset = int(query.get("offset", ["0"])[0])
+                self._json(MODEL_MR.works(limit=limit, offset=offset))
             except (ValueError, ModelMrUnavailable) as error:
                 self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
         elif re.fullmatch(r"/api/model-mr/works/\d+/video", path):

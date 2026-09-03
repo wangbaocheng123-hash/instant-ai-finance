@@ -55,7 +55,13 @@ export const instantApi = {
     body: JSON.stringify({}),
   }),
   modelMrStatus: () => request<ModelMrStatus>('/api/model-mr/status'),
-  modelMrWorks: (limit = 40) => request<{ items: ModelMrWork[]; count: number }>(`/api/model-mr/works?limit=${limit}`),
+  modelMrWorks: (limit = 24, offset = 0) => request<{
+    items: ModelMrWork[];
+    count: number;
+    total: number;
+    offset: number;
+    has_more: boolean;
+  }>(`/api/model-mr/works?limit=${limit}&offset=${offset}`),
   modelMrWork: (id: number) => request<ModelMrWorkDetail>(`/api/model-mr/works/${id}`),
   saveModelMrTitle: (id: number, title: string) => request<{ ok: boolean; title: string; saved: boolean; mode: string }>(`/api/model-mr/works/${id}/title`, {
     method: 'POST',

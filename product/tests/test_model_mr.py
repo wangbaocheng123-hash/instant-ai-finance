@@ -139,6 +139,81 @@ class ModelMrGatewayTests(unittest.TestCase):
             self.assertEqual(thoughts["categories"][0]["name"], "趋势")
             self.assertFalse(chat["enabled"])
 
+    def test_snapshot_works_supports_incremental_pages(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "public-snapshot.json"
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "works": [
+                            {"id": work_id, "title": f"作品 {work_id}"}
+                            for work_id in range(1, 56)
+                        ],
+                        "thoughts": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            client = ModelMrClient("http://127.0.0.1:9", snapshot, root / "media")
+            with patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")):
+                middle = client.works(limit=24, offset=24)
+                last = client.works(limit=24, offset=48)
+
+            self.assertEqual(middle["count"], 24)
+            self.assertEqual(middle["total"], 55)
+            self.assertEqual(middle["offset"], 24)
+            self.assertTrue(middle["has_more"])
+            self.assertEqual([item["id"] for item in middle["items"]], list(range(25, 49)))
+            self.assertEqual(last["count"], 7)
+            self.assertEqual(last["total"], 55)
+            self.assertFalse(last["has_more"])
+            self.assertEqual([item["id"] for item in last["items"]], list(range(49, 56)))
+
+    def test_owner_works_http_endpoint_accepts_offset(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "public-snapshot.json").write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "works": [
+                            {"id": work_id, "title": f"作品 {work_id}"}
+                            for work_id in range(1, 31)
+                        ],
+                        "thoughts": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            client = ModelMrClient("http://127.0.0.1:9", root / "public-snapshot.json", root / "media")
+            auth = OwnerAuth(required=False, path=root / "missing-auth.json")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), InstantAIHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            with (
+                patch("instant_ai.server.MODEL_MR", client),
+                patch("instant_ai.server.AUTH", auth),
+                patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")),
+            ):
+                thread.start()
+                try:
+                    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                    connection.request("GET", "/api/model-mr/works?limit=5&offset=24")
+                    response = connection.getresponse()
+                    payload = json.loads(response.read().decode("utf-8"))
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(payload["offset"], 24)
+                    self.assertEqual(payload["total"], 30)
+                    self.assertTrue(payload["has_more"])
+                    self.assertEqual([item["id"] for item in payload["items"]], [25, 26, 27, 28, 29])
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=5)
+
     def test_owner_library_serves_local_video_text_and_comments_without_private_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

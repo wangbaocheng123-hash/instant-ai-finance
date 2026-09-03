@@ -6,6 +6,7 @@ import type {
 type ModelMrTab = 'works' | 'thoughts' | 'chat';
 type WorkDetailTab = 'video' | 'text' | 'comments';
 type CommentTab = 'author' | 'ranking' | 'stocks';
+const MODEL_MR_WORK_PAGE_SIZE = 24;
 
 interface ModelMrCommentThread {
   key: string;
@@ -19,6 +20,12 @@ export class ModelMrPanel {
   private readonly badge: HTMLElement;
   private activeTab: ModelMrTab = 'works';
   private works: ModelMrWork[] = [];
+  private totalWorks = 0;
+  private nextWorksOffset = 0;
+  private hasMoreWorks = false;
+  private loadingMoreWorks = false;
+  private worksLoadMessage = '';
+  private worksObserver: IntersectionObserver | null = null;
   private thoughts: ModelMrThoughtCategory[] = [];
   private chatConfig: ModelMrChatConfig | null = null;
   private chatMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
@@ -67,9 +74,19 @@ export class ModelMrPanel {
       return;
     }
     const [works, thoughts, chatConfig] = await Promise.all([
-      instantApi.modelMrWorks(120), instantApi.modelMrThoughts(), instantApi.modelMrChatConfig(),
+      instantApi.modelMrWorks(MODEL_MR_WORK_PAGE_SIZE, 0), instantApi.modelMrThoughts(), instantApi.modelMrChatConfig(),
     ]);
-    this.works = works.items;
+    if (this.works.length) {
+      const newestIds = new Set(works.items.map((work) => work.id));
+      this.works = [...works.items, ...this.works.filter((work) => !newestIds.has(work.id))];
+      this.nextWorksOffset = Math.max(this.nextWorksOffset, works.offset + works.count);
+    } else {
+      this.works = works.items;
+      this.nextWorksOffset = works.offset + works.count;
+    }
+    this.totalWorks = Math.max(status.counts?.works ?? 0, works.total, this.works.length);
+    this.hasMoreWorks = this.nextWorksOffset < this.totalWorks || works.has_more;
+    this.worksLoadMessage = '';
     this.thoughts = thoughts.categories;
     this.chatConfig = chatConfig;
     const media = status.counts?.media ?? 0;
@@ -92,6 +109,10 @@ export class ModelMrPanel {
     }
     const action = target.closest<HTMLElement>('[data-model-action]');
     if (!action) return;
+    if (action.dataset.modelAction === 'load-more') {
+      await this.loadMoreWorks();
+      return;
+    }
     const workId = Number(action.dataset.workId || 0);
     if (!workId) return;
     const command = action.dataset.modelAction;
@@ -126,11 +147,70 @@ export class ModelMrPanel {
   }
 
   private renderWorks(): void {
+    this.worksObserver?.disconnect();
+    this.worksObserver = null;
     const list = document.createElement('div');
     list.className = 'model-work-list model-work-list-full';
-    this.works.slice(0, 80).forEach((work) => list.append(this.renderWorkCard(work)));
+    this.works.forEach((work) => list.append(this.renderWorkCard(work)));
     if (!this.works.length) list.append(this.message('模型先生作品库当前没有可显示内容。'));
+    else list.append(this.renderWorksLoader());
     this.body.replaceChildren(list);
+    this.observeWorksLoader();
+  }
+
+  private renderWorksLoader(): HTMLElement {
+    const loader = document.createElement('footer');
+    loader.className = `model-work-loader${this.loadingMoreWorks ? ' is-loading' : ''}`;
+    loader.dataset.modelLoadTrigger = 'true';
+    loader.setAttribute('role', 'status');
+    const status = document.createElement('p');
+    if (this.worksLoadMessage) status.textContent = this.worksLoadMessage;
+    else if (this.loadingMoreWorks) status.textContent = '正在加载更早的作品…';
+    else if (this.hasMoreWorks) status.textContent = `已显示 ${this.works.length} / ${this.totalWorks} 部，继续向下滑自动加载`;
+    else status.textContent = `已显示全部 ${this.works.length} 部作品`;
+    loader.append(status);
+    if (this.hasMoreWorks) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.modelAction = 'load-more';
+      button.textContent = this.loadingMoreWorks ? '加载中…' : '加载更多作品';
+      button.disabled = this.loadingMoreWorks;
+      loader.append(button);
+    }
+    return loader;
+  }
+
+  private observeWorksLoader(): void {
+    if (!this.hasMoreWorks || this.loadingMoreWorks || !('IntersectionObserver' in window)) return;
+    const trigger = this.element.querySelector<HTMLElement>('[data-model-load-trigger]');
+    if (!trigger) return;
+    this.worksObserver = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void this.loadMoreWorks();
+    }, { root: null, rootMargin: '240px 0px', threshold: 0 });
+    this.worksObserver.observe(trigger);
+  }
+
+  private async loadMoreWorks(): Promise<void> {
+    if (this.loadingMoreWorks || !this.hasMoreWorks) return;
+    this.loadingMoreWorks = true;
+    this.worksLoadMessage = '';
+    this.renderWorks();
+    try {
+      const page = await instantApi.modelMrWorks(MODEL_MR_WORK_PAGE_SIZE, this.nextWorksOffset);
+      const loadedIds = new Set(this.works.map((work) => work.id));
+      page.items.forEach((work) => {
+        if (!loadedIds.has(work.id)) this.works.push(work);
+      });
+      this.nextWorksOffset = page.offset + page.count;
+      this.totalWorks = Math.max(this.totalWorks, page.total, this.works.length);
+      this.hasMoreWorks = page.count > 0 && (page.has_more || this.nextWorksOffset < this.totalWorks);
+      if (!page.count) this.worksLoadMessage = '没有读取到更多作品，请稍后再试。';
+    } catch (error) {
+      this.worksLoadMessage = error instanceof Error ? `加载失败：${error.message}` : '加载失败，请稍后重试。';
+    } finally {
+      this.loadingMoreWorks = false;
+      this.renderWorks();
+    }
   }
 
   private renderWorkCard(work: ModelMrWork): HTMLElement {

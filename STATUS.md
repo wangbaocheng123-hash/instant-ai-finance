@@ -1,14 +1,15 @@
 # 项目状态
 
 - 最后更新：2026-09-03
-- 当前阶段：`P2/P3 — 即时 AI 0.19.1 正式生产；北京模型下载器到模型先生传输已启用并验收`
+- 当前阶段：`P2/P3 — 即时 AI 0.19.1 正式生产；0.19.2 模型先生作品按需分页候选已完成`
+- 0.19.2 候选已修复模型先生旧作品被前端截断的问题：生产资料核实为 406 部作品、406 份详情，覆盖 2023-10-29 至 2026-09-03；392 条媒体引用全部存在，评论 39,023 条。客户端改为首屏 24 条、下滑接近底部每次再取 24 条，详情/评论/视频继续点击后按需读取。完整 106 项 Python 回归、Vite 构建和 npm 零漏洞审计通过；尚未正式发布。
 - 0.19.1 已按所有者明确授权正式发布：新加坡受限发布器把生产仓库安全快进至 `c905683`，服务器 104 项 Python 回归全部通过，正式健康接口、Service Worker 与 MCP `initialize` 均返回 0.19.1，五个只读工具保持正常。随后北京按需更新到 `1b4e018` / collector 1.0.5，安装 systemd 补充组并确认无轮询定时器；只读桥首轮把模型下载器作品 `7679663804129553913` 的 MP4 与 247 条评论送达新加坡模型先生记录 `model-mr-work:1000000`。视频、评论、页面资料和现有 MCP 索引均可见；未触发采集、ASR、豆包或 AI，时变罗盘未修改。
 - 0.19.0 已按所有者明确授权正式发布：受限发布器把生产仓库安全快进至 `79a7b04`，服务器 101 项 Python 回归全部通过；正式健康接口、Service Worker 与 MCP `initialize` 均返回 0.19.0，统一名称为“即时 AI 资料智能体（云端）”。公网 `tools/list` 实测为五个只读工具：保留两个博主工具，并新增模型先生作品搜索、完整作品文字/已有投资解读、投资思路查询三个工具；OAuth 资源和兼容 scope `blogger.read` 未变，未触发 sidecar、识别、豆包、AI、资料写入或媒体同步。
 - 0.18.5 已按所有者明确授权正式发布。callback-ID 凭据验证成功后会显示“返回 ChatGPT 完成授权”按钮，由主人主动完成同一回调；旧稳定回调继续保持 302 和精确 `iss`。受限发布器把生产仓库安全快进到 `26ecf0c`，服务器 96 项 Python 回归全部通过；正式健康接口、Service Worker 与 MCP `initialize` 均返回 0.18.5，即时 AI/Caddy active，OAuth 元数据与 PKCE S256 正常，本机诊断为空且公网诊断仍为 404。
 - 0.18.2 已正式上线并消除 OAuth 授权页的账号歧义：页面直接从当前 Git 外单主人配置带入并锁定账号，主人只输入密码；错误凭据在原页醒目显示。授权成功后保存 30 天安全主人 Cookie，不再丢弃刚创建的网页登录会话；MCP access token 与网页 Cookie 继续严格隔离。受限发布器安全快进至 `8bd242f`，服务器 93 项回归、公网 OAuth/MCP 协议及真实授权页结构均通过；未读取或重置生产账号密码。
 - 0.18.1 已修复 ADP 官方结果送达后被永久跳过的状态机缺口：已认证官方片段可作为一手证据，搜索索引滞后进入五分钟重试而不是 `skip`，最多三次并持久化原因；即时 AI schema 10 显示罗盘/Codex 回填状态并临时置顶最近变化。即时 AI 一侧已正式上线；时变罗盘三态重试仍是独立待发布候选，须另行取得正式发布授权。
 - 所有者已明确要求把主人密码最低长度调整为 9 个字符，并把 OAuth 主人账号改为指定用户名。代码只调整长度策略；真实密码仍必须在隐藏终端提示中输入，不进入 Git、聊天、命令参数或普通日志。
-- 阶段状态：`MODEL_MR_BEIJING_TRANSFER_0_19_1_LIVE / MODEL_MR_CLOUD_MCP_0_19_1_LIVE / UNIFIED_INSTANT_AI_MCP_FIVE_TOOLS_LIVE / GRANDPAAMU_0_19_1_LIVE / BLOGGER_CALLBACK_LINK_0_18_5_LIVE / BLOGGER_OAUTH_DIAGNOSTICS_0_18_5_LIVE / BLOGGER_CALLBACK_ID_0_18_5_LIVE / BLOGGER_CLOUD_MCP_REAL_CALL_VERIFIED / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / CLS_WECHAT_PUBLIC_INDEX_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 阶段状态：`MODEL_MR_LAZY_PAGING_0_19_2_CANDIDATE / MODEL_MR_BEIJING_TRANSFER_0_19_1_LIVE / MODEL_MR_CLOUD_MCP_0_19_1_LIVE / UNIFIED_INSTANT_AI_MCP_FIVE_TOOLS_LIVE / GRANDPAAMU_0_19_1_LIVE / BLOGGER_CALLBACK_LINK_0_18_5_LIVE / BLOGGER_OAUTH_DIAGNOSTICS_0_18_5_LIVE / BLOGGER_CALLBACK_ID_0_18_5_LIVE / BLOGGER_CLOUD_MCP_REAL_CALL_VERIFIED / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离；新加坡博主接收数据生产根固定为 `/var/lib/instant-ai/blogger-agent`，生命周期待后续决定
@@ -16,6 +17,8 @@
 
 ## 当前检查点
 
+- 完成 0.19.2 模型先生作品按需分页候选。根因是客户端固定请求 120 条并只渲染 80 条，生产资料本身完整；新接口按 `limit + offset` 返回页面与总量，客户端首屏 24 条、接近底部自动加载下一批并保留手动按钮兜底，避免一次传输和渲染 406 张作品卡。作品详情、评论和视频仍只在用户点击后读取。
+- 生产资料只读核对为 406 部作品、406 份详情、392 条媒体引用且缺失引用 0、39,023 条评论，最早作品为 2023-10-29，最新为 2026-09-03。没有复制、改写或删除业务资料。
 - 完成 ADR-0033 / 即时 AI 0.19.1 正式上线：北京原模型下载器继续独立运行；同机只读桥只扫描其 SQLite 元数据与已完成媒体，不访问抖音、不启动 Chromium、不调用 AI，并把变化写入现有博主 outbox。发送复用已上线的 HTTPS/HMAC、nonce、完整摘要、幂等、退避和回执；新加坡 complete 后把保留身份的已核验 MP4/评论投影到独立模型先生资料根，普通博主页面/MCP 不显示该身份，模型先生现有 GPT/MCP 会随资料库更新自动可查。主人标题、正式原文、转写、解读、关键词和评股在来源修订时保留。
 - 即时 AI 0.19.1 针对性 40 项与完整 104 项 Python 回归通过（1 项平台跳过），Vite 生产构建与 npm 零漏洞审计通过；北京 1.0.5 在生产权限门禁修复后完整 203 项回归通过（2 项平台跳过）。正式启用严格保持“新加坡接收端先发布、北京桥后启用”，真实首条传输已验收；没有触发采集/ASR/豆包/AI，也没有修改时变罗盘。
 - 正式生产 0.19.0 的 `tools/list` 已实测包含 `search_blogger_videos`、`get_blogger_video_text`、`search_model_mr_works`、`get_model_mr_work_text`、`list_model_mr_investment_thoughts`，五项均声明只读。任何启用这一统一 MCP 连接的 ChatGPT 对话或 GPT 都可同时查询博主和模型先生；两个资料域在服务器内部仍隔离，不互相复制或写入。
@@ -72,6 +75,7 @@
 
 ## 当前阻塞
 
+- 0.19.2 代码与本机验证无阻塞；按永久发布规则，正式生产仍保持 0.19.1，需所有者明确“正式发布即时 AI 0.19.2”后才调用受限发布器。
 - 0.19.1 与北京 1.0.5 的代码、正式发布和首条真实传输均无阻塞；桥接器仅在模型下载器资料实际变化时工作，不存在十分钟轮询更新任务。
 - 0.19.0 代码、正式发布和公网 MCP 元数据验收无阻塞；只剩所有者在现有 ChatGPT 云端连接点击 Refresh，并新建对话做一次模型先生真实 search/get。无需另建插件；已有有效 OAuth 连接继续兼容，只有令牌失效或到期时才需重新登录。
 - `P3-BLOGGER-02` 的 0.18.1 服务端修复已正式上线；剩余阻塞仅是删除当前未完成令牌交换的旧插件外壳并重建一次连接，以取得新的专用 DCR 客户端，再做李爱琳rene最新 939 字正式原文只读核验；不得读取 Cookie、密码或改用 API Key。
@@ -83,6 +87,7 @@
 
 ## 需要用户批准的事项
 
+- 0.19.2 按需分页候选尚未正式发布；发布只更新即时 AI 应用代码，不重传模型先生媒体、不修改业务资料，也不触发采集、ASR、豆包或 AI。
 - 0.19.1 正式发布和北京生产桥启用已按本轮授权完成，不需要再次确认；后续新代码或付费 ASR/豆包/AI 仍须另行明确授权。
 - 即时 AI 0.19.0 已按本轮明确授权正式发布，不再需要发布批准；后续若修改代码或再次发布，仍须取得新的明确授权。
 - 0.18.1 OAuth/DCR 兼容修复已按所有者本轮明确授权正式上线，不需要再次确认；公网协议验收通过，未修改时变罗盘、域名、业务资料或主人密码。
@@ -97,4 +102,4 @@
 
 ## 下一项唯一建议任务
 
-`P3-MODEL-01`：所有者在现有 ChatGPT 云端连接点击 Refresh 后，用一次真实对话调用 `search_model_mr_works` / `get_model_mr_work_text`；服务端五工具和新传输记录已验证，无需新建插件或重复授权。
+`P3-MODEL-03`：获得明确正式发布口令后，通过既有受限发布器上线即时 AI 0.19.2，并在手机端实测首屏 24 条、下滑自动追加和全部 406 条可逐批到达。

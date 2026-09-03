@@ -127,22 +127,50 @@ class ModelMrClient:
             "chat_enabled": bool(chat.get("enabled")),
         }
 
-    def works(self, *, limit: int = 40) -> dict[str, Any]:
+    def works(self, *, limit: int = 40, offset: int = 0) -> dict[str, Any]:
         safe_limit = max(1, min(int(limit), 500))
+        safe_offset = max(0, min(int(offset), 500_000))
         try:
-            source = self._json(f"/api/videos?{urlencode({'limit': safe_limit, 'account': '模型先生'})}")
+            # The original Windows sidecar has no offset parameter. Request the
+            # smallest prefix needed for this page, then slice locally. The cloud
+            # snapshot path below performs true page slicing without loading work
+            # details, comments or media.
+            source_limit = min(safe_offset + safe_limit, 500)
+            source = self._json(f"/api/videos?{urlencode({'limit': source_limit, 'account': '模型先生'})}")
         except ModelMrUnavailable:
             snapshot = self._require_snapshot()
             items = snapshot.get("works") if isinstance(snapshot.get("works"), list) else []
-            cleaned = [self._clean_snapshot_work(item) for item in items[:safe_limit] if isinstance(item, dict)]
+            public_items = [item for item in items if isinstance(item, dict)]
+            page = public_items[safe_offset : safe_offset + safe_limit]
+            cleaned = [self._clean_snapshot_work(item) for item in page]
+            total = len(public_items)
             return {
                 "items": cleaned,
                 "count": len(cleaned),
+                "total": total,
+                "offset": safe_offset,
+                "has_more": safe_offset + len(cleaned) < total,
                 "mode": "owner-mobile-library" if int(snapshot.get("version") or 0) >= 2 else "sanitized-snapshot",
             }
         items = source.get("items") if isinstance(source.get("items"), list) else []
-        cleaned = [self._clean_work(item) for item in items if isinstance(item, dict)]
-        return {"items": cleaned, "count": len(cleaned), "mode": "independent-owner"}
+        cleaned_prefix = [self._clean_work(item) for item in items if isinstance(item, dict)]
+        cleaned = cleaned_prefix[safe_offset : safe_offset + safe_limit]
+        source_total = source.get("total")
+        try:
+            total = max(len(cleaned_prefix), int(source_total))
+        except (TypeError, ValueError):
+            total = len(cleaned_prefix)
+        prefix_may_continue = len(cleaned_prefix) >= source_limit and source_limit < 500
+        if prefix_may_continue:
+            total = max(total, safe_offset + len(cleaned) + 1)
+        return {
+            "items": cleaned,
+            "count": len(cleaned),
+            "total": total,
+            "offset": safe_offset,
+            "has_more": safe_offset + len(cleaned) < total,
+            "mode": "independent-owner",
+        }
 
     def work_detail(self, work_id: int) -> dict[str, Any]:
         safe_id = self._safe_work_id(work_id)
