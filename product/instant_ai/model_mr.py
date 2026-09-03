@@ -304,6 +304,229 @@ class ModelMrClient:
         mime_type = mimetypes.guess_type(target.name)[0] or "video/mp4"
         return target, mime_type
 
+    @property
+    def transfer_map_path(self) -> Path:
+        return self.snapshot_path.parent / "beijing-transfer-map.json"
+
+    def import_beijing_work(
+        self,
+        *,
+        source_work_id: str,
+        source_revision: int,
+        title: str,
+        description: str,
+        source_url: str,
+        published_at: str,
+        comments: list[dict[str, Any]],
+        media_path: Path,
+        media_sha256: str,
+    ) -> dict[str, Any]:
+        """Idempotently import one verified Beijing model-downloader work."""
+
+        source_id = str(source_work_id or "").strip()
+        digest = str(media_sha256 or "").strip().lower()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", source_id):
+            raise ValueError("来源作品编号无效。")
+        revision = int(source_revision)
+        if revision <= 0 or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("来源作品版本无效。")
+        source_media = Path(media_path).resolve(strict=True)
+        if not source_media.is_file():
+            raise ValueError("来源视频不存在。")
+
+        with _DETAIL_LOCK:
+            snapshot = self._snapshot() or {
+                "version": SNAPSHOT_VERSION,
+                "exported_at": int(time.time()),
+                "scope": "single-owner-mobile-library",
+                "excluded": [
+                    "fans",
+                    "admin",
+                    "api_keys",
+                    "local_paths",
+                    "raw_database",
+                    "raw_json",
+                    "comment_media",
+                ],
+                "counts": {},
+                "media_source_root": self.media_root.name,
+                "works": [],
+                "thoughts": [],
+            }
+            mapping = self._read_transfer_map()
+            entry = mapping.get(source_id) if isinstance(mapping.get(source_id), dict) else {}
+            work_id = int(entry.get("work_id") or 0)
+            if not work_id:
+                work_id = self._match_existing_work(snapshot, source_id, source_url)
+            if not work_id:
+                existing_ids = [
+                    int(item.get("id") or 0)
+                    for item in snapshot.get("works", [])
+                    if isinstance(item, dict)
+                ]
+                work_id = max([999_999, *existing_ids]) + 1
+            if int(entry.get("source_revision") or 0) > revision:
+                return {"ok": True, "work_id": work_id, "status": "stale"}
+
+            media_name = f"beijing-{source_id}-{digest[:16]}.mp4"
+            self._copy_media(source_media, self.media_root / media_name, digest)
+
+            detail_path = self._detail_path(work_id)
+            previous_raw: dict[str, Any] = {}
+            try:
+                loaded = json.loads(detail_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    previous_raw = loaded
+            except (OSError, json.JSONDecodeError):
+                pass
+            previous = self._clean_snapshot_detail(previous_raw, work_id) if previous_raw else {}
+            previous_work = previous.get("work") if isinstance(previous.get("work"), dict) else {}
+            if not previous_work:
+                previous_work = next(
+                    (
+                        item
+                        for item in snapshot.get("works", [])
+                        if isinstance(item, dict) and int(item.get("id") or 0) == work_id
+                    ),
+                    {},
+                )
+            imported_title = str(entry.get("imported_title") or "")
+            previous_title = str(previous_work.get("title") or "").strip()
+            incoming_title = (str(title or "").strip() or f"抖音作品 {source_id}")[:120]
+            preserve_previous_title = bool(
+                previous_title
+                and (
+                    not entry
+                    or (imported_title and previous_title != imported_title)
+                )
+            )
+            active_title = previous_title if preserve_previous_title else incoming_title
+            clean_comments = [
+                self._clean_comment(item, index)
+                for index, item in enumerate(comments, start=1)
+                if isinstance(item, dict)
+            ]
+            work = {
+                "id": work_id,
+                "title": active_title,
+                "description": str(description or previous_work.get("description") or ""),
+                "url": str(
+                    source_url
+                    or previous_work.get("url")
+                    or f"https://www.douyin.com/video/{source_id}"
+                ),
+                "published_at": str(published_at or previous_work.get("published_at") or ""),
+                "has_video_text": bool(previous.get("video_text", {}).get("text")) if previous else False,
+                "has_interpretation": bool(previous.get("interpretation", {}).get("text")) if previous else False,
+                "comment_count": len(clean_comments),
+                "media_available": True,
+                "media_file": media_name,
+                "keywords": list(previous_work.get("keywords") or []),
+            }
+            detail = {
+                "version": SNAPSHOT_VERSION,
+                "work": work,
+                "video_text": previous.get("video_text", {}),
+                "interpretation": previous.get("interpretation", {}),
+                "transcripts": previous.get("transcripts", []),
+                "comments": clean_comments,
+                "stock_mentions": previous.get("stock_mentions", {}),
+                "comment_total": len(clean_comments),
+                "capabilities": {},
+            }
+            self._write_json(detail_path, self._clean_snapshot_detail(detail, work_id))
+
+            works = [
+                item
+                for item in snapshot.get("works", [])
+                if isinstance(item, dict) and int(item.get("id") or 0) != work_id
+            ]
+            works.append(work)
+            works.sort(
+                key=lambda item: (str(item.get("published_at") or ""), int(item.get("id") or 0)),
+                reverse=True,
+            )
+            now = int(time.time())
+            snapshot["version"] = SNAPSHOT_VERSION
+            snapshot["works"] = works
+            snapshot["exported_at"] = now
+            snapshot["updated_at"] = now
+            counts = snapshot.get("counts") if isinstance(snapshot.get("counts"), dict) else {}
+            counts.update(
+                {
+                    "works": len(works),
+                    "media": sum(1 for item in works if item.get("media_file")),
+                    "comments": sum(max(0, int(item.get("comment_count") or 0)) for item in works),
+                }
+            )
+            snapshot["counts"] = counts
+            mapping[source_id] = {
+                "work_id": work_id,
+                "source_revision": revision,
+                "imported_title": incoming_title,
+                "media_sha256": digest,
+            }
+            self._write_json(self.snapshot_path, snapshot)
+            self._write_json(self.transfer_map_path, mapping)
+            return {"ok": True, "work_id": work_id, "status": "imported"}
+
+    def _read_transfer_map(self) -> dict[str, Any]:
+        try:
+            value = json.loads(self.transfer_map_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _match_existing_work(snapshot: dict[str, Any], source_id: str, source_url: str) -> int:
+        target_url = str(source_url or "").rstrip("/")
+        for item in snapshot.get("works", []):
+            if not isinstance(item, dict):
+                continue
+            candidate = str(item.get("url") or "").rstrip("/")
+            if candidate and (candidate == target_url or candidate.endswith(f"/video/{source_id}")):
+                return int(item.get("id") or 0)
+        return 0
+
+    @staticmethod
+    def _copy_media(source: Path, destination: Path, expected_sha256: str) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.is_file():
+            if ModelMrClient._sha256_file(destination) == expected_sha256:
+                return
+            raise ModelMrUnavailable("模型先生目标视频摘要冲突。")
+        handle, temporary_name = tempfile.mkstemp(
+            prefix=".beijing-model-",
+            suffix=".mp4",
+            dir=destination.parent,
+        )
+        os.close(handle)
+        temporary = Path(temporary_name)
+        try:
+            digest = hashlib.sha256()
+            with source.open("rb") as input_stream, temporary.open("wb") as output_stream:
+                while True:
+                    chunk = input_stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    output_stream.write(chunk)
+                output_stream.flush()
+                os.fsync(output_stream.fileno())
+            if digest.hexdigest() != expected_sha256:
+                raise ModelMrUnavailable("模型先生来源视频摘要不匹配。")
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
     def open_live_video(self, work_id: int, range_header: str = "") -> BinaryIO:
         safe_id = self._safe_work_id(work_id)
         source = self._json(f"/api/videos/{safe_id}", timeout=15, max_bytes=64 * 1024 * 1024)

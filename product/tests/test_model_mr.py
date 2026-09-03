@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import hashlib
 import json
 import os
 import tempfile
@@ -17,6 +18,55 @@ from instant_ai.server import InstantAIHandler
 
 
 class ModelMrGatewayTests(unittest.TestCase):
+    def test_verified_beijing_work_is_idempotent_and_preserves_owner_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "public-snapshot.json"
+            snapshot.write_text(
+                json.dumps({"version": 2, "works": [], "thoughts": [], "counts": {}}),
+                encoding="utf-8",
+            )
+            media = root / "incoming.mp4"
+            media.write_bytes(b"verified-video")
+            digest = hashlib.sha256(media.read_bytes()).hexdigest()
+            client = ModelMrClient(
+                "http://127.0.0.1:8787",
+                snapshot,
+                root / "media",
+            )
+            first = client.import_beijing_work(
+                source_work_id="778899",
+                source_revision=1,
+                title="模型先生新作品",
+                description="",
+                source_url="https://www.douyin.com/video/778899",
+                published_at="2026-09-03T09:00:00+08:00",
+                comments=[{"author": "读者", "text": "测试评论", "like_count": 2}],
+                media_path=media,
+                media_sha256=digest,
+            )
+            client.save_title(first["work_id"], "主人标题")
+            client.save_video_text(first["work_id"], "主人确认原文")
+            repeated = client.import_beijing_work(
+                source_work_id="778899",
+                source_revision=2,
+                title="下载器更新标题",
+                description="",
+                source_url="https://www.douyin.com/video/778899",
+                published_at="2026-09-03T09:00:00+08:00",
+                comments=[{"author": "读者", "text": "更新评论", "like_count": 3}],
+                media_path=media,
+                media_sha256=digest,
+            )
+
+            self.assertEqual(first["work_id"], repeated["work_id"])
+            with patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")):
+                self.assertEqual(client.works(limit=10)["count"], 1)
+                detail = client.work_detail(first["work_id"])
+                self.assertEqual(detail["work"]["title"], "主人标题")
+                self.assertEqual(detail["video_text"]["text"], "主人确认原文")
+                self.assertEqual(detail["comments"][0]["text"], "更新评论")
+                self.assertIsNotNone(client.video_path(first["work_id"]))
     def test_work_summary_removes_local_paths_raw_payload_and_admin_fields(self) -> None:
         cleaned = ModelMrClient._clean_work(
             {

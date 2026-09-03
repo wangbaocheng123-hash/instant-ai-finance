@@ -23,6 +23,7 @@ MAX_CURRENT_ROWS = 10_000
 MAX_PUBLIC_COMMENTS = 10_000
 MAX_VIDEO_TEXT_LENGTH = 200_000
 MCP_RECORD_PREFIX = "cloud-video:"
+MODEL_MR_TRANSFER_CREATOR_ID = "732ceafb-2bb3-5042-b303-967bdcf4312d"
 
 _REQUIRED_TABLES = {"schema_meta", "transfers", "artifacts", "processing_queue"}
 _PROCESSING_STATUSES = {
@@ -541,8 +542,8 @@ class BloggerLibrary:
         creator_id: str | None = None,
         work_key: str | None = None,
     ) -> list[dict[str, Any]]:
-        filters: list[str] = []
-        parameters: list[object] = []
+        filters: list[str] = ["t.creator_id<>?"]
+        parameters: list[object] = [MODEL_MR_TRANSFER_CREATOR_ID]
         if creator_id is not None:
             filters.append("t.creator_id=?")
             parameters.append(creator_id)

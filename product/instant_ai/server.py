@@ -38,6 +38,7 @@ from .translation import translate_items, translation_status
 from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 from .watch_events import list_watch_events, refresh_watch_events
 from .model_mr import MODEL_MR, ModelMrUnavailable
+from .model_mr_transfer import MODEL_MR_TRANSFER_PROJECTOR
 from .blogger_http import BloggerTransferHTTP
 from .blogger_library import BLOGGER_LIBRARY, BloggerLibraryUnavailable
 from .blogger_mcp import GET_PATH as BLOGGER_MCP_GET_PATH
@@ -1113,7 +1114,9 @@ def create_server() -> BoundedThreadingHTTPServer:
     backfill_thumbnail_candidates()
     backfill_notifications()
     server = BoundedThreadingHTTPServer((HOST, PORT), InstantAIHandler)
-    server.blogger_transfer = BloggerTransferHTTP.from_environment()  # type: ignore[attr-defined]
+    server.blogger_transfer = BloggerTransferHTTP.from_environment(  # type: ignore[attr-defined]
+        on_complete=MODEL_MR_TRANSFER_PROJECTOR.project,
+    )
     return server
 
 

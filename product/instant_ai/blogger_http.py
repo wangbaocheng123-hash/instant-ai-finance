@@ -273,10 +273,12 @@ class BloggerTransferHTTP:
         root: Path = DEFAULT_BLOGGER_AGENT_ROOT,
         secrets: Mapping[tuple[str, str], bytes],
         clock: Callable[[], float] = time.time,
+        on_complete: Callable[[str], None] | None = None,
     ) -> None:
         self.receiver = BloggerManifestReceiver(root=root, secrets=secrets, clock=clock)
         self.store = self.receiver.store
         self.clock = clock
+        self.on_complete = on_complete
         self._commit_lock = threading.Lock()
         self._ensure_artifact_layout()
 
@@ -286,6 +288,7 @@ class BloggerTransferHTTP:
         environ: Mapping[str, str] | None = None,
         *,
         clock: Callable[[], float] = time.time,
+        on_complete: Callable[[str], None] | None = None,
     ) -> BloggerTransferHTTP | None:
         values = os.environ if environ is None else environ
         node_id = str(values.get("INSTANT_AI_BLOGGER_NODE_ID", "")).strip()
@@ -312,7 +315,12 @@ class BloggerTransferHTTP:
             )
         configured_root = str(values.get("INSTANT_AI_BLOGGER_ROOT", "")).strip()
         root = Path(configured_root) if configured_root else DEFAULT_BLOGGER_AGENT_ROOT
-        return cls(root=root, secrets={(node_id, key_id): secret}, clock=clock)
+        return cls(
+            root=root,
+            secrets={(node_id, key_id): secret},
+            clock=clock,
+            on_complete=on_complete,
+        )
 
     @staticmethod
     def is_candidate(raw_target: str) -> bool:
@@ -551,6 +559,8 @@ class BloggerTransferHTTP:
             key_id=verified.key_id,
             completed_at=int(self.clock()),
         )
+        if self.on_complete is not None:
+            self.on_complete(transfer_id)
         return BloggerHTTPResponse(status=200, payload=receipt)
 
     def _consume_nonce(self, verified: VerifiedRequest) -> None:

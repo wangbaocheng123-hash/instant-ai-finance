@@ -13,9 +13,11 @@ from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from urllib.error import URLError
 from urllib.parse import quote
 
 from instant_ai.blogger_http import BloggerTransferHTTP
+from instant_ai.blogger_library import MODEL_MR_TRANSFER_CREATOR_ID
 from instant_ai.blogger_ingest import (
     BloggerIngestError,
     DEFAULT_MANIFEST_PATH,
@@ -34,6 +36,9 @@ from instant_ai.server import (
     InstantAIHandler,
     REQUEST_READ_TIMEOUT_SECONDS,
 )
+from instant_ai.model_mr import ModelMrClient
+from instant_ai.model_mr_mcp import ModelMrMcpLibrary
+from instant_ai.model_mr_transfer import ModelMrTransferProjector
 
 
 NODE_ID = "beijing-collector-1"
@@ -89,7 +94,14 @@ class ExplodingStream:
         raise AssertionError("unauthenticated request body was read")
 
 
-def manifest_for(media_body: bytes, comment_plain: bytes, *, media_mime: str = "video/mp4") -> dict:
+def manifest_for(
+    media_body: bytes,
+    comment_plain: bytes,
+    *,
+    media_mime: str = "video/mp4",
+    creator_id: str = CREATOR_ID,
+    creator_name: str = "测试博主",
+) -> dict:
     media_sha = hashlib.sha256(media_body).hexdigest()
     comment_body = gzip_bytes(comment_plain)
     comment_sha = hashlib.sha256(comment_body).hexdigest()
@@ -104,8 +116,8 @@ def manifest_for(media_body: bytes, comment_plain: bytes, *, media_mime: str = "
             "source_sequence": 41,
         },
         "creator": {
-            "creator_id": CREATOR_ID,
-            "display_name": "测试博主",
+            "creator_id": creator_id,
+            "display_name": creator_name,
             "platform": "douyin",
             "platform_user_id": "MS4wLjABAAAA-example",
         },
@@ -159,7 +171,7 @@ def manifest_for(media_body: bytes, comment_plain: bytes, *, media_mime: str = "
     identity = "\n".join(
         (
             NODE_ID,
-            CREATOR_ID,
+            creator_id,
             value["work"]["platform"],
             value["work"]["source_work_id"],
             str(value["work"]["revision"]),
@@ -352,6 +364,68 @@ class BloggerTransferHTTPTests(unittest.TestCase):
         self.assertEqual(response.status, 409)
         self.assertEqual(response.payload["error_code"], "artifacts_missing")
         self.assertEqual(self.application.store.processing_jobs(), [])
+
+    def test_reserved_model_mr_transfer_projects_verified_video_comments_and_mcp_index(self) -> None:
+        model_root = Path(self.temporary.name) / "model-mr"
+        snapshot = model_root / "public-snapshot.json"
+        snapshot.parent.mkdir(parents=True)
+        snapshot.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "works": [],
+                    "thoughts": [],
+                    "counts": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        model_mr = ModelMrClient(
+            "http://127.0.0.1:8787",
+            snapshot,
+            model_root / "media",
+        )
+        self.application.on_complete = ModelMrTransferProjector(
+            blogger_root=self.root,
+            model_mr=model_mr,
+        ).project
+        self.manifest = manifest_for(
+            self.media,
+            self.comment_plain,
+            creator_id=MODEL_MR_TRANSFER_CREATOR_ID,
+            creator_name="模型先生",
+        )
+        self.accept_manifest()
+        self.upload_all()
+        complete_path = f"{DEFAULT_MANIFEST_PATH}/{self.manifest['transfer_id']}/complete"
+        complete_body = canonical({"transfer_id": self.manifest["transfer_id"]})
+
+        response = self.call(
+            "POST",
+            complete_path,
+            complete_body,
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status, 200, response.payload)
+        repeated = self.call(
+            "POST",
+            complete_path,
+            complete_body,
+            content_type="application/json",
+        )
+        self.assertEqual(repeated.status, 200, repeated.payload)
+        with patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")):
+            imported = model_mr.works(limit=10)
+            self.assertEqual(imported["count"], 1)
+            work = imported["items"][0]
+            detail = model_mr.work_detail(work["id"])
+            self.assertEqual(detail["work"]["title"], "测试作品")
+            self.assertEqual(detail["comments"][0]["text"], "hello")
+            self.assertIsNotNone(model_mr.video_path(work["id"]))
+        mcp = ModelMrMcpLibrary(snapshot)
+        search = mcp.search_works_for_mcp("最新", limit=1)
+        self.assertEqual(search["items"][0]["record_id"], f"model-mr-work:{work['id']}")
 
     def test_comment_rows_freeze_beijing_v1_fields_types_boundaries_and_sorting(self) -> None:
         expected_fields = frozenset(

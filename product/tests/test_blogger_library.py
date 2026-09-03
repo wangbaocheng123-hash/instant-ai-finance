@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from instant_ai.blogger_ingest import BloggerIngestStore, MANIFEST_SCHEMA_VERSION, opaque_work_key
-from instant_ai.blogger_library import BloggerLibrary
+from instant_ai.blogger_library import BloggerLibrary, MODEL_MR_TRANSFER_CREATOR_ID
 from instant_ai.server import InstantAIHandler
 
 
@@ -404,6 +404,43 @@ class BloggerLibraryTests(unittest.TestCase):
         self.assertTrue(cached["cached"])
         self.assertEqual(cached["text"], "正式视频原文")
         self.assertTrue(self.library.owner_database_path.is_file())
+
+    def test_reserved_model_mr_transport_identity_is_hidden_from_blogger_views_and_mcp(self) -> None:
+        transfer_id, _ = self._insert_work(
+            "reserved-model-mr",
+            source_work_id="778899",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+            processing_status="awaiting_asr_approval",
+        )
+        with closing(sqlite3.connect(self.store.database_path)) as connection, connection:
+            row = connection.execute(
+                "SELECT manifest_json FROM transfers WHERE transfer_id=?",
+                (transfer_id,),
+            ).fetchone()
+            manifest = json.loads(row[0])
+            manifest["creator"]["creator_id"] = MODEL_MR_TRANSFER_CREATOR_ID
+            manifest["creator"]["display_name"] = "模型先生"
+            connection.execute(
+                """
+                UPDATE transfers
+                SET creator_id=?, creator_display_name=?, manifest_json=?
+                WHERE transfer_id=?
+                """,
+                (
+                    MODEL_MR_TRANSFER_CREATOR_ID,
+                    "模型先生",
+                    json.dumps(manifest, ensure_ascii=False),
+                    transfer_id,
+                ),
+            )
+
+        self.assertEqual(self.library.status()["counts"]["works"], 0)
+        self.assertEqual(self.library.creators(), {"items": [], "count": 0})
+        self.assertIsNone(self.library.creator_works(MODEL_MR_TRANSFER_CREATOR_ID))
+        self.assertEqual(self.library.search_for_mcp("模型先生最新作品")["count"], 0)
 
     def test_mcp_projection_searches_latest_official_text_and_exposes_only_whitelisted_fields(self) -> None:
         _, work_key = self._insert_work(
