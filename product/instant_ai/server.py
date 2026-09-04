@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import html
 import mimetypes
+import os
 import re
 import threading
 from http import HTTPStatus
@@ -39,6 +40,7 @@ from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 from .watch_events import list_watch_events, refresh_watch_events
 from .model_mr import MODEL_MR, ModelMrUnavailable
 from .model_mr_transfer import MODEL_MR_TRANSFER_PROJECTOR
+from .model_mr_processing import MODEL_MR_PROCESSOR
 from .blogger_http import BloggerTransferHTTP
 from .blogger_library import BLOGGER_LIBRARY, BloggerLibraryUnavailable
 from .blogger_mcp import GET_PATH as BLOGGER_MCP_GET_PATH
@@ -784,6 +786,8 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             self._json(result) if result is not None else self._not_found()
         elif path == "/api/model-mr/status":
             self._json(MODEL_MR.status())
+        elif path == "/api/model-mr/processing":
+            self._json(MODEL_MR_PROCESSOR.status())
         elif path == "/api/model-mr/works":
             try:
                 limit = int(query.get("limit", ["40"])[0])
@@ -1007,7 +1011,17 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                 self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
             return
 
-        model_work_match = re.fullmatch(r"/api/model-mr/works/(\d+)/(title|video-text|keywords|transcribe|doubao-transcribe)", path)
+        if path in {"/api/model-mr/processing", "/api/model-mr/processing/retry"}:
+            try:
+                if not isinstance(payload, dict) or payload.get("confirm_billing") is not True:
+                    raise ValueError("请先确认自动处理费用说明。")
+                self._json(MODEL_MR_PROCESSOR.retry(int(payload.get("job_id") or 0))
+                           if path.endswith("/retry") else MODEL_MR_PROCESSOR.set_enabled(payload.get("enabled")))
+            except (ValueError, TypeError) as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+
+        model_work_match = re.fullmatch(r"/api/model-mr/works/(\d+)/(title|video-text|keywords|extract-keywords|transcribe|doubao-transcribe)", path)
         if model_work_match:
             work_id = int(model_work_match.group(1))
             action = model_work_match.group(2)
@@ -1019,6 +1033,10 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                 elif action == "keywords":
                     self._json(MODEL_MR.save_keywords(work_id, payload.get("categories"),
                         payload.get("keywords", []), str(payload.get("expected_revision") or "")))
+                elif action == "extract-keywords":
+                    if payload.get("confirm_billing") is not True:
+                        raise ValueError("请先确认关键词提炼费用。")
+                    self._json(MODEL_MR_PROCESSOR.request_keywords(work_id, str(payload.get("expected_revision") or "")))
                 else:
                     self._json(MODEL_MR.transcribe(work_id, "doubao" if action == "doubao-transcribe" else "local"))
             except ValueError as error:
@@ -1135,6 +1153,8 @@ def create_server() -> BoundedThreadingHTTPServer:
 
 def run_server(collect_on_start: bool = True) -> None:
     server = create_server()
+    if os.name == "posix":
+        threading.Thread(target=MODEL_MR_PROCESSOR.run, name="model-mr-processing", daemon=True).start()
     threading.Thread(target=_scheduler_loop, name="instant-ai-scheduler", daemon=True).start()
     if collect_on_start:
         threading.Thread(target=_collect_in_background, name="instant-ai-initial-collector", daemon=True).start()

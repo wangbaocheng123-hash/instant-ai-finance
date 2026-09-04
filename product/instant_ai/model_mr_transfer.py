@@ -68,7 +68,7 @@ class ModelMrTransferProjector:
         if not video_artifact or not comment_artifact:
             raise ModelMrUnavailable("模型先生传输附件不完整。")
 
-        self.model_mr.import_beijing_work(
+        imported = self.model_mr.import_beijing_work(
             source_work_id=str(work.get("source_work_id") or ""),
             source_revision=int(work.get("revision") or 0),
             title=str(work.get("title") or ""),
@@ -82,6 +82,11 @@ class ModelMrTransferProjector:
             media_path=self._artifact_path(video_artifact),
             media_sha256=str(video_descriptor.get("sha256") or ""),
         )
+        if imported.get("status") == "imported":
+            from .model_mr_processing import ModelMrProcessor
+            # The request only records intent. Paid work runs on the serial worker.
+            ModelMrProcessor(self.model_mr).enqueue_arrival(
+                int(imported["work_id"]), str(video_descriptor.get("sha256") or ""))
 
     def _artifact_path(self, artifact: Mapping[str, Any]) -> Path:
         relative = str(artifact.get("stored_relative_path") or "").replace("\\", "/")

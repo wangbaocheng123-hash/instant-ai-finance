@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+import wave
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
@@ -31,7 +32,7 @@ def is_configured() -> bool:
     return bool(api_key or (app_id and access_key))
 
 
-def transcribe_video(source: Path, work_id: int, *, scope: str = "model-mr") -> dict[str, Any]:
+def transcribe_video(source: Path, work_id: int, *, scope: str = "model-mr", max_duration_seconds: int | None = None) -> dict[str, Any]:
     if not is_configured():
         raise DoubaoAsrUnavailable("云端尚未安全配置豆包语音凭据。")
     source = source.resolve()
@@ -42,6 +43,10 @@ def transcribe_video(source: Path, work_id: int, *, scope: str = "model-mr") -> 
     with tempfile.TemporaryDirectory(prefix=f"instant-ai-{safe_scope}-doubao-{work_id}-") as temp:
         audio_path = Path(temp) / "audio.wav"
         _extract_audio(ffmpeg, source, audio_path)
+        if max_duration_seconds is not None:
+            with wave.open(str(audio_path), "rb") as audio:
+                if audio.getnframes() / audio.getframerate() > max_duration_seconds:
+                    raise DoubaoAsrUnavailable("视频超过自动识别时长上限，未提交付费识别。")
         if audio_path.stat().st_size > 100 * 1024 * 1024:
             raise DoubaoAsrUnavailable("提取后的音频超过 100MB，暂时不能提交豆包识别。")
         task_id = str(uuid.uuid4())

@@ -257,17 +257,86 @@ class ModelMrClient:
             note = source.get("note") if isinstance(source.get("note"), dict) else {}
             return {"ok": True, "text": str(note.get("text") or cleaned_text), "saved": True, "mode": "live"}
         except ModelMrUnavailable:
-            detail = self.work_detail(safe_id)
-            detail["video_text"] = {
-                "text": cleaned_text,
-                "official": True,
-                "source": "owner-mobile-edit",
-                "updated_at": int(time.time()),
-            }
-            self._write_detail(safe_id, detail)
+            with _DETAIL_LOCK:
+                detail = self.processing_detail(safe_id)
+                detail["video_text"] = {
+                    "text": cleaned_text,
+                    "official": True,
+                    "source": "owner-mobile-edit",
+                    "updated_at": int(time.time()),
+                }
+                self._write_json(self._detail_path(safe_id), detail)
             return {"ok": True, "text": cleaned_text, "saved": True, "mode": "owner-mobile-library"}
 
+    def processing_detail(self, work_id: int) -> dict[str, Any]:
+        """Read the private cloud detail only; never call the desktop sidecar."""
+        try:
+            value = json.loads(self._detail_path(work_id).read_text(encoding="utf-8"))
+            if not isinstance(value, dict) or int(value.get("work", {}).get("id", 0)) != work_id:
+                raise ValueError("invalid detail")
+            return value
+        except (OSError, ValueError, TypeError) as error:
+            raise ModelMrUnavailable("云端作品详情尚未完整同步。") from error
+
+    def save_auto_video_text(self, work_id: int, text: str) -> str:
+        """Canonical ASR text, not a claim of human verification. Never overwrite."""
+        cleaned = str(text or "").strip()
+        if not cleaned or len(cleaned) > 200_000:
+            raise ValueError("自动识别原文为空或过长。")
+        with _DETAIL_LOCK:
+            detail = self.processing_detail(work_id)
+            existing = str(detail.get("video_text", {}).get("text") or "").strip()
+            if existing:
+                return existing
+            snapshot = self._require_snapshot()
+            indexed = next((w for w in snapshot["works"] if int(w.get("id", 0)) == work_id), None)
+            if indexed is None:
+                raise ValueError("作品不存在。")
+            detail["video_text"] = {"text": cleaned, "official": True,
+                                    "source": "doubao-auto-unreviewed", "updated_at": str(int(time.time()))}
+            detail["work"]["has_video_text"] = True
+            indexed["has_video_text"] = True
+            self._write_json(self._detail_path(work_id), detail)
+            self._write_json(self.snapshot_path, snapshot)
+            if self.processing_detail(work_id).get("video_text", {}).get("text") != cleaned:
+                raise ModelMrUnavailable("自动保存后校验失败。")
+            return cleaned
+
+    def repair_processing_index(self, work_id: int) -> None:
+        """Repair a partial detail/index save without re-submitting a model job."""
+        with _DETAIL_LOCK:
+            detail = self.processing_detail(work_id)
+            snapshot = self._require_snapshot()
+            indexed = next((w for w in snapshot["works"] if int(w.get("id", 0)) == work_id), None)
+            if indexed is None:
+                raise ValueError("作品不存在。")
+            fields = {key: detail["work"][key] for key in ("keywords", "keyword_info") if key in detail["work"]}
+            fields["has_video_text"] = bool(str(detail.get("video_text", {}).get("text") or "").strip())
+            if any(indexed.get(key) != value for key, value in fields.items()):
+                indexed.update(fields)
+                self._write_json(self.snapshot_path, snapshot)
+
     def transcribe(self, work_id: int, engine: str) -> dict[str, Any]:
+        from .model_mr_processing import PROVIDER_LOCK
+        if not PROVIDER_LOCK.acquire(blocking=False):
+            raise ModelMrUnavailable("自动处理或其他识别正在进行，请稍后查看，未重复提交。")
+        try:
+            result = self._transcribe(work_id, engine)
+            # Keep a successful manual ASR candidate so a queued arrival reuses it.
+            if engine == "doubao" and result.get("text") and not result.get("cached"):
+                with _DETAIL_LOCK:
+                    try:
+                        detail = self.processing_detail(work_id)
+                    except ModelMrUnavailable:
+                        return result  # Desktop live mode has its own storage.
+                    detail.setdefault("transcripts", []).append({"text": result["text"],
+                        "source": "doubao-recording-asr-2.0", "created_at": str(int(time.time()))})
+                    self._write_json(self._detail_path(work_id), detail)
+            return result
+        finally:
+            PROVIDER_LOCK.release()
+
+    def _transcribe(self, work_id: int, engine: str) -> dict[str, Any]:
         safe_id = self._safe_work_id(work_id)
         endpoint = "doubao-asr-transcription" if engine == "doubao" else "transcribe-video-text"
         try:
@@ -633,7 +702,8 @@ class ModelMrClient:
                 "keywords": keywords, "links_available": links_available,
                 "message": "" if links_available else "分类目录已同步，但作品关联尚未同步。请补齐分类元数据。"}
 
-    def save_keywords(self, work_id: int, categories: dict[str, Any], keywords: list[Any], expected_revision: str) -> dict[str, Any]:
+    def save_keywords(self, work_id: int, categories: dict[str, Any], keywords: list[Any], expected_revision: str,
+                      *, ai_info: dict[str, Any] | None = None) -> dict[str, Any]:
         safe_id = self._safe_work_id(work_id)
         if not isinstance(categories, dict) or not isinstance(keywords, list):
             raise ValueError("关键词格式不正确。")
@@ -658,9 +728,16 @@ class ModelMrClient:
             revision = keyword_revision(current_work.get("keyword_info"), current_work.get("keywords"))
             if expected_revision != revision:
                 raise ValueError("关键词已被更新，请收起并重新打开后再编辑。")
+            if ai_info is not None:
+                from .model_mr_keywords import source_hash
+                if ai_info.get("source_hash") != source_hash(str(detail.get("video_text", {}).get("text") or "")):
+                    raise ValueError("视频原文已变化，提炼结果未覆盖现有资料。")
             info = clean_keyword_info({"categories": categories, "keywords": keywords, "model": "manual",
                                        "schema_version": "owner-keywords/v1", "confirmed_at": str(int(time.time())),
                                        "edited_by_owner": True})
+            if ai_info is not None:
+                info = clean_keyword_info({**ai_info, "categories": categories, "keywords": keywords,
+                                           "confirmed_at": str(int(time.time())), "edited_by_owner": False})
             indexed.update(keywords=info["keywords"], keyword_info=info)
             detail.setdefault("work", {"id": safe_id}).update(keywords=info["keywords"], keyword_info=info)
             # Keep every unrelated field byte-for-value, including comments, text and media references.

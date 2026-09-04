@@ -814,3 +814,10 @@ img { display: block; }
 .model-mr-panel .model-stock-uncertain p { margin: 8px; overflow-wrap: anywhere; }
 .model-mr-panel .model-comment header { display: flex; flex-wrap: wrap; }
 .model-mr-panel .model-stock-report > header { display: flex; flex-wrap: wrap; }
+.model-processing { grid-column: 1 / -1; padding: 12px; border: 1px solid #ddd5f7; border-radius: 12px; background: #faf9ff; overflow-wrap: anywhere; }
+.model-processing h3 { margin: 0 0 8px; }
+.model-processing button { min-height: 40px; padding: 8px 12px; margin: 4px 6px 4px 0; border: 1px solid #d9d2ed; border-radius: 8px; color: #5949af; background: white; }
+.model-processing-job { padding: 8px 0; border-top: 1px solid #e8e2f5; }
+.model-processing .panel-message { display: block; min-height: 0; padding: 7px 0; color: #65718a; text-align: left; line-height: 1.65; font-size: 12px; }
+.model-processing button, .model-keyword-panel > button { min-height: 44px; cursor: pointer; }
+.model-keyword-panel > button { padding: 8px 12px; border: 1px solid #cfc5f4; border-radius: 8px; color: #5949af; background: #fff; margin: 5px 4px 5px 0; }

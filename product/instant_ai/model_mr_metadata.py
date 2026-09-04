@@ -37,7 +37,7 @@ def clean_keyword_info(value: Any, legacy: Any = None) -> dict[str, Any]:
     categories = {name: clean_words(raw.get(name), 8) for name in KEYWORD_CATEGORIES}
     flattened = [word for values in categories.values() for word in values]
     words = clean_words(flattened + clean_words(source.get("keywords")) + clean_words(legacy))
-    return {
+    result = {
         "categories": categories,
         "keywords": words,
         "model": str(source.get("model") or "")[:120],
@@ -46,6 +46,9 @@ def clean_keyword_info(value: Any, legacy: Any = None) -> dict[str, Any]:
         "stale": bool(source.get("stale")),
         "edited_by_owner": bool(source.get("edited_by_owner")),
     }
+    if re.fullmatch(r"[a-f0-9]{64}", str(source.get("source_hash") or "")):
+        result["source_hash"] = source["source_hash"]
+    return result
 
 
 def keyword_revision(info: Any, legacy: Any = None) -> str:

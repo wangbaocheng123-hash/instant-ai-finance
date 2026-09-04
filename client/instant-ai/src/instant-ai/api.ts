@@ -63,6 +63,16 @@ export const instantApi = {
     has_more: boolean;
   }>(`/api/model-mr/works?limit=${limit}&offset=${offset}`),
   modelMrWork: (id: number) => request<ModelMrWorkDetail>(`/api/model-mr/works/${id}`),
+  modelMrProcessing: () => request<import('./types').ModelMrProcessing>('/api/model-mr/processing'),
+  setModelMrProcessing: (enabled: boolean) => request<import('./types').ModelMrProcessing>('/api/model-mr/processing', {
+    method: 'POST', body: JSON.stringify({ enabled, confirm_billing: true }),
+  }),
+  retryModelMrProcessing: (id: number) => request<{ message: string }>('/api/model-mr/processing/retry', {
+    method: 'POST', body: JSON.stringify({ job_id: id, confirm_billing: true }),
+  }),
+  extractModelMrKeywords: (id: number, revision: string) => request<{ message: string }>(`/api/model-mr/works/${id}/extract-keywords`, {
+    method: 'POST', body: JSON.stringify({ expected_revision: revision, confirm_billing: true }),
+  }),
   saveModelMrTitle: (id: number, title: string) => request<{ ok: boolean; title: string; saved: boolean; mode: string }>(`/api/model-mr/works/${id}/title`, {
     method: 'POST',
     body: JSON.stringify({ title }),

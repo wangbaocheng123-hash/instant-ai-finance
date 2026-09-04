@@ -305,6 +305,16 @@ export interface ModelMrWorkDetail {
   };
 }
 
+export interface ModelMrProcessing {
+  enabled: boolean;
+  failures: number;
+  daily_call_limit: number;
+  max_video_minutes: number;
+  speech_configured: boolean;
+  keywords_configured: boolean;
+  items: Array<{ id: number; work_id: number; state: string; phase: string; message: string; updated: number }>;
+}
+
 export interface ModelMrTranscriptionResult {
   text: string;
   engine: string;

@@ -1,7 +1,7 @@
 import { instantApi } from './api';
 import { commentThreads, isAuthorComment, rankCommentThreads, threadHasAuthorInteraction, type ModelMrCommentThread } from './ModelMrComments';
 import type {
-  ModelMrChatConfig, ModelMrComment, ModelMrThoughtCategory, ModelMrWork, ModelMrWorkDetail,
+  ModelMrChatConfig, ModelMrComment, ModelMrThoughtCategory, ModelMrWork, ModelMrWorkDetail, ModelMrProcessing,
 } from './types';
 
 type ModelMrTab = 'works' | 'thoughts' | 'chat';
@@ -44,6 +44,9 @@ export class ModelMrPanel {
   private readonly editingTitles = new Set<number>();
   private readonly workMessages = new Map<number, { text: string; tone: string }>();
   private readonly busyWorks = new Set<number>();
+  private processing: ModelMrProcessing | null = null;
+  private processingBusy = false;
+  private processingMessage = '';
 
   constructor() {
     this.element = document.createElement('article');
@@ -121,6 +124,10 @@ export class ModelMrPanel {
     }
     const action = target.closest<HTMLElement>('[data-model-action]');
     if (!action) return;
+    if (['processing', 'toggle-processing', 'retry-processing'].includes(action.dataset.modelAction || '')) {
+      await this.updateProcessing(action.dataset.modelAction || '', Number(action.dataset.jobId || 0));
+      return;
+    }
     if (action.dataset.modelAction === 'load-more') {
       await this.loadMoreWorks();
       return;
@@ -160,6 +167,7 @@ export class ModelMrPanel {
     else if (command === 'edit-keywords') { this.editingKeywords.add(workId); this.renderWorks(); }
     else if (command === 'cancel-keywords') { this.editingKeywords.delete(workId); this.renderWorks(); }
     else if (command === 'save-keywords') await this.saveKeywords(workId);
+    else if (command === 'extract-keywords') await this.extractKeywords(workId);
     else if (command === 'comment-tab') this.setCommentTab(workId, (action.dataset.commentTab || 'author') as CommentTab);
   }
 
@@ -190,11 +198,80 @@ export class ModelMrPanel {
     this.worksObserver = null;
     const list = document.createElement('div');
     list.className = 'model-work-list model-work-list-full';
+    list.append(this.renderProcessing());
     this.works.forEach((work) => list.append(this.renderWorkCard(work)));
     if (!this.works.length) list.append(this.message('模型先生作品库当前没有可显示内容。'));
     else list.append(this.renderWorksLoader());
     this.body.replaceChildren(list);
     this.observeWorksLoader();
+  }
+
+  private renderProcessing(): HTMLElement {
+    const section = document.createElement('section');
+    section.className = 'model-processing';
+    const title = document.createElement('h3');
+    title.textContent = '豆包自动处理';
+    const button = document.createElement('button');
+    button.type = 'button'; button.dataset.modelAction = 'processing';
+    button.textContent = this.processingBusy ? '读取中…' : this.processing ? '刷新处理状态' : '查看设置与处理状态';
+    button.disabled = this.processingBusy;
+    section.append(title, button);
+    if (this.processingMessage) section.append(this.message(this.processingMessage));
+    const status = this.processing;
+    if (!status) return section;
+    section.append(this.message(`仅处理开启后新送达的模型先生视频，不扫描历史作品。每日最多 ${status.daily_call_limit} 次模型调用，每条视频最多 ${status.max_video_minutes} 分钟；已有原文和关键词不覆盖。`));
+    section.append(this.message(`语音识别：${status.speech_configured ? '已配置' : '未配置'}；关键词模型：${status.keywords_configured ? '已配置' : '未配置'}`));
+    const toggle = document.createElement('button');
+    toggle.type = 'button'; toggle.dataset.modelAction = 'toggle-processing'; toggle.disabled = this.processingBusy;
+    toggle.textContent = status.enabled && status.failures < 3 ? '暂停自动处理' : status.failures >= 3 ? '已连续失败暂停，确认后恢复' : '开启新视频自动识别与提炼';
+    section.append(toggle);
+    section.append(this.message('自动转写会直接保存原文，并标明尚未人工核对。暂停不取消已提交的任务。'));
+    status.items.slice(0, 8).forEach((item) => {
+      const row = document.createElement('div'); row.className = 'model-processing-job';
+      row.textContent = `作品 ${item.work_id} · ${item.phase === 'asr' ? '语音识别' : '关键词'}：${item.message}`;
+      if (['review', 'configuration'].includes(item.state)) {
+        const retry = document.createElement('button'); retry.type = 'button';
+        retry.dataset.modelAction = 'retry-processing'; retry.dataset.jobId = String(item.id);
+        retry.textContent = '核对后重试'; retry.disabled = this.processingBusy; row.append(retry);
+      }
+      section.append(row);
+    });
+    return section;
+  }
+
+  private async updateProcessing(action: string, jobId = 0): Promise<void> {
+    if (this.processingBusy) return;
+    const enable = !this.processing?.enabled || (this.processing?.failures || 0) >= 3;
+    if (action === 'toggle-processing' && enable && !window.confirm('开启后，新送达的模型先生视频将自动调用豆包识别并保存原文、提炼关键词，按音频时长及模型用量计费。每日最多20次调用，每条视频最多20分钟；不批处理历史作品。确认开启？')) return;
+    if (action === 'retry-processing' && !window.confirm('请先核对豆包调用记录；上次失败或中断可能已计费。仅重试所选任务，已缓存结果会复用。确认重试？')) return;
+    this.processingBusy = true;
+    try {
+      if (action === 'toggle-processing') await instantApi.setModelMrProcessing(enable);
+      if (action === 'retry-processing') await instantApi.retryModelMrProcessing(jobId);
+      this.processing = await instantApi.modelMrProcessing();
+      this.processingMessage = '自动任务在服务器后台执行，关闭页面不影响处理；完成后请收起并重开作品详情查看结果。';
+    } catch (error) {
+      this.processingMessage = error instanceof Error ? error.message : '读取处理状态失败';
+    } finally {
+      this.processingBusy = false;
+      this.element.querySelector('.model-processing')?.replaceWith(this.renderProcessing());
+    }
+  }
+
+  private async extractKeywords(workId: number): Promise<void> {
+    const detail = this.details.get(workId);
+    if (!detail || this.busyWorks.has(workId)) return;
+    if (!window.confirm('只根据已保存的视频原文调用豆包提炼十类关键词，并保存结果；原文变化或同时编辑时不会覆盖。可能产生模型费用，确认继续？')) return;
+    this.busyWorks.add(workId);
+    try {
+      const result = await instantApi.extractModelMrKeywords(workId, detail.work.keyword_revision || '');
+      this.setWorkMessage(workId, `${result.message}。可在作品页顶部“豆包自动处理”查看状态。`, '');
+    } catch (error) {
+      this.setWorkMessage(workId, error instanceof Error ? error.message : '提炼排队失败', 'is-error');
+    } finally {
+      this.busyWorks.delete(workId);
+      this.renderWorks();
+    }
   }
 
   private renderWorksLoader(): HTMLElement {
@@ -430,6 +507,7 @@ export class ModelMrPanel {
     const source = document.createElement('p');
     source.className = 'model-text-source';
     source.textContent = detail.video_text.source ? `当前来源：${detail.video_text.source}${detail.video_text.official ? '（正式原文）' : ''}` : '识别结果请核对后保存为正式原文。';
+    if (detail.video_text.source === 'doubao-auto-unreviewed') source.textContent = '豆包已自动识别并保存，尚未人工核对；您可修改后保存确认。';
     const actions = document.createElement('div');
     actions.className = 'model-text-actions';
     const busy = this.busyWorks.has(detail.work.id);
@@ -920,8 +998,13 @@ export class ModelMrPanel {
     panel.className = 'model-keyword-panel';
     const info = detail.work.keyword_info;
     const note = document.createElement('p');
-    note.textContent = info?.edited_by_owner ? '已保存的主人整理结果；不会自动重提炼。' : '显示本地已保存的 AI 提炼结果；查看和手动整理不调用 AI。';
+    note.textContent = info?.edited_by_owner ? '已保存的主人整理结果；不会自动重提炼。' : '显示已保存的 AI 提炼结果；查看和手动整理不调用 AI。';
     panel.append(note);
+    const extract = document.createElement('button'); extract.type = 'button';
+    extract.dataset.modelAction = 'extract-keywords'; extract.dataset.workId = String(detail.work.id);
+    extract.textContent = '豆包 AI 提炼关键词';
+    extract.disabled = !detail.video_text.text.trim() || this.busyWorks.has(detail.work.id) || this.editingKeywords.has(detail.work.id);
+    panel.append(extract);
     if (info?.stale) panel.append(this.message('原文可能已变化，请核对已有关键词；本页不会自动产生新的提炼结果。'));
     const editing = this.editingKeywords.has(detail.work.id);
     const groups = Object.entries(info?.categories || {});
@@ -943,7 +1026,7 @@ export class ModelMrPanel {
       } else words.forEach((word) => group.append(this.pill(word)));
       panel.append(group);
     });
-    if (!detail.work.keywords.length && !editing) panel.append(this.message('此作品尚无已保存关键词，不会自动调用付费提炼。'));
+    if (!detail.work.keywords.length && !editing) panel.append(this.message('尚无已保存关键词。可基于正式原文点击豆包提炼；新视频也可由已开启的自动流程处理。'));
     if (editing) {
       panel.append(this.message('用顿号、逗号或换行分隔；每类最多 8 个关键词。'));
       const save = this.actionButton('保存关键词', detail.work.id, 'save-keywords', undefined, true);

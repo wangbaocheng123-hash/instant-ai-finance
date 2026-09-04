@@ -329,7 +329,7 @@ class ModelMrMcpLibrary:
         note = detail.get("video_text") if isinstance(detail.get("video_text"), dict) else {}
         text = _text(note.get("text")).strip()[:200_000]
         if text:
-            verified = bool(note.get("official"))
+            verified = bool(note.get("official")) and note.get("source") != "doubao-auto-unreviewed"
             return {
                 "text": text,
                 "verified": verified,
