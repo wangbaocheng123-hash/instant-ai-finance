@@ -798,6 +798,15 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                 self._json(MODEL_MR.work_detail(int(path.rsplit("/", 1)[-1])))
             except (ValueError, ModelMrUnavailable) as error:
                 self._json({"error": str(error)}, HTTPStatus.NOT_FOUND)
+        elif re.fullmatch(r"/api/model-mr/thoughts/\d+/works", path):
+            try:
+                self._json(MODEL_MR.thought_works(
+                    int(path.split("/")[4]), limit=int(query.get("limit", ["24"])[0]),
+                    offset=int(query.get("offset", ["0"])[0]), query=query.get("q", [""])[0]))
+            except ValueError as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            except ModelMrUnavailable as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
         elif path == "/api/model-mr/thoughts":
             try:
                 self._json(MODEL_MR.thoughts())
@@ -998,7 +1007,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                 self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
             return
 
-        model_work_match = re.fullmatch(r"/api/model-mr/works/(\d+)/(title|video-text|transcribe|doubao-transcribe)", path)
+        model_work_match = re.fullmatch(r"/api/model-mr/works/(\d+)/(title|video-text|keywords|transcribe|doubao-transcribe)", path)
         if model_work_match:
             work_id = int(model_work_match.group(1))
             action = model_work_match.group(2)
@@ -1007,6 +1016,9 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                     self._json(MODEL_MR.save_title(work_id, str(payload.get("title") or "")))
                 elif action == "video-text":
                     self._json(MODEL_MR.save_video_text(work_id, str(payload.get("text") or "")))
+                elif action == "keywords":
+                    self._json(MODEL_MR.save_keywords(work_id, payload.get("categories"),
+                        payload.get("keywords", []), str(payload.get("expected_revision") or "")))
                 else:
                     self._json(MODEL_MR.transcribe(work_id, "doubao" if action == "doubao-transcribe" else "local"))
             except ValueError as error:

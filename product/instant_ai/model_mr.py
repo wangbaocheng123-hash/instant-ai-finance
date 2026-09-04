@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 
 from .doubao_asr import DoubaoAsrUnavailable, is_configured as doubao_asr_is_configured, transcribe_video
 from .paths import LIBRARY_ROOT
+from .model_mr_metadata import KEYWORD_CATEGORIES, clean_keyword_info, clean_links, clean_words, keyword_revision
 
 
 DEFAULT_ORIGIN = "http://127.0.0.1:8787"
@@ -450,6 +451,7 @@ class ModelMrClient:
                 "media_available": True,
                 "media_file": media_name,
                 "keywords": list(previous_work.get("keywords") or []),
+                "keyword_info": clean_keyword_info(previous_work.get("keyword_info"), previous_work.get("keywords")),
             }
             detail = {
                 "version": SNAPSHOT_VERSION,
@@ -595,6 +597,78 @@ class ModelMrClient:
         cleaned = [self._clean_thought(item) for item in categories if isinstance(item, dict) and item.get("name")]
         return {"categories": cleaned, "count": len(cleaned), "purpose": "模型先生投资思路只读索引"}
 
+    def thought_works(self, category_id: int, *, limit: int = 24, offset: int = 0, query: str = "") -> dict[str, Any]:
+        safe_id = self._safe_work_id(category_id)
+        safe_limit = max(1, min(int(limit), 100))
+        safe_offset = max(0, min(int(offset), 500_000))
+        search = str(query or "").strip()[:120]
+        try:
+            source = self._json(f"/api/investment-thoughts?{urlencode({'category_id': safe_id, 'limit': 500})}")
+        except ModelMrUnavailable:
+            snapshot = self._require_snapshot()
+            categories = [self._clean_thought(item) for item in snapshot.get("thoughts", []) if isinstance(item, dict)]
+            works = [item for item in snapshot.get("works", []) if isinstance(item, dict)]
+            links_available = isinstance(snapshot.get("thought_links"), dict)
+            links = clean_links(snapshot.get("thought_links"), {int(item["id"]) for item in works}, {item["id"] for item in categories})
+            related = {safe_id, *(item["id"] for item in categories if item.get("parent_id") == safe_id)}
+            items = [self._clean_snapshot_work(item) for item in works
+                     if related.intersection(links.get(str(item["id"]), []))]
+        else:
+            categories = [self._clean_thought(item) for item in source.get("categories", []) if isinstance(item, dict)]
+            links_available = True
+            items = [self._clean_work({**item, "url": item.get("source_url", ""),
+                                      "keyword_info": {"keywords": item.get("keywords", [])}})
+                     for item in source.get("items", []) if isinstance(item, dict)]
+        category = next((item for item in categories if item["id"] == safe_id), None)
+        if category is None:
+            raise ValueError("投资思路分类不存在。")
+        keywords = clean_words([word for item in items for word in item.get("keywords", [])], 40)
+        if search:
+            items = [item for item in items if search.casefold() in " ".join([
+                item.get("title", ""), item.get("description", ""), *item.get("keywords", [])]).casefold()]
+        total = len(items)
+        page = items[safe_offset:safe_offset + safe_limit]
+        return {"category": category, "items": page, "count": len(page), "total": total,
+                "offset": safe_offset, "has_more": safe_offset + len(page) < total,
+                "keywords": keywords, "links_available": links_available,
+                "message": "" if links_available else "分类目录已同步，但作品关联尚未同步。请补齐分类元数据。"}
+
+    def save_keywords(self, work_id: int, categories: dict[str, Any], keywords: list[Any], expected_revision: str) -> dict[str, Any]:
+        safe_id = self._safe_work_id(work_id)
+        if not isinstance(categories, dict) or not isinstance(keywords, list):
+            raise ValueError("关键词格式不正确。")
+        if any(not isinstance(words, list) or len(words) > 8 for words in categories.values()) or len(keywords) > 80:
+            raise ValueError("每类最多 8 个关键词，全部最多 80 个。")
+        if set(categories) - set(KEYWORD_CATEGORIES):
+            raise ValueError("关键词分类不支持。")
+        all_words = [word for values in categories.values() for word in values] + keywords
+        if any(not isinstance(word, str) or not clean_words([word]) for word in all_words) or len(set(all_words)) > 80:
+            raise ValueError("关键词须为不含路径的短文字，合计最多 80 个。")
+        with _DETAIL_LOCK:
+            snapshot = self._require_snapshot()
+            indexed = next((item for item in snapshot["works"] if int(item.get("id") or 0) == safe_id), None)
+            if indexed is None:
+                raise ValueError("作品不存在。")
+            # Read the exported detail directly: never invoke a model or sidecar on a save.
+            try:
+                detail = json.loads(self._detail_path(safe_id).read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error:
+                raise ModelMrUnavailable("作品详情未同步完整，未保存关键词。") from error
+            current_work = detail.get("work") or indexed
+            revision = keyword_revision(current_work.get("keyword_info"), current_work.get("keywords"))
+            if expected_revision != revision:
+                raise ValueError("关键词已被更新，请收起并重新打开后再编辑。")
+            info = clean_keyword_info({"categories": categories, "keywords": keywords, "model": "manual",
+                                       "schema_version": "owner-keywords/v1", "confirmed_at": str(int(time.time())),
+                                       "edited_by_owner": True})
+            indexed.update(keywords=info["keywords"], keyword_info=info)
+            detail.setdefault("work", {"id": safe_id}).update(keywords=info["keywords"], keyword_info=info)
+            # Keep every unrelated field byte-for-value, including comments, text and media references.
+            self._write_json(self._detail_path(safe_id), detail)
+            self._write_json(self.snapshot_path, snapshot)
+        return {"ok": True, "saved": True, "keyword_info": info, "keywords": info["keywords"],
+                "keyword_revision": keyword_revision(info), "mode": "owner-mobile-library"}
+
     def chat_config(self) -> dict[str, Any]:
         try:
             source = self._json("/api/chat/config", timeout=3)
@@ -687,6 +761,10 @@ class ModelMrClient:
         )
         source_works = [item for item in source.get("items", []) if isinstance(item, dict)]
         thoughts = self.thoughts(limit=thoughts_limit).get("categories", [])
+        thought_source = self._json("/api/investment-thoughts?limit=500", timeout=30)
+        thought_links = clean_links(thought_source.get("links_by_video"),
+                                    {int(item["id"]) for item in source_works},
+                                    {int(item["id"]) for item in thoughts})
         media_lookup, backup_root = self._media_lookup(media_manifest)
         details_root = output.parent / "details"
         details_root.mkdir(parents=True, exist_ok=True)
@@ -743,6 +821,7 @@ class ModelMrClient:
             "media_source_root": backup_root.name,
             "works": works,
             "thoughts": thoughts,
+            "thought_links": thought_links,
         }
         self._write_json(output, payload)
         return {"path": str(output), **payload["counts"], "media_root": str(backup_root)}
@@ -812,8 +891,7 @@ class ModelMrClient:
 
     @staticmethod
     def _clean_work(item: dict[str, Any]) -> dict[str, Any]:
-        keyword_info = item.get("keyword_info") if isinstance(item.get("keyword_info"), dict) else {}
-        keywords = keyword_info.get("keywords") if isinstance(keyword_info.get("keywords"), list) else []
+        keyword_info = clean_keyword_info(item.get("keyword_info"), item.get("keywords"))
         description = str(item.get("description") or "")
         if description.startswith("由 model-"):
             description = ""
@@ -832,12 +910,15 @@ class ModelMrClient:
             "media_available": media_available,
             "video_url": f"/api/model-mr/works/{work_id}/video" if media_available and work_id else "",
             "media_file": "",
-            "keywords": [str(value) for value in keywords[:12] if str(value).strip()],
+            "keywords": keyword_info["keywords"],
+            "keyword_info": keyword_info,
+            "keyword_revision": keyword_revision(keyword_info),
         }
 
     @classmethod
     def _clean_snapshot_work(cls, item: dict[str, Any]) -> dict[str, Any]:
         work_id = int(item.get("id") or 0)
+        info = clean_keyword_info(item.get("keyword_info"), item.get("keywords"))
         media_file = str(item.get("media_file") or "").strip().replace("\\", "/")
         media_available = bool(item.get("media_available") or media_file)
         return {
@@ -852,9 +933,9 @@ class ModelMrClient:
             "media_available": media_available,
             "video_url": f"/api/model-mr/works/{work_id}/video" if media_available and work_id else "",
             "media_file": media_file,
-            "keywords": [str(value) for value in item.get("keywords", [])[:12] if str(value).strip()]
-            if isinstance(item.get("keywords"), list)
-            else [],
+            "keywords": info["keywords"],
+            "keyword_info": info,
+            "keyword_revision": keyword_revision(info),
         }
 
     @classmethod

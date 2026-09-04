@@ -47,6 +47,8 @@ class ModelMrGatewayTests(unittest.TestCase):
             )
             client.save_title(first["work_id"], "主人标题")
             client.save_video_text(first["work_id"], "主人确认原文")
+            from instant_ai.model_mr_metadata import keyword_revision
+            client.save_keywords(first["work_id"], {"行业与板块": ["主人关键词"]}, [], keyword_revision(None, []))
             repeated = client.import_beijing_work(
                 source_work_id="778899",
                 source_revision=2,
@@ -65,6 +67,8 @@ class ModelMrGatewayTests(unittest.TestCase):
                 detail = client.work_detail(first["work_id"])
                 self.assertEqual(detail["work"]["title"], "主人标题")
                 self.assertEqual(detail["video_text"]["text"], "主人确认原文")
+                self.assertEqual(detail["work"]["keyword_info"]["categories"]["行业与板块"], ["主人关键词"])
+                self.assertTrue(detail["work"]["keyword_info"]["edited_by_owner"])
                 self.assertEqual(detail["comments"][0]["text"], "更新评论")
                 self.assertIsNotNone(client.video_path(first["work_id"]))
     def test_work_summary_removes_local_paths_raw_payload_and_admin_fields(self) -> None:

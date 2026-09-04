@@ -76,6 +76,12 @@ export const instantApi = {
     body: JSON.stringify({}),
   }),
   modelMrThoughts: () => request<{ categories: ModelMrThoughtCategory[]; count: number; purpose: string }>('/api/model-mr/thoughts'),
+  modelMrThoughtWorks: (id: number, limit = 24, offset = 0, query = '') => request<import('./types').ModelMrThoughtWorks>(
+    `/api/model-mr/thoughts/${id}/works?${new URLSearchParams({ limit: String(limit), offset: String(offset), q: query })}`),
+  saveModelMrKeywords: (id: number, categories: Record<string, string[]>, keywords: string[], revision: string) =>
+    request<{ keyword_info: import('./types').ModelMrKeywordInfo; keywords: string[]; keyword_revision: string }>(`/api/model-mr/works/${id}/keywords`, {
+      method: 'POST', body: JSON.stringify({ categories, keywords, expected_revision: revision }),
+    }),
   modelMrChatConfig: () => request<ModelMrChatConfig>('/api/model-mr/chat/config'),
   modelMrChat: (messages: Array<{ role: 'user' | 'assistant'; content: string }>, model: string) => request<ModelMrChatResult>('/api/model-mr/chat', {
     method: 'POST',

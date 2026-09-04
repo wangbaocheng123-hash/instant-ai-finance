@@ -206,6 +206,28 @@ export interface ModelMrStatus {
   doubao_asr_enabled?: boolean;
 }
 
+export interface ModelMrKeywordInfo {
+  categories: Record<string, string[]>;
+  keywords: string[];
+  model: string;
+  schema_version: string;
+  confirmed_at: string;
+  stale: boolean;
+  edited_by_owner: boolean;
+}
+
+export interface ModelMrThoughtWorks {
+  category: ModelMrThoughtCategory;
+  items: ModelMrWork[];
+  total: number;
+  count: number;
+  offset: number;
+  has_more: boolean;
+  keywords: string[];
+  links_available: boolean;
+  message: string;
+}
+
 export interface ModelMrWork {
   id: number;
   title: string;
@@ -218,6 +240,8 @@ export interface ModelMrWork {
   media_available: boolean;
   video_url: string;
   keywords: string[];
+  keyword_info?: ModelMrKeywordInfo;
+  keyword_revision?: string;
 }
 
 export interface ModelMrTranscript {

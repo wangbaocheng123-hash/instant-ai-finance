@@ -4,7 +4,7 @@ import type {
 } from './types';
 
 type ModelMrTab = 'works' | 'thoughts' | 'chat';
-type WorkDetailTab = 'video' | 'text' | 'comments';
+type WorkDetailTab = 'video' | 'text' | 'comments' | 'keywords' | 'interpretation';
 type CommentTab = 'author' | 'ranking' | 'stocks';
 const MODEL_MR_WORK_PAGE_SIZE = 24;
 
@@ -27,6 +27,17 @@ export class ModelMrPanel {
   private worksLoadMessage = '';
   private worksObserver: IntersectionObserver | null = null;
   private thoughts: ModelMrThoughtCategory[] = [];
+  private selectedThought: number | null = null;
+  private relatedWorks: ModelMrWork[] = [];
+  private relatedTotal = 0;
+  private relatedOffset = 0;
+  private relatedHasMore = false;
+  private relatedLoading = false;
+  private relatedMessage = '';
+  private relatedQuery = '';
+  private relatedKeywords: string[] = [];
+  private relatedRequest = 0;
+  private readonly editingKeywords = new Set<number>();
   private chatConfig: ModelMrChatConfig | null = null;
   private chatMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
   private available = false;
@@ -59,6 +70,12 @@ export class ModelMrPanel {
     this.badge = this.required('.panel-count');
     this.element.addEventListener('click', (event) => void this.handleClick(event));
     this.element.addEventListener('submit', (event) => {
+      if ((event.target as HTMLElement).id === 'modelMrThoughtSearch') {
+        event.preventDefault();
+        this.relatedQuery = this.element.querySelector<HTMLInputElement>('#modelMrThoughtQuery')?.value.trim() || '';
+        if (this.selectedThought !== null) void this.openThought(this.selectedThought, true);
+        return;
+      }
       if ((event.target as HTMLElement).id !== 'modelMrChatForm') return;
       event.preventDefault();
       void this.sendChat();
@@ -113,6 +130,25 @@ export class ModelMrPanel {
       await this.loadMoreWorks();
       return;
     }
+    if (action.dataset.modelAction === 'thought-open') {
+      await this.openThought(Number(action.dataset.categoryId));
+      return;
+    }
+    if (action.dataset.modelAction === 'thought-back') {
+      const parent = this.thoughts.find((item) => item.id === this.selectedThought)?.parent_id;
+      if (parent) await this.openThought(parent);
+      else {
+        this.selectedThought = null;
+        this.relatedRequest++;
+        this.relatedLoading = false;
+        this.renderThoughts();
+      }
+      return;
+    }
+    if (action.dataset.modelAction === 'thought-more') {
+      await this.loadThoughtPage();
+      return;
+    }
     const workId = Number(action.dataset.workId || 0);
     if (!workId) return;
     const command = action.dataset.modelAction;
@@ -126,10 +162,14 @@ export class ModelMrPanel {
     else if (command === 'edit-title') this.editTitle(workId);
     else if (command === 'cancel-title') this.cancelTitle(workId);
     else if (command === 'save-title') await this.saveTitle(workId);
+    else if (command === 'edit-keywords') { this.editingKeywords.add(workId); this.renderWorks(); }
+    else if (command === 'cancel-keywords') { this.editingKeywords.delete(workId); this.renderWorks(); }
+    else if (command === 'save-keywords') await this.saveKeywords(workId);
     else if (command === 'comment-tab') this.setCommentTab(workId, (action.dataset.commentTab || 'author') as CommentTab);
   }
 
   private selectTab(tab: ModelMrTab): void {
+    this.worksObserver?.disconnect();
     this.activeTab = tab;
     this.element.querySelectorAll<HTMLElement>('[data-model-tab]').forEach((button) => {
       const active = button.dataset.modelTab === tab;
@@ -147,6 +187,10 @@ export class ModelMrPanel {
   }
 
   private renderWorks(): void {
+    if (this.activeTab !== 'works') {
+      if (this.activeTab === 'thoughts') this.renderThoughts();
+      return;
+    }
     this.worksObserver?.disconnect();
     this.worksObserver = null;
     const list = document.createElement('div');
@@ -191,7 +235,7 @@ export class ModelMrPanel {
   }
 
   private async loadMoreWorks(): Promise<void> {
-    if (this.loadingMoreWorks || !this.hasMoreWorks) return;
+    if (this.activeTab !== 'works' || this.loadingMoreWorks || !this.hasMoreWorks) return;
     this.loadingMoreWorks = true;
     this.worksLoadMessage = '';
     this.renderWorks();
@@ -236,7 +280,8 @@ export class ModelMrPanel {
     if (work.has_video_text) meta.append(this.pill('有视频原文'));
     if (work.has_interpretation) meta.append(this.pill('有解读'));
     if (work.comment_count) meta.append(this.pill(`${work.comment_count} 条评论`));
-    work.keywords.slice(0, 3).forEach((keyword) => meta.append(this.pill(keyword)));
+    work.keywords.slice(0, 8).forEach((keyword) => meta.append(this.pill(keyword)));
+    if (work.keywords.length > 8) meta.append(this.pill(`共 ${work.keywords.length} 个关键词`));
     card.append(heading);
     if (this.editingTitles.has(work.id)) {
       const editor = document.createElement('div');
@@ -262,6 +307,8 @@ export class ModelMrPanel {
     if (work.media_available) actions.append(this.actionButton('播放本地视频', work.id, 'open-detail', 'video', true));
     actions.append(this.actionButton('视频原文', work.id, 'open-detail', 'text'));
     actions.append(this.actionButton(`评论 ${work.comment_count || ''}`.trim(), work.id, 'open-detail', 'comments'));
+    actions.append(this.actionButton(`AI关键词 ${work.keywords.length}`, work.id, 'open-detail', 'keywords'));
+    if (work.has_interpretation) actions.append(this.actionButton('解读感悟', work.id, 'open-detail', 'interpretation'));
     if (work.url) {
       const link = document.createElement('a');
       link.className = 'model-original-link';
@@ -323,8 +370,8 @@ export class ModelMrPanel {
     shell.className = 'model-work-detail';
     const tabs = document.createElement('nav');
     tabs.className = 'model-detail-tabs';
-    (['video', 'text', 'comments'] as WorkDetailTab[]).forEach((value) => {
-      const labels: Record<WorkDetailTab, string> = { video: '本地视频', text: '视频原文', comments: `评论 ${detail.comment_total}` };
+    (['video', 'text', 'comments', 'keywords', 'interpretation'] as WorkDetailTab[]).forEach((value) => {
+      const labels: Record<WorkDetailTab, string> = { video: '本地视频', text: '视频原文', comments: `评论 ${detail.comment_total}`, keywords: 'AI关键词', interpretation: '解读感悟' };
       const button = this.actionButton(labels[value], workId, 'detail-tab', value);
       button.classList.toggle('is-active', value === tab);
       tabs.append(button);
@@ -334,6 +381,13 @@ export class ModelMrPanel {
     content.className = 'model-detail-content';
     if (tab === 'video') content.append(this.renderVideo(detail));
     else if (tab === 'text') content.append(this.renderVideoText(detail));
+    else if (tab === 'keywords') content.append(this.renderKeywords(detail));
+    else if (tab === 'interpretation') {
+      const interpretation = document.createElement('p');
+      interpretation.className = 'model-saved-interpretation';
+      interpretation.textContent = detail.interpretation.text || '尚未保存解读感悟。本页不会自动调用 AI。';
+      content.append(interpretation);
+    }
     else content.append(this.renderComments(detail));
     const status = this.workMessages.get(workId);
     if (status || this.busyWorks.has(workId)) {
@@ -620,8 +674,7 @@ export class ModelMrPanel {
     this.renderWorks();
     try {
       const result = await instantApi.saveModelMrTitle(workId, title);
-      const work = this.works.find((item) => item.id === workId);
-      if (work) work.title = result.title;
+      [...this.works, ...this.relatedWorks].filter((item) => item.id === workId).forEach((work) => { work.title = result.title; });
       const detail = this.details.get(workId);
       if (detail) detail.work.title = result.title;
       this.editingTitles.delete(workId);
@@ -688,17 +741,64 @@ export class ModelMrPanel {
   }
 
   private renderThoughts(): void {
+    this.worksObserver?.disconnect();
     const root = document.createElement('div');
     root.className = 'model-thought-list';
+    const selected = this.thoughts.find((item) => item.id === this.selectedThought);
+    if (selected) {
+      root.classList.add('model-thought-detail');
+      const back = document.createElement('button');
+      back.type = 'button';
+      back.dataset.modelAction = 'thought-back';
+      back.textContent = selected.parent_id ? '‹ 返回一级分类' : '‹ 全部投资思路';
+      const heading = document.createElement('h3');
+      const parent = this.thoughts.find((item) => item.id === selected.parent_id);
+      heading.textContent = `${parent ? `${parent.name} › ` : ''}${selected.name}`;
+      const description = document.createElement('p');
+      description.textContent = selected.description;
+      const children = document.createElement('div');
+      children.className = 'model-thought-children';
+      this.thoughts.filter((item) => item.parent_id === selected.id).forEach((item) => children.append(this.thoughtButton(item)));
+      const search = document.createElement('form');
+      search.id = 'modelMrThoughtSearch';
+      search.className = 'model-thought-search';
+      const input = document.createElement('input');
+      input.id = 'modelMrThoughtQuery';
+      input.maxLength = 120;
+      input.value = this.relatedQuery;
+      input.placeholder = '搜索本分类的标题、行业或关键词';
+      input.setAttribute('aria-label', input.placeholder);
+      const submit = document.createElement('button');
+      submit.type = 'submit';
+      submit.textContent = '搜索';
+      search.append(input, submit);
+      const tags = document.createElement('div');
+      tags.className = 'model-work-meta';
+      this.relatedKeywords.forEach((keyword) => tags.append(this.pill(keyword)));
+      const list = document.createElement('div');
+      list.className = 'model-work-list model-work-list-full';
+      this.relatedWorks.forEach((work) => list.append(this.renderWorkCard(work)));
+      const status = document.createElement('p');
+      status.setAttribute('role', 'status');
+      status.textContent = this.relatedLoading ? '正在加载相关作品…' : this.relatedMessage || `相关作品：已显示 ${this.relatedWorks.length} / ${this.relatedTotal} 部`;
+      root.append(back, heading, description, children, search, tags, status, list);
+      if (!this.relatedLoading && !this.relatedWorks.length && !this.relatedMessage) root.append(this.message('本分类暂无匹配作品，可清空搜索词后重试。'));
+      if (this.relatedHasMore || this.relatedMessage) {
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.dataset.modelAction = 'thought-more';
+        more.disabled = this.relatedLoading;
+        more.textContent = this.relatedLoading ? '加载中…' : this.relatedMessage ? '重试加载' : '加载更多相关作品';
+        root.append(more);
+      }
+      this.body.replaceChildren(root);
+      return;
+    }
     const parents = this.thoughts.filter((category) => category.level === 1);
     parents.forEach((parent) => {
       const section = document.createElement('section');
       const heading = document.createElement('header');
-      const title = document.createElement('h3');
-      title.textContent = parent.name;
-      const count = document.createElement('span');
-      count.textContent = `${parent.video_count} 部作品`;
-      heading.append(title, count);
+      heading.append(this.thoughtButton(parent));
       if (parent.description) {
         const description = document.createElement('p');
         description.textContent = parent.description;
@@ -707,19 +807,135 @@ export class ModelMrPanel {
       const children = document.createElement('div');
       children.className = 'model-thought-children';
       this.thoughts.filter((item) => item.parent_id === parent.id).forEach((child) => {
-        const item = document.createElement('div');
-        const name = document.createElement('b');
-        name.textContent = child.name;
-        const total = document.createElement('span');
-        total.textContent = `${child.video_count}`;
-        item.append(name, total);
-        children.append(item);
+        children.append(this.thoughtButton(child));
       });
       section.append(heading, children);
       root.append(section);
     });
     if (!parents.length) root.append(this.message('投资思路索引当前没有可显示内容。'));
     this.body.replaceChildren(root);
+  }
+
+  private thoughtButton(category: ModelMrThoughtCategory): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.modelAction = 'thought-open';
+    button.dataset.categoryId = String(category.id);
+    button.textContent = `${category.name} · ${category.video_count} 部 ›`;
+    return button;
+  }
+
+  private async openThought(id: number, keepQuery = false): Promise<void> {
+    if (!this.thoughts.some((item) => item.id === id)) return;
+    this.selectedThought = id;
+    this.relatedRequest++;
+    this.relatedLoading = false;
+    this.relatedWorks = [];
+    this.relatedTotal = 0;
+    this.relatedOffset = 0;
+    this.relatedKeywords = [];
+    this.relatedHasMore = true;
+    this.relatedMessage = '';
+    if (!keepQuery) this.relatedQuery = '';
+    await this.loadThoughtPage();
+  }
+
+  private async loadThoughtPage(): Promise<void> {
+    if (this.selectedThought === null || this.relatedLoading) return;
+    const generation = ++this.relatedRequest;
+    const id = this.selectedThought;
+    this.relatedLoading = true;
+    this.relatedMessage = '';
+    this.renderThoughts();
+    try {
+      const page = await instantApi.modelMrThoughtWorks(id, MODEL_MR_WORK_PAGE_SIZE, this.relatedOffset, this.relatedQuery);
+      if (generation !== this.relatedRequest) return;
+      const ids = new Set(this.relatedWorks.map((item) => item.id));
+      this.relatedWorks.push(...page.items.filter((item) => !ids.has(item.id)));
+      this.relatedOffset = page.offset + page.count;
+      this.relatedTotal = page.total;
+      this.relatedHasMore = page.has_more && page.count > 0;
+      this.relatedKeywords = page.keywords;
+      this.relatedMessage = page.message || '';
+    } catch (error) {
+      if (generation === this.relatedRequest) this.relatedMessage = error instanceof Error ? error.message : '分类加载失败。';
+    } finally {
+      if (generation === this.relatedRequest) {
+        this.relatedLoading = false;
+        if (this.activeTab === 'thoughts') this.renderThoughts();
+      }
+    }
+  }
+
+  private renderKeywords(detail: ModelMrWorkDetail): HTMLElement {
+    const panel = document.createElement('div');
+    panel.className = 'model-keyword-panel';
+    const info = detail.work.keyword_info;
+    const note = document.createElement('p');
+    note.textContent = info?.edited_by_owner ? '已保存的主人整理结果；不会自动重提炼。' : '显示本地已保存的 AI 提炼结果；查看和手动整理不调用 AI。';
+    panel.append(note);
+    if (info?.stale) panel.append(this.message('原文可能已变化，请核对已有关键词；本页不会自动产生新的提炼结果。'));
+    const editing = this.editingKeywords.has(detail.work.id);
+    const groups = Object.entries(info?.categories || {});
+    const categorized = new Set(groups.flatMap(([, words]) => words));
+    const extra = detail.work.keywords.filter((word) => !categorized.has(word));
+    [...groups, ['其他关键词', extra] as [string, string[]]].forEach(([name, words]) => {
+      if (!words.length && !editing) return;
+      const group = document.createElement('section');
+      const title = document.createElement('h4');
+      title.textContent = name;
+      group.append(title);
+      if (editing) {
+        const input = document.createElement('textarea');
+        input.dataset.keywordCategory = name;
+        input.setAttribute('aria-label', name);
+        input.value = words.join('、');
+        input.maxLength = name === '其他关键词' ? 5000 : 600;
+        group.append(input);
+      } else words.forEach((word) => group.append(this.pill(word)));
+      panel.append(group);
+    });
+    if (!detail.work.keywords.length && !editing) panel.append(this.message('此作品尚无已保存关键词，不会自动调用付费提炼。'));
+    if (editing) {
+      panel.append(this.message('用顿号、逗号或换行分隔；每类最多 8 个关键词。'));
+      const save = this.actionButton('保存关键词', detail.work.id, 'save-keywords', undefined, true);
+      save.disabled = this.busyWorks.has(detail.work.id);
+      panel.append(save, this.actionButton('取消整理', detail.work.id, 'cancel-keywords'));
+    } else if (detail.work.keyword_revision) panel.append(this.actionButton('手动整理关键词', detail.work.id, 'edit-keywords'));
+    return panel;
+  }
+
+  private async saveKeywords(workId: number): Promise<void> {
+    const detail = this.details.get(workId);
+    if (!detail || this.busyWorks.has(workId)) return;
+    const categories: Record<string, string[]> = {};
+    let extra: string[] = [];
+    this.element.querySelectorAll<HTMLTextAreaElement>(`[data-work-id="${workId}"] [data-keyword-category]`).forEach((input) => {
+      const words = [...new Set(input.value.split(/[、,，;；\n]+/).map((word) => word.trim()).filter(Boolean))];
+      if (input.dataset.keywordCategory === '其他关键词') extra = words;
+      else categories[input.dataset.keywordCategory!] = words;
+    });
+    if (Object.values(categories).some((words) => words.length > 8) || extra.length > 80) {
+      this.setWorkMessage(workId, '每类最多 8 个，其他关键词最多 80 个。请删减后保存。', 'is-error');
+      // Keep unsaved text visible rather than rerendering the editor.
+      window.alert('每类最多 8 个，其他关键词最多 80 个。请删减后保存。');
+      return;
+    }
+    this.busyWorks.add(workId);
+    try {
+      const result = await instantApi.saveModelMrKeywords(workId, categories, extra, detail.work.keyword_revision || '');
+      [detail.work, ...this.works, ...this.relatedWorks].filter((work) => work.id === workId).forEach((work) => {
+        work.keywords = result.keywords;
+        work.keyword_info = result.keyword_info;
+        work.keyword_revision = result.keyword_revision;
+      });
+      this.editingKeywords.delete(workId);
+      this.setWorkMessage(workId, '关键词已保存；未调用 AI。', 'is-done');
+      this.renderWorks();
+    } catch (error) {
+      // Preserve the draft when the server rejects a stale revision or the network fails.
+      window.alert(error instanceof Error ? error.message : '保存失败，请保留当前草稿后重试。');
+    } finally { this.busyWorks.delete(workId); }
   }
 
   private renderChat(): void {

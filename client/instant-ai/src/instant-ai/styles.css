@@ -769,3 +769,20 @@ img { display: block; }
   .ticker-track { animation: none; }
   * { scroll-behavior: auto !important; }
 }
+
+/* Owner-library parity: touch targets, bounded drill-down and saved metadata. */
+.model-thought-list button { min-height: 44px; white-space: normal; text-align: left; border: 1px solid #dcd8ef; border-radius: 10px; padding: 10px 12px; background: #fff; color: #514290; cursor: pointer; }
+.model-thought-list button:hover, .model-thought-list button:focus-visible { background: #f0ebff; outline: 2px solid #8b73df; }
+.model-thought-list > section > header > button { width: 100%; font-weight: 700; }
+.model-thought-detail { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.model-thought-detail > h3, .model-thought-detail > p { margin: 0; }
+.model-thought-search { display: flex; gap: 8px; }
+.model-thought-search input { min-width: 0; flex: 1; padding: 12px; border: 1px solid #dcd8ef; border-radius: 10px; font-size: 16px; }
+.model-keyword-panel > section { padding: 10px; margin: 10px 0; background: #fff; border: 1px solid #e6e0f5; border-radius: 10px; }
+.model-keyword-panel h4 { margin: 0 0 8px; }
+.model-keyword-panel span { display: inline-block; background: #ecf8f5; color: #176f72; padding: 4px 8px; border-radius: 9px; margin: 3px; overflow-wrap: anywhere; }
+.model-keyword-panel textarea { width: 100%; min-height: 70px; resize: vertical; font: inherit; padding: 8px; box-sizing: border-box; }
+.model-keyword-panel > button { min-height: 44px; margin: 4px; }
+.model-saved-interpretation { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
+.model-mr-panel .model-detail-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.model-mr-panel .model-detail-tabs button, .model-mr-panel .model-work-actions button { min-height: 44px; white-space: normal; }
