@@ -62,6 +62,22 @@ sudo /opt/instant-ai/repository/deploy/aliyun/configure-instant-ai-owner.sh --ge
 
 云端默认只读取已有普通/豆包识别结果。若所有者另行批准云端付费识别，可在服务器端单独提供豆包语音凭据到固定暂存文件 `/var/tmp/instant-ai-doubao.env.upload`，再由 root 运行 `deploy/aliyun/configure-model-mr-doubao.sh`；脚本只接受豆包语音白名单字段，最终配置保存在 Git 外 `/etc/instant-ai/model-mr-secrets.env`（root `0600`）。页面每次现场调用豆包前都会提示按音频时长计费。不得把该文件、值或模型先生整份 `.env` 提交 Git、聊天、日志或公开接口。
 
+## 模型先生关键词模型：独立安全配置
+
+语音识别和 Ark 文本提炼使用不同凭据。旧的 `configure-model-mr-doubao.sh` 只接受语音字段且会重启服务，不能拿它配置关键词模型。
+
+经主人同意配置后，由主人在新加坡服务器的 root 交互终端执行（不得把 Key 填在命令后）：
+
+```bash
+python3 /home/compassdev/Documents/Codex/2026-08-26/instant-ai-finance/deploy/aliyun/configure-model-mr-text.py
+```
+
+输入 `SETUP` 确认，然后在两次隐藏提示中亲自输入火山方舟 API Key。此处不是网站登录密码、语音识别 Key 或 OpenAI Key。默认文本模型与本地已核实模型相同：`doubao-seed-2-1-turbo-260628`。
+
+脚本只新增 `/etc/instant-ai/model-mr-text-secrets.env`（root:root 0600）及 `40-model-mr-text.conf` drop-in；拒绝参数/管道、回显降级、现有文件和符号链接，写入失败只撤销本次新建文件。它不读取或复制原语音配置，不读取本地 `.env`；不安装依赖、不重启、不发布、不采集、不调用付费接口。成功后仅重载 systemd 服务定义，新的进程环境等另行正式发布时才加载。
+
+若已有目标文件，立即停止核对，不应重复运行或删除旧文件。配置输出 `TEXT_CONFIG_SAVED` 仅表示安全写入，不证明账号额度、模型权限或真实提炼已验证。成功以后由主人明确“正式发布”，再走受限发布器；随后在手机“模型先生 → 豆包自动处理”检查两项配置状态，确认费用后开启，仅验收一条新到作品，不批量处理历史。
+
 ## 统一更新
 
 服务器首次从统一远程仓库克隆 `main` 到 `/opt/instant-ai/repository`。云端 Codex 在用户明确要求正式发布后，先执行只读检查：
