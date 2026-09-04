@@ -27,7 +27,7 @@ async function main() {
         requests.push(pathname + url.search);
         const json = data => route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
         if (pathname === '/') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/styles.css"><body><main id="fixture"></main><script type="module">import {ModelMrPanel} from '/ModelMrPanel.js'; const panel=new ModelMrPanel(); document.querySelector('#fixture').append(panel.element);panel.element.hidden=false;await panel.refresh();window.ready=true;</script>` });
-        if (['/ModelMrPanel.js', '/api.js', '/styles.css'].includes(pathname)) return route.fulfill({ contentType: pathname.endsWith('.css') ? 'text/css' : 'text/javascript', body: fs.readFileSync(path.join(compiled, pathname.slice(1)), 'utf8') });
+        if (['/ModelMrPanel.js', '/ModelMrComments.js', '/api.js', '/styles.css'].includes(pathname)) return route.fulfill({ contentType: pathname.endsWith('.css') ? 'text/css' : 'text/javascript', body: fs.readFileSync(path.join(compiled, pathname.slice(1)), 'utf8') });
         if (pathname.endsWith('/status')) return json({ available: true, counts: { works: 30, media: 30 } });
         if (pathname.endsWith('/chat/config')) return json({ enabled: false, models: [], message: '测试不调用 AI' });
         if (pathname.endsWith('/thoughts')) return json({ categories, count: 2 });

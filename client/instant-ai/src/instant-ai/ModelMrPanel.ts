@@ -1,4 +1,5 @@
 import { instantApi } from './api';
+import { commentThreads, isAuthorComment, rankCommentThreads, threadHasAuthorInteraction, type ModelMrCommentThread } from './ModelMrComments';
 import type {
   ModelMrChatConfig, ModelMrComment, ModelMrThoughtCategory, ModelMrWork, ModelMrWorkDetail,
 } from './types';
@@ -7,12 +8,6 @@ type ModelMrTab = 'works' | 'thoughts' | 'chat';
 type WorkDetailTab = 'video' | 'text' | 'comments' | 'keywords' | 'interpretation';
 type CommentTab = 'author' | 'ranking' | 'stocks';
 const MODEL_MR_WORK_PAGE_SIZE = 24;
-
-interface ModelMrCommentThread {
-  key: string;
-  root: ModelMrComment | null;
-  replies: ModelMrComment[];
-}
 
 export class ModelMrPanel {
   public readonly element: HTMLElement;
@@ -453,19 +448,14 @@ export class ModelMrPanel {
     const panel = document.createElement('div');
     panel.className = 'model-comments-panel';
     const active = this.commentTabs.get(detail.work.id) || 'author';
-    const threads = this.commentThreads(detail.comments);
-    const authorThreads = threads.filter((thread) => this.threadHasAuthorInteraction(thread));
-    const rankedThreads = threads
-      .filter((thread) => {
-        const lead = thread.root || thread.replies[0];
-        return lead && !this.isAuthorComment(lead) && !this.isLowValueComment(lead.text);
-      })
-      .sort((left, right) => this.compareCommentThreads(left, right));
+    const threads = commentThreads(detail.comments);
+    const authorThreads = threads.filter(threadHasAuthorInteraction);
+    const ranked = rankCommentThreads(threads);
     const tabs = document.createElement('nav');
     tabs.className = 'model-comment-tabs';
     const definitions: Array<{ key: CommentTab; label: string; count: number }> = [
-      { key: 'author', label: '本人回复', count: authorThreads.length },
-      { key: 'ranking', label: '评论排行', count: rankedThreads.length },
+      { key: 'author', label: '作者互动', count: authorThreads.length },
+      { key: 'ranking', label: '粉丝评论', count: ranked.topLiked.length + ranked.remaining.length },
       { key: 'stocks', label: '评股', count: detail.stock_mentions?.items?.length || 0 },
     ];
     definitions.forEach((definition) => {
@@ -481,7 +471,7 @@ export class ModelMrPanel {
     if (active === 'author') {
       const note = document.createElement('p');
       note.className = 'model-comment-sort-note';
-      note.textContent = '只显示模型先生本人回复或本人点赞过的评论，并保留对应提问上下文。';
+      note.textContent = '红色“作者”标识表示本人发言；“作者赞过”表示作者点过赞。保留原提问和同楼上下文，作者身份以已采集标记为准。';
       panel.append(note);
       authorThreads.slice(0, limit).forEach((thread) => panel.append(this.renderCommentThread(thread, true)));
       if (!authorThreads.length) panel.append(this.message('这条作品暂未识别到模型先生本人回复。'));
@@ -489,11 +479,24 @@ export class ModelMrPanel {
     } else if (active === 'ranking') {
       const note = document.createElement('p');
       note.className = 'model-comment-sort-note';
-      note.textContent = '按点赞量优先，其次按回复数和有效正文长度排列；纯表情、纯“哈哈”等低价值评论不进入排行。';
+      note.textContent = '高赞前十：按点赞数、回复数排序。其余：20 字以上有效文字优先，再按有效字数（最多计 500 字）、回复数、点赞数排序。排除纯表情和灌水；这是阅读排序，不代表观点正确。';
       panel.append(note);
-      rankedThreads.slice(0, limit).forEach((thread, index) => panel.append(this.renderCommentThread(thread, false, index + 1)));
-      if (!rankedThreads.length) panel.append(this.message('这条作品当前没有可参与排行的评论。'));
-      remaining = Math.max(0, rankedThreads.length - limit);
+      const high = document.createElement('section');
+      high.className = 'model-comment-group model-high-liked';
+      const highHeading = document.createElement('h4');
+      highHeading.textContent = `高赞前十 · ${ranked.topLiked.length} 组`;
+      high.append(highHeading);
+      ranked.topLiked.forEach((thread, index) => high.append(this.renderCommentThread(thread, false, index + 1)));
+      if (!ranked.topLiked.length) high.append(this.message('暂无有点赞的有效评论。'));
+      const rest = document.createElement('section');
+      rest.className = 'model-comment-group model-quality-comments';
+      const restHeading = document.createElement('h4');
+      restHeading.textContent = `其余评论 · 有效长回复优先（${ranked.remaining.length} 组）`;
+      rest.append(restHeading);
+      ranked.remaining.slice(0, limit).forEach(thread => rest.append(this.renderCommentThread(thread, false)));
+      panel.append(high, rest);
+      if (!ranked.topLiked.length && !ranked.remaining.length) panel.append(this.message('这条作品当前没有可参与排行的评论。'));
+      remaining = Math.max(0, ranked.remaining.length - limit);
     } else {
       panel.append(this.renderStockMentions(detail));
     }
@@ -509,53 +512,10 @@ export class ModelMrPanel {
     return panel;
   }
 
-  private commentThreads(comments: ModelMrComment[]): ModelMrCommentThread[] {
-    const threads = new Map<string, ModelMrCommentThread>();
-    comments.forEach((comment) => {
-      const key = comment.thread_key || `comment-${comment.id}`;
-      let thread = threads.get(key);
-      if (!thread) {
-        thread = { key, root: null, replies: [] };
-        threads.set(key, thread);
-      }
-      if (!comment.reply_depth && !thread.root) thread.root = comment;
-      else thread.replies.push(comment);
-    });
-    return Array.from(threads.values());
-  }
-
-  private threadHasAuthorInteraction(thread: ModelMrCommentThread): boolean {
-    return [thread.root, ...thread.replies].some((comment) => comment && (this.isAuthorComment(comment) || comment.author_liked));
-  }
-
-  private isAuthorComment(comment: ModelMrComment): boolean {
-    return comment.kind.includes('author') || comment.author.trim() === '模型先生';
-  }
-
-  private isLowValueComment(text: string): boolean {
-    const compact = text
-      .replace(/\[[^\]]{1,12}\]/g, '')
-      .replace(/@\S+/g, '')
-      .replace(/[^A-Za-z0-9\u4e00-\u9fff]+/g, '')
-      .toLowerCase();
-    if (!compact) return true;
-    if (/^(哈|呵|嘿|嘻){1,12}$/.test(compact) || /^6{1,12}$/.test(compact)) return true;
-    return new Set(['嗯', '哦', '啊', '好', '赞', '点赞', '支持', '收到', '路过', '来了', '呵呵', '谢谢', '感谢', '学习了', '关注了', '蹲', '蹲一个']).has(compact);
-  }
-
-  private compareCommentThreads(left: ModelMrCommentThread, right: ModelMrCommentThread): number {
-    const leftLead = left.root || left.replies[0];
-    const rightLead = right.root || right.replies[0];
-    const likes = (rightLead?.like_count || 0) - (leftLead?.like_count || 0);
-    if (likes) return likes;
-    const replies = (rightLead?.reply_count || right.replies.length) - (leftLead?.reply_count || left.replies.length);
-    if (replies) return replies;
-    return (rightLead?.text.length || 0) - (leftLead?.text.length || 0);
-  }
-
   private renderCommentThread(thread: ModelMrCommentThread, authorMode: boolean, rank = 0): HTMLElement {
     const section = document.createElement('section');
     section.className = `model-comment-thread${authorMode ? ' is-author-thread' : ''}`;
+    section.dataset.threadKey = thread.key;
     if (rank) {
       const badge = document.createElement('span');
       badge.className = 'model-comment-rank';
@@ -564,13 +524,30 @@ export class ModelMrPanel {
     }
     if (thread.root) section.append(this.renderComment(thread.root));
     const replies = [...thread.replies].sort((left, right) => {
-      const authorDifference = Number(this.isAuthorComment(right)) - Number(this.isAuthorComment(left));
-      return authorDifference || right.like_count - left.like_count;
+      const authorDifference = Number(isAuthorComment(right)) - Number(isAuthorComment(left));
+      return authorDifference || Number(right.author_liked) - Number(left.author_liked) || right.like_count - left.like_count;
     });
-    const visibleReplies = authorMode
-      ? replies.filter((comment) => this.isAuthorComment(comment) || comment.author_liked || !this.isLowValueComment(comment.text))
-      : replies.slice(0, 6);
-    visibleReplies.forEach((comment) => section.append(this.renderComment(comment)));
+    replies.slice(0, 6).forEach(comment => section.append(this.renderComment(comment)));
+    if (replies.length > 6) {
+      const more = document.createElement('details');
+      more.className = 'model-thread-more';
+      const summary = document.createElement('summary');
+      summary.textContent = `展开同楼其余回复（${replies.length - 6} 条）`;
+      more.append(summary);
+      let loaded = 6;
+      const load = document.createElement('button');
+      load.type = 'button';
+      load.textContent = '继续显示同楼回复';
+      const appendPage = () => {
+        replies.slice(loaded, loaded + 30).forEach(comment => more.insertBefore(this.renderComment(comment), load));
+        loaded += 30;
+        load.hidden = loaded >= replies.length;
+      };
+      load.addEventListener('click', appendPage);
+      more.append(load);
+      more.addEventListener('toggle', () => { if (more.open && loaded === 6) appendPage(); });
+      section.append(more);
+    }
     return section;
   }
 
@@ -578,41 +555,96 @@ export class ModelMrPanel {
     const report = detail.stock_mentions;
     const root = document.createElement('section');
     root.className = 'model-stock-report';
-    if (!report?.items?.length) {
-      root.append(this.message('这条作品暂时没有评股排行；重新同步主人资料后会使用原智能体的本地证券名称表生成。'));
+    if (!report || (!report.method && !report.items.length)) {
+      root.append(this.message('此作品尚无已同步的评股报告，不能据此判断评论中没有股票。这里不会自动采集或调用 AI。'));
       return root;
     }
+    const items = [...report.items].sort((a, b) => b.comment_count - a.comment_count || b.mention_count - a.mention_count || a.code.localeCompare(b.code)).slice(0, 20);
     const heading = document.createElement('header');
     const title = document.createElement('b');
     title.textContent = '评论区股票热度';
     const summary = document.createElement('span');
-    summary.textContent = `已检查 ${report.total_comments} 条评论 · ${report.items.length} 只股票`;
+    summary.textContent = `报告已检查 ${report.total_comments} 条评论 · 展示 ${items.length} / ${report.stock_count} 只股票`;
     heading.append(title, summary);
     root.append(heading);
-    const commentsById = new Map(detail.comments.map((comment) => [comment.id, comment]));
-    report.items.forEach((item) => {
+    const explanation = document.createElement('p');
+    explanation.className = 'model-comment-sort-note';
+    explanation.textContent = '按提及股票的评论条数排序，最多展示前 20 只；同条评论重复提及不重复计数。点击可看相关评论。热度不代表作者推荐、持仓或投资建议。';
+    root.append(explanation);
+    const threads = commentThreads(detail.comments);
+    if (!items.length) root.append(this.message('已有报告中没有可唯一识别的股票提及。'));
+    items.forEach((item, index) => {
       const row = document.createElement('details');
-      row.className = 'model-stock-row';
+      row.className = `model-stock-row${index < 3 ? ' is-top-stock' : ''}`;
       const rowSummary = document.createElement('summary');
       const rank = document.createElement('span');
       rank.className = 'model-stock-rank';
-      rank.textContent = String(item.rank);
+      rank.textContent = String(index + 1);
+      const identity = document.createElement('div');
+      identity.className = 'model-stock-identity';
       const name = document.createElement('b');
-      name.textContent = item.code ? `${item.name} · ${item.code}` : item.name;
+      name.textContent = item.name;
+      const code = document.createElement('small');
+      code.textContent = item.code;
+      const breakdown = document.createElement('small');
+      breakdown.className = 'model-stock-breakdown';
+      breakdown.textContent = `粉丝 ${item.fan_comment_count} · 作者 ${item.author_comment_count}`;
+      identity.append(name, code, breakdown);
       const count = document.createElement('span');
-      count.textContent = `${item.comment_count} 条 · 粉丝 ${item.fan_comment_count} · 本人 ${item.author_comment_count}`;
-      rowSummary.append(rank, name, count);
+      count.className = 'model-stock-count';
+      count.textContent = `${item.comment_count} 条评论`;
+      rowSummary.append(rank, identity, count);
       row.append(rowSummary);
-      const matched = item.comment_ids.map((id) => commentsById.get(id)).filter((comment): comment is ModelMrComment => Boolean(comment));
-      if (matched.length) matched.forEach((comment) => row.append(this.renderComment(comment)));
-      else item.examples.forEach((example) => {
-        const text = document.createElement('p');
-        text.className = 'model-stock-example';
-        text.textContent = example;
-        row.append(text);
+      let expanded = false;
+      row.addEventListener('toggle', () => {
+        if (!row.open || expanded) return;
+        expanded = true;
+        const ids = new Set(item.comment_ids);
+        const matched = threads.filter(thread => [thread.root, ...thread.replies].some(comment => comment && ids.has(comment.id)));
+        const available = new Set(detail.comments.filter(comment => ids.has(comment.id)).map(comment => comment.id)).size;
+        const note = document.createElement('p');
+        note.className = 'model-stock-example';
+        note.textContent = `报告 ${item.comment_count} 条提及评论；当前已同步关联正文 ${available} 条。上下文可能包含未提及此股票的提问/回复，不计入热度。`;
+        row.append(note);
+        if (matched.length) {
+          let offset = 0;
+          const more = document.createElement('button');
+          more.type = 'button';
+          more.className = 'model-comments-more';
+          more.textContent = '继续显示相关评论';
+          row.append(more);
+          const appendPage = () => {
+            matched.slice(offset, offset + 20).forEach(thread => row.insertBefore(this.renderCommentThread(thread, false), more));
+            offset += 20;
+            more.hidden = offset >= matched.length;
+          };
+          more.addEventListener('click', appendPage);
+          appendPage();
+        } else {
+          if (!item.examples.length) row.append(this.message('关联正文尚未同步，请勿把缺少正文当成零提及。'));
+          item.examples.forEach(example => {
+            const text = document.createElement('p');
+            text.className = 'model-stock-example';
+            text.textContent = `已保存的报告摘录：${example}`;
+            row.append(text);
+          });
+        }
       });
       root.append(row);
     });
+    if (report.uncertain.length) {
+      const uncertain = document.createElement('details');
+      uncertain.className = 'model-stock-uncertain';
+      const title = document.createElement('summary');
+      title.textContent = `待核对简称 ${report.uncertain.length} 项（不计入股票排名）`;
+      uncertain.append(title);
+      report.uncertain.forEach(item => {
+        const line = document.createElement('p');
+        line.textContent = `${item.text} · ${item.comment_count} 条${item.candidates.length ? ` · 候选：${item.candidates.join('、')}` : ''}`;
+        uncertain.append(line);
+      });
+      root.append(uncertain);
+    }
     const footer = document.createElement('p');
     footer.className = 'model-comments-note';
     footer.textContent = report.message || '使用原智能体本地证券名称表生成，不调用 AI，不产生 API 费用。';
@@ -622,18 +654,34 @@ export class ModelMrPanel {
 
   private renderComment(comment: ModelMrComment): HTMLElement {
     const item = document.createElement('article');
-    item.className = `model-comment${comment.reply_depth ? ' is-reply' : ''}${comment.kind.includes('author') ? ' is-author' : ''}`;
+    item.className = `model-comment${comment.reply_depth ? ' is-reply' : ''}${isAuthorComment(comment) ? ' is-author' : ''}${comment.author_liked ? ' is-author-liked' : ''}`;
+    item.dataset.commentId = String(comment.id);
     const header = document.createElement('header');
     const author = document.createElement('b');
-    author.textContent = comment.kind.includes('author') ? `${comment.author} · 作者` : comment.author;
+    author.textContent = comment.author;
+    const identity = document.createElement('div');
+    identity.className = 'model-comment-identity';
+    identity.append(author);
+    if (isAuthorComment(comment)) {
+      const badge = document.createElement('span');
+      badge.className = 'model-author-badge';
+      badge.textContent = '作者';
+      identity.append(badge);
+    }
     const date = document.createElement('time');
     date.textContent = this.formatDate(comment.published_at);
-    header.append(author, date);
+    header.append(identity, date);
     const text = document.createElement('p');
     text.textContent = comment.text;
     const metrics = document.createElement('small');
-    metrics.textContent = `赞 ${comment.like_count}${comment.reply_count ? ` · 回复 ${comment.reply_count}` : ''}${comment.author_liked ? ' · 本人点赞' : ''}`;
+    metrics.textContent = `赞 ${comment.like_count}${comment.reply_count ? ` · 回复 ${comment.reply_count}` : ''}`;
     item.append(header, text, metrics);
+    if (comment.author_liked) {
+      const liked = document.createElement('span');
+      liked.className = 'model-author-liked-badge';
+      liked.textContent = '♥ 作者赞过';
+      item.append(liked);
+    }
     return item;
   }
 
