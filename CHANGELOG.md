@@ -2,6 +2,13 @@
 
 本文件只记录已经发生的项目变更。研究结论和架构理由分别写入 `research/` 与 `docs/decisions/`。
 
+## 2026-09-05 — 北京“北极采集器”快捷图标 Git 交接（未发布）
+
+- 根据所有者提供的参考图生成原创“北极采集器”方形图标：保留采集箱语义，改为北极星指针、冰川、极光和无品牌内容卡片；删除人物、文字及第三方平台标志。内置图像生成器完成画面后只做 Lanczos 等比例缩放。
+- 新增 `handoff/beijing-north-pole-collector-icon/` Git 交接包，包含 1024 母版、512/192 PWA 图标、180 iPhone touch icon、32 favicon、Web App Manifest、共享 `<head>` 片段、图像生成记录和自动尺寸/契约检查。交接包不含视频、评论、数据库、Cookie、密钥或生产路径。
+- 公网只读核对确认 `https://collector.amuyeye.com/health` 返回 `ok`，但当前登录页没有 manifest、Apple touch icon 或 favicon 引用，`/manifest.webmanifest` 返回 404；因此本次只完成可由三端读取的 Git 检查点，没有宣称北京生产已换图标。
+- 当前云端 Codex 没有北京采集器源码检出或北京发布器，桌面 Codex/Alibaba Cloud Client 连接本轮不可达。后续必须从北京采集器 1.0.5 / `1b4e018` 或安全后继提交接入，运行北京完整回归，并在所有者明确正式发布后再上线；不触发采集、媒体重传、ASR、豆包或 AI。
+
 ## 2026-09-05 — 0.20.0
 
 - 将所有者提供的蓝色方形“即时 AI”图片等比例生成 192×192、512×512 PWA 图标和 180×180 iPhone touch icon；页面页头和主人登录页同步使用同一标识，favicon、manifest 与 Service Worker 不再引用旧“即”字 SVG。

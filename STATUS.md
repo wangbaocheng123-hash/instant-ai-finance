@@ -1,6 +1,7 @@
 # 项目状态
 
 - 最后更新：2026-09-05
+- 北京“北极采集器”快捷图标已形成公开 Git 交接候选：原创极地采集图及 1024/512/192/180/32 五种 PNG、PWA manifest、iPhone `<head>` 标签和自动检查均已准备。公网采集器健康为 `ok`，但生产登录页仍无图标/manifest 标签且 `/manifest.webmanifest` 为 404；当前桌面北京连接不可达，因此尚未接入北京源码或正式上线。
 - 即时 AI 0.20.0 已正式上线：使用所有者提供的方形蓝色“即时 AI”图作为页面、登录页、PWA 192/512 与 iPhone 180 图标；手机端把标识、名称、汉化、来源、退出和实时采集合并为单行，页头压缩至 44px 且 390px 无横向溢出。正式与应急域名、Service Worker 和三种图标均已核验。
 - 正式发布检查：受限发布通道返回 `CODEX_CLOUD_PUBLISH_READY`；生产从 `5ddd22c` 安全快进至 `77a870c` / 0.20.0，服务器 151 项回归通过。独立文本模型隐藏输入脚本随代码上线，但本次没有读取或改动任何凭据，没有开启自动处理或执行付费验收。
 - 配置入口验收：新加坡隔离资料根完整 151 项 Python 测试通过（新增 13 项），涵盖隐藏输入/取消、拒绝参数与管道、格式与双输入校验、现有文件/链接冲突、600 权限、新文件精确撤销和仅重载定义。帮助命令可用，未执行真实配置入口。
@@ -18,7 +19,7 @@
 - 0.18.2 已正式上线并消除 OAuth 授权页的账号歧义：页面直接从当前 Git 外单主人配置带入并锁定账号，主人只输入密码；错误凭据在原页醒目显示。授权成功后保存 30 天安全主人 Cookie，不再丢弃刚创建的网页登录会话；MCP access token 与网页 Cookie 继续严格隔离。受限发布器安全快进至 `8bd242f`，服务器 93 项回归、公网 OAuth/MCP 协议及真实授权页结构均通过；未读取或重置生产账号密码。
 - 0.18.1 已修复 ADP 官方结果送达后被永久跳过的状态机缺口：已认证官方片段可作为一手证据，搜索索引滞后进入五分钟重试而不是 `skip`，最多三次并持久化原因；即时 AI schema 10 显示罗盘/Codex 回填状态并临时置顶最近变化。即时 AI 一侧已正式上线；时变罗盘三态重试仍是独立待发布候选，须另行取得正式发布授权。
 - 所有者已明确要求把主人密码最低长度调整为 9 个字符，并把 OAuth 主人账号改为指定用户名。代码只调整长度策略；真实密码仍必须在隐藏终端提示中输入，不进入 Git、聊天、命令参数或普通日志。
-- 阶段状态：`INSTANT_AI_BRAND_0_20_0_LIVE / COMPACT_MOBILE_HEADER_LIVE / MODEL_MR_READING_UI_0_20_0_LIVE / MODEL_MR_AUTOMATION_DEFAULT_OFF / MODEL_MR_LAZY_PAGING_LIVE / MODEL_MR_BEIJING_TRANSFER_LIVE / MODEL_MR_CLOUD_MCP_LIVE / UNIFIED_INSTANT_AI_MCP_FIVE_TOOLS_LIVE / GRANDPAAMU_0_20_0_LIVE / BLOGGER_CALLBACK_LINK_LIVE / BLOGGER_CLOUD_MCP_REAL_CALL_VERIFIED / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 阶段状态：`BEIJING_NORTH_POLE_ICON_GIT_HANDOFF_READY / INSTANT_AI_BRAND_0_20_0_LIVE / COMPACT_MOBILE_HEADER_LIVE / MODEL_MR_READING_UI_0_20_0_LIVE / MODEL_MR_AUTOMATION_DEFAULT_OFF / MODEL_MR_LAZY_PAGING_LIVE / MODEL_MR_BEIJING_TRANSFER_LIVE / MODEL_MR_CLOUD_MCP_LIVE / UNIFIED_INSTANT_AI_MCP_FIVE_TOOLS_LIVE / GRANDPAAMU_0_20_0_LIVE / BLOGGER_CALLBACK_LINK_LIVE / BLOGGER_CLOUD_MCP_REAL_CALL_VERIFIED / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离；新加坡博主接收数据生产根固定为 `/var/lib/instant-ai/blogger-agent`，生命周期待后续决定
@@ -26,6 +27,7 @@
 
 ## 当前检查点
 
+- 完成 `P2-BLOGGER-ICON-01` 的设计、规格化与 Git 交接部分。`handoff/beijing-north-pole-collector-icon/` 可直接交给北京采集器源码端；自动检查覆盖五种 RGB PNG 尺寸、manifest 名称/路径及 Apple touch icon 标签。它不是新加坡运行时依赖，也没有替换即时 AI 0.20.0 图标。
 - 完成并正式发布 `P2-UI-08` / 0.20.0。旧“即”字标识已从前端源码、favicon、PWA manifest 和 iPhone touch icon 引用中替换；新 PNG 为所有者图片的等比例机械缩放，不生成或改写画面。Service Worker 使用 0.20.0 缓存键，手机页头实测标识与四项工具同处一行，高度 44px、无横向滚动；公网三种 PNG 的摘要与本机正式构建完全一致。
 - 完成并正式发布 0.19.2 模型先生作品按需分页。根因是客户端固定请求 120 条并只渲染 80 条，生产资料本身完整；新接口按 `limit + offset` 返回页面与总量，客户端首屏 24 条、接近底部自动加载下一批并保留手动按钮兜底，避免一次传输和渲染 406 张作品卡。作品详情、评论和视频仍只在用户点击后读取。
 - 生产资料只读核对为 406 部作品、406 份详情、392 条媒体引用且缺失引用 0、39,023 条评论，最早作品为 2023-10-29，最新为 2026-09-03。没有复制、改写或删除业务资料。
@@ -85,6 +87,7 @@
 
 ## 当前阻塞
 
+- `P2-BLOGGER-ICON-01` 的图片与 Git 交接无阻塞；实际北京源码接入仍缺当前可达的桌面 Codex/Alibaba Cloud Client 会话。当前云端只持有即时 AI 仓库和新加坡受限发布器，没有北京采集器源码检出、SSH 身份或发布器；不得用猜测目录、修改模型下载器或绕过既有北京发布链路代替。
 - `P3-MODEL-AUTO-01` 代码已随 0.20.0 上线并保持默认关闭；新云端 Ark 文本凭据尚未由本轮安全配置/实测，不能把本地已配置或云端语音可用当成文本提炼已可用。不得读取或复制本地 `.env`；后续应先安全配置，再由主人确认费用、开启并单条验收。关键词/评论读取代码已上线，但旧 Git 外预览没有合并生产。
 
 - 0.19.2 代码、正式发布与生产分页验收无阻塞；手机若仍显示旧页面，只需完全关闭后重新打开以更新 0.19.2 Service Worker。
@@ -99,6 +102,7 @@
 
 ## 需要用户批准的事项
 
+- 北极采集器图标已准备为 Git 候选，但用户本轮尚未使用项目规定的明确“正式发布”口令；北京端恢复连接后可先接入源码与回归，正式上线仍需本轮明确发布授权。上线后 iPhone 旧快捷方式需删除并从 Safari 重新添加一次。
 - 0.20.0 已按本轮明确发布口令上线，不需要再次批准；发布没有执行元数据合并、重传模型先生媒体、ASR、豆包或 AI，既有财经自动采集按原计划继续。现有 iPhone 主屏旧图标需要删除快捷方式后重新添加一次。
 - 0.19.1 正式发布和北京生产桥启用已按本轮授权完成，不需要再次确认；后续新代码或付费 ASR/豆包/AI 仍须另行明确授权。
 - 即时 AI 0.19.0 已按本轮明确授权正式发布，不再需要发布批准；后续若修改代码或再次发布，仍须取得新的明确授权。
@@ -114,4 +118,4 @@
 
 ## 下一项唯一建议任务
 
-`P3-MODEL-AUTO-02`：若所有者决定启用付费自动处理，先按安全流程配置独立云端豆包文本凭据，再由主人确认费用、开启一次新视频处理并核验单条真实识别/关键词/MCP；既有元数据须基于最新生产状态重新合并，不覆盖旧预览。
+`P2-BLOGGER-ICON-01`：桌面北京连接恢复后，从采集器 1.0.5 / `1b4e018` 或安全后继提交读取真实源码，把 Git 交接包接入共享页面模板并运行北京完整回归；取得明确正式发布口令后，再上线并核验登录页、manifest、180/192/512 图标、健康接口和两套服务状态。
