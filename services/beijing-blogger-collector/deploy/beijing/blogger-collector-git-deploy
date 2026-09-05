@@ -208,7 +208,7 @@ if ! flock -n 9; then
 fi
 
 [[ "$(git_read remote get-url origin)" == "${PUBLIC_REPOSITORY}" ]] || fail "unexpected public Git origin"
-git_read fetch --no-tags --prune origin "+refs/heads/beijing-production:${PRODUCTION_REF}"
+git_read fetch --filter=blob:none --no-tags --prune origin "+refs/heads/beijing-production:${PRODUCTION_REF}"
 target_commit="$(git_read rev-parse "${PRODUCTION_REF}^{commit}")"
 validate_revision "${target_commit}"
 

@@ -29,7 +29,7 @@ require_command() {
 }
 
 [[ "$(id -u)" -eq 0 ]] || fail "installer must run as root"
-for required in git id install runuser sha256sum stat systemctl useradd; do
+for required in awk git id install mktemp rm runuser sha256sum stat systemctl useradd; do
   require_command "${required}"
 done
 for source in "${PUBLISHER_SOURCE}" "${SERVICE_SOURCE}" "${TIMER_SOURCE}"; do
@@ -47,7 +47,16 @@ fi
 install -d -o root -g root -m 0755 /opt/blogger-agent /var/lib/blogger-agent/git-deploy
 if [[ ! -d "${BARE_REPOSITORY}" ]]; then
   install -d -o "${GIT_USER}" -g "${GIT_USER}" -m 0750 "${BARE_REPOSITORY}"
-  runuser -u "${GIT_USER}" -- git clone --bare --filter=blob:none "${PUBLIC_REPOSITORY}" "${BARE_REPOSITORY}"
+  runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" init --bare --quiet
+  runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" remote add origin "${PUBLIC_REPOSITORY}"
+  runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" config remote.origin.promisor true
+  runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" config remote.origin.partialclonefilter blob:none
+  runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" config http.version HTTP/1.1
+  runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" config http.lowSpeedLimit 1024
+  runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" config http.lowSpeedTime 30
+  runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" fetch \
+    --filter=blob:none --depth=1 --no-tags origin \
+    "+refs/heads/main:refs/remotes/origin/main"
 fi
 [[ "$(runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" remote get-url origin)" == "${PUBLIC_REPOSITORY}" ]] || fail "existing production source has an unexpected origin"
 
