@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+readonly SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly TARGET='/etc/caddy/Caddyfile'
-readonly TEMPLATE='/opt/blogger-agent/repository/deploy/beijing/collector.Caddyfile.example'
+readonly TEMPLATE="${SOURCE_DIR}/collector.Caddyfile.example"
 readonly BACKUP_DIR='/etc/caddy/backups'
 
 [[ "$(id -u)" -eq 0 ]] || {

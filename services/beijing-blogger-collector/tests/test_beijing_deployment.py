@@ -133,6 +133,8 @@ class BeijingDeploymentContractTests(unittest.TestCase):
     def test_collector_caddy_apply_script_is_scoped_and_recoverable(self) -> None:
         script = self.read("apply-collector-caddy.sh")
         self.assertIn("collector.amuyeye.com {", script)
+        self.assertIn('TEMPLATE="${SOURCE_DIR}/collector.Caddyfile.example"', script)
+        self.assertNotIn("/opt/blogger-agent/repository", script)
         self.assertIn("site_block_count", script)
         self.assertIn("caddy validate --adapter caddyfile", script)
         self.assertIn("restore_previous_config", script)

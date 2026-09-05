@@ -10,6 +10,25 @@ fail() {
   exit 1
 }
 
+fetch_version_payload() {
+  local payload
+  payload="$(curl --fail --silent --show-error --max-time 10 "${VERSION_URL}" 2>/dev/null || true)"
+  if [[ -n "${payload}" ]]; then
+    printf '%s' "${payload}"
+    return
+  fi
+  if command -v node >/dev/null 2>&1; then
+    node -e '
+      fetch(process.argv[1], {signal: AbortSignal.timeout(10000)})
+        .then(async response => {
+          if (!response.ok) process.exit(1);
+          process.stdout.write(await response.text());
+        })
+        .catch(() => process.exit(1));
+    ' "${VERSION_URL}" 2>/dev/null || true
+  fi
+}
+
 [[ $# -eq 1 ]] || fail "只接受一个完整 Git 提交 SHA"
 target="$1"
 [[ "${target}" =~ ^[0-9a-f]{40}$ ]] || fail "提交必须是 40 位小写十六进制 SHA"
@@ -35,7 +54,7 @@ fi
 git push origin "${target}:refs/heads/beijing-production"
 
 for attempt in $(seq 1 90); do
-  payload="$(curl --fail --silent --show-error --max-time 10 "${VERSION_URL}" 2>/dev/null || true)"
+  payload="$(fetch_version_payload)"
   deployed="$(printf '%s' "${payload}" | python3 -c 'import json,sys; value=json.load(sys.stdin); required={"service","status","version","repository_revision","deployed_time"}; assert set(value)==required and value["status"]=="ok"; print(value["repository_revision"])' 2>/dev/null || true)"
   if [[ "${deployed}" == "${target}" ]]; then
     printf 'BEIJING_GIT_PUBLISH_OK\n'
