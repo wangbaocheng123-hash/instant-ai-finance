@@ -41,6 +41,7 @@
 | P2-UI-05 | DONE | 压缩顶部状态项并把频道导航改为整页直切 | 分叉提交 `daa3b2eb5cd6e301284c6b4bef4c5fd9877a893e`；0.7.1 生产构建；顶部工具条实测 32×209px；桌面华尔街/黄金与手机华尔街直切只保留一个可见频道，页首位置为 0；14 项测试及运行验收通过 |
 | P2-UI-06 | DONE | 把顶部“即时”和“全球热点”合并为“即时热点” | 分叉提交 `658dce646c59aedd02efd265e655085e36155293`；0.7.2 生产构建；最新与热点候选交错去重，桌面仅 1 条、首轮 16 条唯一且含多来源/75/84 分事件，手机仅 1 条且高 36px；14 项测试通过 |
 | P2-UI-07 | DONE | 删除无用的统计概览与客户端搜索功能 | 0.12.1 提交 `3f94db1` 已推送 GitHub `main`；删除统计/覆盖范围、搜索框、搜索结果和区域搜索快捷入口，新闻面板扩展填满空间；生产构建、npm 零高危审计、静态无残留断言及 21 项 Python 测试通过 |
+| P2-UI-08 | DONE | 使用所有者提供的新图标并压缩手机顶部工具栏（开发验收，不含发布） | 页面/登录/PWA/iPhone 图标统一为 192/512/180 PNG；390px 下标识、名称、汉化、来源、退出、实时采集为 44px 单行且无横向溢出。151 项 Python 回归、7 项前端契约、TS/Vite、生产依赖零漏洞及 390/1280px 隔离浏览器截图通过；正式站未更新 |
 | P2-BLOGGER-01 | DONE | 建立北京采集中心到新加坡博主资料域的签名清单接收底座 | ADR-0024；`blogger-transfer/v1` 严格 1 MiB 契约、HMAC-SHA256、五分钟时间窗、nonce 防重放、独立 `/var/lib/instant-ai/blogger-agent/database/blogger_ingest.db`、传输幂等及作品修订乱序保护；第一阶段无 HTTP、媒体、ASR、真实网络或付费调用，后续由 P2-BLOGGER-02 补齐传输闭环 |
 | P2-BLOGGER-02 | DONE | 完成新加坡 manifest、media、comments 与 complete 机器传输闭环 | ADR-0025；主人认证前独立分流且 HMAC 不获 `/api` 权限；精确 Content-Length、禁 query/chunked、同文件系统流式 staging、媒体/评论双层校验、fsync + 原子替换、幂等/冲突保护；schema 3 artifact 与唯一 `awaiting_asr_approval` 队列；不调用 ASR/ffmpeg/模型，不读取真实凭据或数据，未发布生产 |
 | P2-BLOGGER-03 | DONE | 增加主人登录后的只读博主资料查询层与手机面板 | SQLite `mode=ro` 四个主人 GET、最高 current 修订与字段白名单；手机端独立第八入口及博主→作品→详情三级页面，显式返回 transfer/processing status，不从传输状态推断 ASR、不提供自动付费动作；代码已随 0.16.0 正式部署，未配置真实 HMAC 或资料库时保持“未连接”且不创建业务数据 |

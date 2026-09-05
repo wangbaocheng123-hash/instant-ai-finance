@@ -1,5 +1,8 @@
-const SHELL_CACHE = 'instant-ai-shell-v0.19.2';
-const SHELL_ASSETS = ['/', '/app.js', '/styles.css', '/manifest.webmanifest', '/app-icon.svg'];
+const SHELL_CACHE = 'instant-ai-shell-v0.19.2-brand-v1';
+const SHELL_ASSETS = [
+  '/', '/app.js', '/styles.css', '/manifest.webmanifest',
+  '/app-icon-192.png', '/app-icon-512.png', '/apple-touch-icon.png',
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL_ASSETS)));

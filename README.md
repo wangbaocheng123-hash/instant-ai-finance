@@ -28,7 +28,7 @@
 - 应急备用地址：<https://instant-ai.47-236-175-118.sslip.io/>
 - 统一代码仓库：<https://github.com/wangbaocheng123-hash/instant-ai-finance>
 - 本入口没有注册或多用户功能，只使用一个主人账户。首次登录后，本设备 30 天内无需重复登录；主动退出、清理网站数据、修改密码或会话到期后需要重新登录。
-- iPhone 把 Chrome 设为默认浏览器后，用 Chrome 打开正式在线地址，再点“分享”→“添加到主屏幕”。若出现“作为网页 App 打开 / Open as Web App”，请关闭该选项；这样从主屏幕进入后仍保留 Chrome 页面翻译。0.9.0 及更早建立的旧图标需要先删除再重新添加一次。`www.grandpaamu.com` 会自动跳转到正式根域名。
+- iPhone 把 Chrome 设为默认浏览器后，用 Chrome 打开正式在线地址，再点“分享”→“添加到主屏幕”。若出现“作为网页 App 打开 / Open as Web App”，请关闭该选项；这样从主屏幕进入后仍保留 Chrome 页面翻译。iOS 不保证自动替换已经保存到主屏幕的图标；新标识正式发布后，应删除旧的“即时 AI”主屏入口并重新添加一次。`www.grandpaamu.com` 会自动跳转到正式根域名。
 - 点击“浏览器翻译原文”后，iPhone 直接切换到 Chrome；在 Chrome 对英文页面选择“翻译”，并可开启“始终翻译英语”。页面同时保留“普通浏览器备用打开”；来源登录、付费墙和地区限制仍由原站决定。
 - 云端每 5 分钟自动采集；已打开的页面每 60 秒自动刷新，重新打开、回到前台或恢复网络时立即刷新。API 明确禁止缓存，主屏幕版本不会把旧接口数据离线缓存起来。
 
@@ -41,7 +41,7 @@ cd client\instant-ai
 npm ci
 npm run build
 cd ..\..
-@('app.js','styles.css','index.html','manifest.webmanifest','sw.js','app-icon.svg') | ForEach-Object {
+@('app.js','styles.css','index.html','manifest.webmanifest','sw.js','app-icon-192.png','app-icon-512.png','apple-touch-icon.png') | ForEach-Object {
   Copy-Item (Join-Path 'client\instant-ai\dist' $_) (Join-Path 'product\instant_ai\static' $_) -Force
 }
 Push-Location product

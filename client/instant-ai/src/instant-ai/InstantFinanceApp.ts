@@ -96,15 +96,15 @@ export class InstantFinanceApp {
     this.root.innerHTML = `
       <div class="terminal-shell">
         <header class="terminal-header">
-          <div class="brand-block"><span class="brand-mark">即</span><div><strong>即时 AI</strong><small>全球财经情报终端</small></div></div>
+          <div class="brand-block"><img class="brand-mark" src="/app-icon-192.png" width="38" height="38" alt="" aria-hidden="true" /><div><strong>即时 AI</strong><small>全球财经情报终端</small></div></div>
           <div class="header-status"><span class="status-dot"></span><b id="healthText">连接资讯数据核心</b><span id="lastUpdate">--:--</span></div>
           <div class="header-actions">
             <div class="header-tools" role="group" aria-label="客户端状态工具">
                <button type="button" class="translate-button" data-action="translate" title="把英文财经标题翻译成中文，并保留英文原题">汉化开启</button>
                <button type="button" data-action="sources" title="查看文字来源状态">来源</button>
-               ${this.authRequired ? '<button type="button" data-action="logout" title="退出主人账户">退出</button>' : ''}
+              ${this.authRequired ? '<button type="button" data-action="logout" title="退出主人账户">退出</button>' : ''}
               <div class="auto-collection" title="客户端启动后立即更新一轮，之后每 5 分钟自动采集全球财经文字来源">
-                <span></span><b id="collectionMode">自动实时采集</b><small id="collectionCadence" class="visually-hidden">每 5 分钟持续更新</small>
+                <span></span><b id="collectionMode" data-compact-label="实时采集">自动实时采集</b><small id="collectionCadence" class="visually-hidden">每 5 分钟持续更新</small>
               </div>
             </div>
           </div>
@@ -211,7 +211,7 @@ export class InstantFinanceApp {
     this.root.innerHTML = `
       <main class="login-shell">
         <section class="login-card" aria-labelledby="loginTitle">
-          <div class="login-brand"><span>即</span><div><b>即时 AI</b><small>全球财经情报终端</small></div></div>
+          <div class="login-brand"><img class="brand-mark" src="/app-icon-192.png" width="42" height="42" alt="" aria-hidden="true" /><div><b>即时 AI</b><small>全球财经情报终端</small></div></div>
           <div class="login-heading">
             <span>OWNER ACCESS</span>
             <h1 id="loginTitle">主人账户登录</h1>
@@ -373,7 +373,9 @@ export class InstantFinanceApp {
   private renderStatus(status: AppStatus): void {
     this.required('#healthText').textContent = status.collection.running ? '全球财经正在自动更新' : '自动实时采集运行中';
     this.required('#lastUpdate').textContent = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date());
-    this.required('#collectionMode').textContent = status.collection.running ? '正在采集' : '自动实时采集';
+    const collectionMode = this.required('#collectionMode');
+    collectionMode.textContent = status.collection.running ? '正在采集' : '自动实时采集';
+    collectionMode.dataset.compactLabel = status.collection.running ? '采集中' : '实时采集';
     const minutes = Math.max(1, Math.round((status.collection.interval_seconds || 300) / 60));
     const cadence = `每 ${minutes} 分钟持续更新`;
     this.required('#collectionCadence').textContent = cadence;

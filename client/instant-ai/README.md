@@ -7,4 +7,4 @@ npm ci
 npm run build
 ```
 
-构建输出在 `dist/`。正式发布时将 `app.js`、`styles.css`、`index.html`、`manifest.webmanifest`、`sw.js` 和 `app-icon.svg` 同步到 `product/instant_ai/static/`。不要在 `dist/` 或 `product/instant_ai/static/` 直接修改压缩后的代码。
+构建输出在 `dist/`。正式发布时将 `app.js`、`styles.css`、`index.html`、`manifest.webmanifest`、`sw.js`、`app-icon-192.png`、`app-icon-512.png` 和 `apple-touch-icon.png` 同步到 `product/instant_ai/static/`。不要在 `dist/` 或 `product/instant_ai/static/` 直接修改压缩后的代码。
