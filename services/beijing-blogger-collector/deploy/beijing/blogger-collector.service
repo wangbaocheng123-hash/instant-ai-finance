@@ -1,0 +1,37 @@
+[Unit]
+Description=Blogger Agent Beijing Collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bloggeragent
+Group=bloggeragent
+SupplementaryGroups=modeldownloader
+WorkingDirectory=/opt/blogger-agent/current
+EnvironmentFile=/var/lib/blogger-agent/config/collector.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=TZ=Asia/Shanghai
+ExecStart=/usr/bin/env BLOGGER_AGENT_ENV_FILE=/dev/null /opt/blogger-agent/current/.venv/bin/python -m mx_agent.collector_server --host 127.0.0.1 --port 18797
+Restart=always
+RestartSec=15
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadOnlyPaths=/opt/blogger-agent/current
+ReadWritePaths=/var/lib/blogger-agent
+MemoryHigh=1200M
+MemoryMax=1600M
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

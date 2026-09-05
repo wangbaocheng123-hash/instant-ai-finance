@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 027
+
+readonly PUBLIC_REPOSITORY="https://github.com/wangbaocheng123-hash/instant-ai-finance.git"
+readonly PRODUCTION_REF="refs/remotes/origin/beijing-production"
+readonly SUBTREE="services/beijing-blogger-collector"
+readonly BARE_REPOSITORY="/opt/blogger-agent/production-source.git"
+readonly RELEASES_DIR="/opt/blogger-agent/git-releases"
+readonly CURRENT_LINK="/opt/blogger-agent/current"
+readonly STATE_DIR="/var/lib/blogger-agent/git-deploy"
+readonly ACCEPTED_FILE="${STATE_DIR}/accepted-revision"
+readonly DEPLOYED_FILE="${STATE_DIR}/deployed-revision"
+readonly TREE_FILE="${STATE_DIR}/deployed-tree"
+readonly FAILED_FILE="${STATE_DIR}/failed-revision"
+readonly LOCK_FILE="/run/lock/blogger-collector-git-deploy.lock"
+readonly SERVICE_NAME="blogger-collector.service"
+readonly GIT_USER="bloggergit"
+readonly BUILD_USER="bloggerbuild"
+readonly HEALTH_URL="http://127.0.0.1:18797/health"
+readonly VERSION_URL="http://127.0.0.1:18797/health/version"
+readonly STATUS_URL="http://127.0.0.1:18797/api/collector/status"
+readonly PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/"
+
+target_commit=""
+stage_dir=""
+archive_dir=""
+mark_target_failed=false
+
+log() {
+  printf 'blogger-collector-git-deploy: %s\n' "$*"
+}
+
+fail() {
+  log "ERROR $*" >&2
+  exit 1
+}
+
+validate_revision() {
+  [[ "$1" =~ ^[0-9a-f]{40}$ ]] || fail "invalid Git revision"
+}
+
+cleanup() {
+  local path
+  for path in "${stage_dir}" "${archive_dir}"; do
+    [[ -n "${path}" && -d "${path}" ]] || continue
+    case "${path}" in
+      "${RELEASES_DIR}"/.*.tmp.*) rm -rf -- "${path}" ;;
+      *) log "refusing to remove an unexpected temporary path" >&2 ;;
+    esac
+  done
+}
+
+on_exit() {
+  local status=$?
+  if [[ ${status} -ne 0 && "${mark_target_failed}" == true && -n "${target_commit}" ]]; then
+    printf '%s\n' "${target_commit}" >"${FAILED_FILE}"
+    chmod 0644 "${FAILED_FILE}"
+    log "recorded failed revision=${target_commit}"
+  fi
+  cleanup
+  exit "${status}"
+}
+trap on_exit EXIT
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "required command is missing: $1"
+}
+
+read_revision_file() {
+  local path="$1"
+  local value=""
+  if [[ -f "${path}" ]]; then
+    value="$(<"${path}")"
+    validate_revision "${value}"
+  fi
+  printf '%s' "${value}"
+}
+
+git_read() {
+  runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" "$@"
+}
+
+service_is_healthy() {
+  systemctl is-active --quiet "${SERVICE_NAME}" &&
+    curl --fail --silent --show-error --max-time 4 "${HEALTH_URL}" >/dev/null &&
+    curl --fail --silent --show-error --max-time 4 "${STATUS_URL}" >/dev/null
+}
+
+wait_for_revision() {
+  local expected="$1"
+  local attempt payload actual
+  for attempt in $(seq 1 20); do
+    if service_is_healthy; then
+      payload="$(curl --fail --silent --show-error --max-time 4 "${VERSION_URL}" || true)"
+      actual="$(printf '%s' "${payload}" | python3 -c 'import json,sys; value=json.load(sys.stdin); print(value.get("repository_revision", ""))' 2>/dev/null || true)"
+      if [[ "${actual}" == "${expected}" ]]; then
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+validate_release_path() {
+  local path="$1"
+  local revision
+  case "$(dirname -- "${path}")" in
+    "${RELEASES_DIR}"|/opt/blogger-agent/releases) ;;
+    *) fail "release path escaped managed directories" ;;
+  esac
+  revision="$(basename -- "${path}")"
+  validate_revision "${revision}"
+}
+
+switch_current() {
+  local release_path="$1"
+  local temporary_link="/opt/blogger-agent/.current.$$.tmp"
+  validate_release_path "${release_path}"
+  [[ -d "${release_path}" ]] || fail "release directory is missing"
+  rm -f -- "${temporary_link}"
+  ln -s "${release_path}" "${temporary_link}"
+  mv -Tf -- "${temporary_link}" "${CURRENT_LINK}"
+}
+
+validate_tree() {
+  local listing="$1"
+  local entry metadata path mode object_type relative lower count=0
+  while IFS= read -r -d '' entry; do
+    metadata="${entry%%$'\t'*}"
+    path="${entry#*$'\t'}"
+    mode="${metadata%% *}"
+    metadata="${metadata#* }"
+    object_type="${metadata%% *}"
+    [[ "${object_type}" == "blob" ]] || fail "non-file Git object rejected"
+    [[ "${mode}" == "100644" || "${mode}" == "100755" ]] || fail "symlink or special file rejected"
+    [[ "${path}" == "${SUBTREE}/"* ]] || fail "Git path escaped approved subtree"
+    relative="${path#"${SUBTREE}/"}"
+    [[ -n "${relative}" && "${relative}" =~ ^[A-Za-z0-9._/@+-]+$ ]] || fail "unsafe Git path rejected"
+    [[ "${relative}" != /* && "${relative}" != *"../"* && "${relative}" != *"/.."* ]] || fail "traversal path rejected"
+    lower="${relative,,}"
+    case "/${lower}" in
+      */.env|*/.env.*|*/data/*|*/media/*|*/outbox/*|*/logs/*|*/log/*|*/cache/*|*/backups/*|*/backup/*|*/browser-profile/*|*.sqlite|*.sqlite3|*.db|*.pem|*.key)
+        fail "sensitive runtime path rejected"
+        ;;
+    esac
+    count=$((count + 1))
+  done <"${listing}"
+  (( count > 0 )) || fail "approved subtree is empty"
+}
+
+run_release_tests() {
+  local source_dir="$1"
+  local output_file="${source_dir}/.test-output"
+  local count
+  install -d -o "${BUILD_USER}" -g "${BUILD_USER}" -m 0750 \
+    "${source_dir}/.test-runtime/data" \
+    "${source_dir}/.test-runtime/config" \
+    "${source_dir}/.test-runtime/media" \
+    "${source_dir}/.test-runtime/outbox/artifacts"
+
+  if ! systemd-run --quiet --wait --collect --pipe --service-type=exec \
+      -p "User=${BUILD_USER}" -p "Group=${BUILD_USER}" \
+      -p "WorkingDirectory=${source_dir}" \
+      -p PrivateNetwork=yes -p PrivateTmp=yes -p ProtectHome=yes \
+      -p ProtectSystem=strict -p "ReadWritePaths=${source_dir}" \
+      /usr/bin/env \
+        PYTHONDONTWRITEBYTECODE=1 \
+        BLOGGER_AGENT_ROLE=collector \
+        BLOGGER_AGENT_ENV_FILE=/dev/null \
+        BLOGGER_AGENT_DATA_DIR="${source_dir}/.test-runtime/data" \
+        BLOGGER_AGENT_CONFIG_DIR="${source_dir}/.test-runtime/config" \
+        BLOGGER_AGENT_MEDIA_DIR="${source_dir}/.test-runtime/media" \
+        BLOGGER_AGENT_DATABASE_PATH="${source_dir}/.test-runtime/data/test.sqlite3" \
+        BLOGGER_AGENT_CREATORS_PATH="${source_dir}/config/creators.example.json" \
+        BLOGGER_AGENT_OUTBOX_PATH="${source_dir}/.test-runtime/outbox/transfer.sqlite3" \
+        BLOGGER_AGENT_OUTBOX_ARTIFACT_DIR="${source_dir}/.test-runtime/outbox/artifacts" \
+        MODEL_DOWNLOADER_BRIDGE_ENABLED=0 \
+        "${source_dir}/.venv/bin/python" -m unittest discover -s tests -p 'test_*.py' \
+      >"${output_file}" 2>&1; then
+    tail -n 25 "${output_file}" >&2 || true
+    fail "isolated test suite failed"
+  fi
+  count="$(sed -nE 's/^Ran ([0-9]+) tests?.*/\1/p' "${output_file}" | tail -n 1)"
+  [[ "${count}" =~ ^[0-9]+$ && "${count}" -ge 203 ]] || fail "test count is below the 203-test release floor"
+  log "isolated tests passed count=${count}"
+  rm -rf -- "${source_dir}/.test-runtime" "${output_file}" "${source_dir}/.pip-cache"
+}
+
+[[ "$(id -u)" -eq 0 ]] || fail "publisher must run as root"
+for required in basename chmod chown cp curl date dirname flock git id install ln mktemp mv python3 readlink rm runuser sed seq sleep stat systemctl systemd-run tail tar; do
+  require_command "${required}"
+done
+[[ "$(stat -c '%U:%G:%a' "$0")" == "root:root:755" ]] || fail "publisher ownership or mode is unsafe"
+id "${GIT_USER}" >/dev/null 2>&1 || fail "Git reader user is missing"
+id "${BUILD_USER}" >/dev/null 2>&1 || fail "build user is missing"
+[[ -d "${BARE_REPOSITORY}" ]] || fail "bare production source is missing"
+[[ ! -e "${CURRENT_LINK}" || -L "${CURRENT_LINK}" ]] || fail "current runtime is not a symbolic link"
+install -d -o root -g root -m 0755 "${RELEASES_DIR}"
+install -d -o root -g root -m 0755 "${STATE_DIR}"
+
+exec 9>"${LOCK_FILE}"
+if ! flock -n 9; then
+  log "another deployment is already running"
+  exit 0
+fi
+
+[[ "$(git_read remote get-url origin)" == "${PUBLIC_REPOSITORY}" ]] || fail "unexpected public Git origin"
+git_read fetch --no-tags --prune origin "+refs/heads/beijing-production:${PRODUCTION_REF}"
+target_commit="$(git_read rev-parse "${PRODUCTION_REF}^{commit}")"
+validate_revision "${target_commit}"
+
+failed_commit="$(read_revision_file "${FAILED_FILE}")"
+if [[ "${failed_commit}" == "${target_commit}" ]]; then
+  log "known failed revision skipped=${target_commit}"
+  exit 0
+fi
+
+accepted_commit="$(read_revision_file "${ACCEPTED_FILE}")"
+if [[ -n "${accepted_commit}" ]] && ! git_read merge-base --is-ancestor "${accepted_commit}" "${target_commit}"; then
+  fail "production branch is not a fast-forward"
+fi
+
+target_tree="$(git_read rev-parse "${target_commit}:${SUBTREE}")"
+validate_revision "${target_tree}"
+deployed_tree="$(read_revision_file "${TREE_FILE}")"
+if [[ -n "${accepted_commit}" && "${accepted_commit}" == "${target_commit}" && "${target_tree}" == "${deployed_tree}" ]]; then
+  service_is_healthy || fail "current service is unhealthy"
+  log "already accepted revision=${target_commit} tree=${target_tree}"
+  exit 0
+fi
+if [[ -n "${deployed_tree}" && "${target_tree}" == "${deployed_tree}" ]]; then
+  printf '%s\n' "${target_commit}" >"${ACCEPTED_FILE}"
+  chmod 0644 "${ACCEPTED_FILE}"
+  log "branch advanced with unchanged collector tree revision=${target_commit}"
+  exit 0
+fi
+
+mark_target_failed=true
+listing="$(mktemp "${STATE_DIR}/tree.XXXXXX")"
+git_read ls-tree -r -z "${target_commit}" -- "${SUBTREE}" >"${listing}"
+validate_tree "${listing}"
+rm -f -- "${listing}"
+for required_path in VERSION requirements-collector.txt mx_agent/collector_server.py collector_web/index.html collector_web/manifest.webmanifest; do
+  git_read cat-file -e "${target_commit}:${SUBTREE}/${required_path}" || fail "required release file is missing"
+done
+
+previous_release=""
+previous_revision=""
+if [[ -L "${CURRENT_LINK}" ]]; then
+  previous_release="$(readlink -f "${CURRENT_LINK}")"
+  validate_release_path "${previous_release}"
+  previous_revision="$(basename -- "${previous_release}")"
+fi
+release_dir="${RELEASES_DIR}/${target_commit}"
+validate_release_path "${release_dir}"
+
+if [[ ! -e "${release_dir}" ]]; then
+  archive_dir="$(mktemp -d "${RELEASES_DIR}/.${target_commit}.tmp.archive.XXXXXX")"
+  stage_dir="$(mktemp -d "${RELEASES_DIR}/.${target_commit}.tmp.release.XXXXXX")"
+  git_read archive "${target_commit}" "${SUBTREE}" | tar --extract --directory "${archive_dir}" --no-same-owner --no-same-permissions
+  cp -a "${archive_dir}/${SUBTREE}/." "${stage_dir}/"
+  rm -rf -- "${archive_dir}"
+  archive_dir=""
+  chown -R "${BUILD_USER}:${BUILD_USER}" "${stage_dir}"
+  deployed_time="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+  printf '{"repository_revision":"%s","deployed_time":"%s"}\n' "${target_commit}" "${deployed_time}" >"${stage_dir}/DEPLOYMENT.json"
+  chown "${BUILD_USER}:${BUILD_USER}" "${stage_dir}/DEPLOYMENT.json"
+
+  runuser -u "${BUILD_USER}" -- python3 -m venv "${stage_dir}/.venv"
+  runuser -u "${BUILD_USER}" -- env \
+    PIP_CACHE_DIR="${stage_dir}/.pip-cache" \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_INDEX_URL="${PIP_INDEX_URL}" \
+    "${stage_dir}/.venv/bin/python" -m pip install --no-input --requirement "${stage_dir}/requirements-collector.txt"
+  run_release_tests "${stage_dir}"
+
+  printf '%s\n' "${target_commit}" >"${stage_dir}/.blogger-collector-release"
+  chown -R root:root "${stage_dir}"
+  chmod -R u=rwX,go=rX "${stage_dir}"
+  mv -- "${stage_dir}" "${release_dir}"
+  stage_dir=""
+else
+  [[ -f "${release_dir}/.blogger-collector-release" ]] || fail "existing release is incomplete"
+  [[ "$(<"${release_dir}/.blogger-collector-release")" == "${target_commit}" ]] || fail "release marker mismatch"
+fi
+
+switch_current "${release_dir}"
+systemctl restart "${SERVICE_NAME}"
+if wait_for_revision "${target_commit}"; then
+  printf '%s\n' "${target_commit}" >"${ACCEPTED_FILE}"
+  printf '%s\n' "${target_commit}" >"${DEPLOYED_FILE}"
+  printf '%s\n' "${target_tree}" >"${TREE_FILE}"
+  chmod 0644 "${ACCEPTED_FILE}" "${DEPLOYED_FILE}" "${TREE_FILE}"
+  rm -f -- "${FAILED_FILE}"
+  mark_target_failed=false
+  log "deployed revision=${target_commit} tree=${target_tree}"
+  exit 0
+fi
+
+log "new release failed health checks; rolling back" >&2
+if [[ -n "${previous_release}" && -d "${previous_release}" ]]; then
+  switch_current "${previous_release}"
+  systemctl restart "${SERVICE_NAME}"
+  service_is_healthy || fail "new release failed and previous release did not recover"
+  fail "revision ${target_commit} failed; restored ${previous_revision}"
+fi
+systemctl stop "${SERVICE_NAME}" || true
+fail "first Git release failed health checks"

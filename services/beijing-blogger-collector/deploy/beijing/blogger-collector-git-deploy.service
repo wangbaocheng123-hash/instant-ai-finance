@@ -1,0 +1,27 @@
+[Unit]
+Description=Deploy Beijing Blogger Collector from approved Git production branch
+After=network-online.target
+Wants=network-online.target
+ConditionPathIsDirectory=/opt/blogger-agent/production-source.git
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0027
+ExecStart=/usr/local/sbin/blogger-collector-git-deploy
+TimeoutStartSec=25min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/opt/blogger-agent /var/lib/blogger-agent/git-deploy /run/lock
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+

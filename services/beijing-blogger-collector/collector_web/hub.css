@@ -1,0 +1,50 @@
+:root {
+  color: #2f2925;
+  background: #f5f3f0;
+  font-family: "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(circle at 90% 0%, #f3c18e 0, transparent 34rem), #f5f3f0;
+}
+
+main { width: min(880px, 100%); }
+.eyebrow { color: #9a5722; font-size: 12px; font-weight: 800; letter-spacing: .13em; }
+h1 { margin: 8px 0; font-size: clamp(28px, 6vw, 46px); }
+.lead { margin: 0 0 24px; color: #756a62; line-height: 1.7; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+
+a {
+  display: grid;
+  gap: 10px;
+  min-height: 220px;
+  padding: 25px;
+  border: 1px solid #e0d7cf;
+  border-radius: 20px;
+  color: inherit;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 16px 44px rgba(66, 48, 35, .1);
+  text-decoration: none;
+  transition: transform .15s ease, border-color .15s ease;
+}
+
+a:hover { border-color: #e88421; transform: translateY(-2px); }
+.icon { display: grid; width: 52px; height: 52px; place-items: center; border-radius: 15px; color: #fff; background: #7b431f; font-size: 25px; }
+a:last-child .icon { background: #e88421; }
+h2 { margin: 5px 0 0; }
+p { margin: 0; color: #756a62; line-height: 1.65; }
+strong { align-self: end; color: #3978ef; }
+.note { margin-top: 16px; padding: 12px 14px; border-radius: 12px; color: #685c54; background: rgba(255, 255, 255, .68); font-size: 13px; }
+
+@media (max-width: 620px) {
+  body { padding: 16px; }
+  .grid { grid-template-columns: 1fr; }
+  a { min-height: 180px; padding: 20px; }
+}

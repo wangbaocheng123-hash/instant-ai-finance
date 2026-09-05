@@ -1,0 +1,7 @@
+openai
+openai-agents
+Pillow
+playwright
+python-dotenv
+requests
+websocket-client

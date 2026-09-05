@@ -1,0 +1,25 @@
+{
+  "app_name": "博主智能体",
+  "source_account_name": "新博主",
+  "monitor_interval_seconds": 30,
+  "analysis_version": "analysis-v1",
+  "prompt_version": "prompt-v1",
+  "deep_model": "gpt-5.5",
+  "fast_model": "gpt-5.4-mini",
+  "reasoning_effort": "medium",
+  "auto_analyze_new_videos": false,
+  "auto_doubao_transcribe_enabled": true,
+  "openai_api_enabled": false,
+  "doubao_api_enabled": false,
+  "source_mode": "manual-first",
+  "creator_profile_url": "",
+  "creator_sync_mode": "count",
+  "creator_sync_enabled": false,
+  "creator_sync_interval_minutes": 10,
+  "creator_sync_history_limit": 50,
+  "creator_comments_enabled": true,
+  "creator_comment_limit": 5000,
+  "creator_comment_refresh_minutes": 60,
+  "creator_comment_tracking_hours": 24
+}
+

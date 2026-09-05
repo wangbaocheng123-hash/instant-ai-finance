@@ -1,0 +1,26 @@
+{
+  "name": "北极采集器",
+  "short_name": "北极采集",
+  "description": "北京视频与博主采集中心",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f7fb",
+  "theme_color": "#0b1d3a",
+  "icons": [
+    {
+      "src": "/collector/north-pole-collector-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/collector/north-pole-collector-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

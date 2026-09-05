@@ -1,0 +1,78 @@
+# One HTTPS entry for the two independent Beijing services. The root is a
+# lightweight authenticated suite home; it links to the existing model
+# downloader and the full blogger collector without merging their runtimes or
+# data. The model-downloader login remains the only owner login.
+
+collector.amuyeye.com {
+    encode zstd gzip
+
+    @collector_without_slash path /collector
+    redir @collector_without_slash /collector/ 308
+
+    @legacy_hub path /hub /hub/
+    redir @legacy_hub / 308
+
+    # Keep the shared login/logout mechanics on this subdomain. After a
+    # successful login the browser returns to the unified suite home.
+    handle /login* {
+        reverse_proxy 127.0.0.1:8787
+    }
+
+    handle /logout* {
+        reverse_proxy 127.0.0.1:8787
+    }
+
+    # Public, non-sensitive deployment identity and install metadata. These
+    # exact paths are installed once with the channel migration; future Git
+    # application releases do not edit Caddy.
+    @collector_public_metadata path /health/version /manifest.webmanifest /apple-touch-icon.png /favicon-32.png /north-pole-collector-icon-192.png /north-pole-collector-icon-512.png /north-pole-collector-icon-1024.png
+    handle @collector_public_metadata {
+        reverse_proxy 127.0.0.1:18797
+    }
+
+    # The collector keeps its own path so its PWA, API, settings and manual
+    # collection actions stay isolated from the model downloader.
+    handle_path /collector/* {
+        forward_auth 127.0.0.1:8787 {
+            uri /
+        }
+        reverse_proxy 127.0.0.1:18797
+    }
+
+    # The suite card opens the existing model downloader at /model. Its page
+    # keeps using its established absolute routes, which fall through to the
+    # final model-downloader proxy below.
+    @model_entry path /model /model/
+    handle @model_entry {
+        forward_auth 127.0.0.1:8787 {
+            uri /
+        }
+        rewrite * /
+        reverse_proxy 127.0.0.1:8787
+    }
+
+    # The one address users need to remember. It serves the two-card suite home
+    # from the collector service without triggering either browser worker.
+    @suite_home path /
+    handle @suite_home {
+        forward_auth 127.0.0.1:8787 {
+            uri /
+        }
+        rewrite * /hub
+        reverse_proxy 127.0.0.1:18797
+    }
+
+    # Preserve every existing absolute model-downloader route and API.
+    handle {
+        reverse_proxy 127.0.0.1:8787
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+}

@@ -58,6 +58,7 @@
 - 密钥、Cookie、登录信息、数据库、原文数据、日志、缓存与构建产物不得进入仓库。
 - 模型先生以独立的单主人模块接入。允许按 ADR-0022 把 360p 有声视频、正式原文、白名单转写和评论正文作为 Git 外运行数据同步到云端，但全部接口必须经过主人登录，媒体不得进入 Git 或由 Web 服务器直接公开目录。不得上传 `.env`、原始数据库、API 密钥、粉丝资料、本地绝对路径、原始 JSON、Cookie、日志或管理接口；见 ADR-0021、ADR-0022。
 - 博主智能体的新加坡部分是即时 AI 内的单主人模块，代码、页面、API 和发布均进入现有 `instant-ai-finance` 仓库，不建立或连接第二个新加坡应用仓库；运行数据继续使用隔离的 `/var/lib/instant-ai/blogger-agent`，不得混入财经新闻库或模型先生资料域。北京模型下载器保持原样，另行并存部署博主采集服务；见 ADR-0024、ADR-0025、ADR-0026。
+- 北京采集器可公开源码固定在 `services/beijing-blogger-collector/`；`main` 只保存开发与测试检查点，普通推送不自动上线。`beijing-production` 是北京采集器唯一正式发布分支，只有用户明确说“正式发布北京采集器”后才允许运行 `deploy/beijing/publish-via-git.sh <完整提交SHA>` 安全快进。该 Git 通道只覆盖 `blogger-collector` 应用，不授权修改模型下载器、Caddy、域名、安全组、业务数据或凭据；root 发布器和 systemd 定时器的基础设施变更仍须通过电脑版 Alibaba Cloud Client 受控维护。见 ADR-0037。
 - 运行验证按 `docs/FOUNDATION_DIRECTIVE_R0.md` 的优先级执行；遇到大型依赖时先做静态分析并记录预计成本，等待批准。
 
 ## 每次任务的强制收尾

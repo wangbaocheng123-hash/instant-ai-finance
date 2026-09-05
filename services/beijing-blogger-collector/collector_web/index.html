@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#0b1d3a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="北极采集器">
+    <title>博主采集端</title>
+    <link rel="manifest" href="/collector/manifest.webmanifest">
+    <link rel="apple-touch-icon" sizes="180x180" href="/collector/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/collector/favicon-32.png">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">北京采集节点</p>
+        <h1>博主采集端</h1>
+        <p class="topbar-copy">选择一个博主，查看作品；需要时再手动抓取。</p>
+      </div>
+      <div class="topbar-actions">
+        <span class="mode-badge">仅手动采集</span>
+        <a id="suiteHomeLink" class="topbar-link" href="/" hidden>统一首页</a>
+        <a id="modelDownloaderLink" class="topbar-link" href="/model" hidden>模型下载器</a>
+        <button id="refreshButton" class="topbar-button" type="button">刷新</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="summary-grid" aria-label="采集概况">
+        <article><span>服务</span><strong id="serviceState">读取中</strong></article>
+        <article><span>全部作品</span><strong id="worksCount">—</strong></article>
+        <article><span>全部评论</span><strong id="commentsCount">—</strong></article>
+        <article><span>待传输</span><strong id="pendingCount">—</strong></article>
+      </section>
+
+      <section class="creator-shell" aria-labelledby="libraryTitle">
+        <div class="creator-toolbar">
+          <div id="creatorTabs" class="creator-tabs" role="tablist" aria-label="博主列表"></div>
+          <button id="addCreatorButton" class="add-creator" type="button" aria-label="新增博主" title="新增博主">+</button>
+        </div>
+
+        <div class="creator-headline">
+          <div>
+            <p class="eyebrow">本地作品库</p>
+            <h2 id="libraryTitle">正在读取博主…</h2>
+            <p id="creatorDescription" class="quiet-copy">页面查看不会触发采集。</p>
+          </div>
+          <div class="headline-actions">
+            <button id="settingsButton" type="button">设置</button>
+            <button id="runButton" class="primary" type="button">抓取最近 1 条</button>
+          </div>
+        </div>
+        <div id="syncStatus" class="status-line" role="status">正在读取采集状态…</div>
+      </section>
+
+      <div class="workspace-grid">
+        <section class="panel works-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">可见、可查、可手动控制</p>
+              <h2>已采集内容</h2>
+            </div>
+            <span id="visibleWorksCount" class="quiet-chip">0 条</span>
+          </div>
+          <div id="worksList" class="works-list" aria-live="polite"></div>
+        </section>
+
+        <section class="panel transfer-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">北京 → 新加坡</p>
+              <h2>传输状态</h2>
+            </div>
+            <button id="retryButton" class="compact" type="button">重试待传任务</button>
+          </div>
+          <div id="transferSummary" class="transfer-summary"></div>
+          <div id="transferList" class="transfer-list"></div>
+        </section>
+      </div>
+    </main>
+
+    <dialog id="settingsDialog" class="form-dialog">
+      <form id="settingsForm" class="dialog-shell">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">当前博主独立配置</p>
+            <h2>采集设置</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-dialog="settingsDialog" aria-label="关闭">×</button>
+        </div>
+
+        <div class="form-grid">
+          <label>
+            <span>博主名称</span>
+            <input id="settingsName" name="name" maxlength="60" required>
+          </label>
+          <label class="wide-field">
+            <span>已保存的抖音主页</span>
+            <input id="settingsProfileUrl" name="profile_url" inputmode="url" required>
+            <small>可以粘贴完整主页链接或抖音分享文案。</small>
+          </label>
+        </div>
+
+        <section class="setting-card">
+          <div class="manual-mode-row">
+            <div>
+              <strong>按数量手动抓取</strong>
+              <p>不会后台监控，也不会定时自动运行。</p>
+            </div>
+            <span class="state-chip good">按数量</span>
+          </div>
+          <label>
+            <span>每次抓取最近多少条作品</span>
+            <input id="settingsHistoryLimit" name="history_limit" type="number" min="1" max="1000" required>
+          </label>
+        </section>
+
+        <section class="setting-card single-video-card">
+          <div>
+            <strong>指定一条视频</strong>
+            <p class="single-video-help">粘贴抖音视频链接或完整分享文案，自动识别后只抓取这一条。</p>
+          </div>
+          <label for="settingsVideoUrl">
+            <span>这位博主的视频链接</span>
+            <textarea id="settingsVideoUrl" rows="3" maxlength="4096" placeholder="例如：https://v.douyin.com/… 或包含链接的整段分享文案"></textarea>
+          </label>
+          <p id="singleVideoPreview" class="single-video-preview" role="status" aria-live="polite">请确认链接属于当前博主。识别链接不会启动采集。</p>
+          <button id="runSingleVideoButton" class="brown" type="button" disabled>只抓取这条视频</button>
+        </section>
+
+        <section class="setting-card">
+          <label class="check-row">
+            <input id="settingsCommentsEnabled" name="comments_enabled" type="checkbox">
+            <span>同时抓取作品评论、作者点赞和作者回复</span>
+          </label>
+          <div class="form-grid comment-options">
+            <label>
+              <span>每条作品最多抓取评论</span>
+              <input id="settingsCommentLimit" name="comment_limit" type="number" min="20" max="50000" required>
+            </label>
+            <label>
+              <span>新作品评论跟踪时间（小时）</span>
+              <input id="settingsTrackingHours" name="comment_tracking_hours" type="number" min="1" max="720" required>
+            </label>
+          </div>
+        </section>
+
+        <div class="settings-note">指定视频沿用下方评论设置。保存设置不会开始采集；抓取前会再次确认。</div>
+        <div class="dialog-actions split-actions">
+          <button id="forceCommentsButton" type="button">补抓当前可见评论</button>
+          <span class="action-spacer"></span>
+          <button type="button" data-close-dialog="settingsDialog">取消</button>
+          <button class="primary" type="submit">保存设置</button>
+          <button id="saveAndRunButton" class="brown" type="button">保存并抓取</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="addCreatorDialog" class="form-dialog">
+      <form id="addCreatorForm" class="dialog-shell compact-dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">新增一个独立作品库</p>
+            <h2>新增博主</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-dialog="addCreatorDialog" aria-label="关闭">×</button>
+        </div>
+        <label>
+          <span>博主名称</span>
+          <input id="newCreatorName" name="name" maxlength="60" placeholder="例如：贵族之路" required>
+        </label>
+        <label>
+          <span>抖音博主主页</span>
+          <textarea id="newCreatorProfileUrl" name="profile_url" rows="3" placeholder="粘贴主页链接或分享文案" required></textarea>
+        </label>
+        <p class="dialog-help">新增只保存博主资料，不会立即采集。</p>
+        <div class="dialog-actions">
+          <button type="button" data-close-dialog="addCreatorDialog">取消</button>
+          <button class="primary" type="submit">新增博主</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="workDialog">
+      <div class="dialog-shell">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">作品详情</p>
+            <h2 id="detailTitle">读取中</h2>
+          </div>
+          <button id="closeDialog" class="icon-button" type="button" aria-label="关闭">×</button>
+        </div>
+        <div id="detailBody"></div>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" hidden></div>
+    <script src="app.js" defer></script>
+  </body>
+</html>

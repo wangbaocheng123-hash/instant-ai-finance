@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "creators": [
+    {
+      "id": "primary",
+      "name": "示例博主",
+      "profile_url": "",
+      "creator_sync_mode": "count",
+      "creator_sync_enabled": false,
+      "creator_comments_enabled": true,
+      "creator_sync_interval_minutes": 10,
+      "creator_sync_history_limit": 50,
+      "creator_comment_limit": 5000,
+      "creator_comment_refresh_minutes": 60,
+      "creator_comment_tracking_hours": 24
+    }
+  ]
+}
