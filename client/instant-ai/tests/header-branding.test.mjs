@@ -38,7 +38,7 @@ test('PWA and iPhone metadata use the new raster artwork at exact sizes', async 
     { src: '/app-icon-192.png', sizes: '192x192', type: 'image/png' },
     { src: '/app-icon-512.png', sizes: '512x512', type: 'image/png' },
   ]);
-  assert.match(worker, /instant-ai-shell-v0\.19\.2-brand-v1/u);
+  assert.match(worker, /instant-ai-shell-v0\.20\.0/u);
   for (const asset of ['/app-icon-192.png', '/app-icon-512.png', '/apple-touch-icon.png']) {
     assert.match(worker, new RegExp(asset.replaceAll('.', '\\.')));
   }
