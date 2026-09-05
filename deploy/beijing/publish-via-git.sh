@@ -34,7 +34,7 @@ fi
 
 git push origin "${target}:refs/heads/beijing-production"
 
-for attempt in $(seq 1 30); do
+for attempt in $(seq 1 90); do
   payload="$(curl --fail --silent --show-error --max-time 10 "${VERSION_URL}" 2>/dev/null || true)"
   deployed="$(printf '%s' "${payload}" | python3 -c 'import json,sys; value=json.load(sys.stdin); required={"service","status","version","repository_revision","deployed_time"}; assert set(value)==required and value["status"]=="ok"; print(value["repository_revision"])' 2>/dev/null || true)"
   if [[ "${deployed}" == "${target}" ]]; then
@@ -46,4 +46,4 @@ for attempt in $(seq 1 30); do
   sleep 10
 done
 
-fail "生产分支已更新，但北京版本接口在 5 分钟内未确认目标提交 ${target}"
+fail "生产分支已更新，但北京版本接口在 15 分钟内未确认目标提交 ${target}"

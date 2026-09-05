@@ -14,6 +14,7 @@ readonly SERVICE_TARGET="/etc/systemd/system/blogger-collector-git-deploy.servic
 readonly TIMER_TARGET="/etc/systemd/system/blogger-collector-git-deploy.timer"
 readonly GIT_USER="bloggergit"
 readonly BUILD_USER="bloggerbuild"
+replace_managed_files=false
 
 log() {
   printf 'install-blogger-collector-git-channel: %s\n' "$*"
@@ -28,8 +29,24 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "required command is missing: $1"
 }
 
+install_managed_file() {
+  local source="$1"
+  local destination="$2"
+  local mode="$3"
+  if [[ -e "${destination}" ]] && ! cmp --silent "${source}" "${destination}"; then
+    [[ "${replace_managed_files}" == true ]] || fail "managed infrastructure differs; review it and use --replace-managed-files"
+  fi
+  install -o root -g root -m "${mode}" "${source}" "${destination}"
+}
+
+case "${1:-}" in
+  "") ;;
+  --replace-managed-files) replace_managed_files=true ;;
+  *) fail "unknown option; expected --replace-managed-files" ;;
+esac
+
 [[ "$(id -u)" -eq 0 ]] || fail "installer must run as root"
-for required in awk git id install mktemp rm runuser sha256sum stat systemctl useradd; do
+for required in awk cmp git id install mktemp rm runuser sha256sum stat systemctl useradd; do
   require_command "${required}"
 done
 for source in "${PUBLISHER_SOURCE}" "${SERVICE_SOURCE}" "${TIMER_SOURCE}"; do
@@ -45,6 +62,7 @@ if ! id "${BUILD_USER}" >/dev/null 2>&1; then
 fi
 
 install -d -o root -g root -m 0755 /opt/blogger-agent /var/lib/blogger-agent/git-deploy
+install -d -o "${BUILD_USER}" -g "${BUILD_USER}" -m 0750 /var/cache/blogger-agent-pip
 if [[ ! -d "${BARE_REPOSITORY}" ]]; then
   install -d -o "${GIT_USER}" -g "${GIT_USER}" -m 0750 "${BARE_REPOSITORY}"
   runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" init --bare --quiet
@@ -66,9 +84,9 @@ install -o root -g root -m 0755 "${PUBLISHER_SOURCE}" "${staging}/blogger-collec
 install -o root -g root -m 0644 "${SERVICE_SOURCE}" "${staging}/blogger-collector-git-deploy.service"
 install -o root -g root -m 0644 "${TIMER_SOURCE}" "${staging}/blogger-collector-git-deploy.timer"
 
-install -o root -g root -m 0755 "${staging}/blogger-collector-git-deploy" "${PUBLISHER_TARGET}"
-install -o root -g root -m 0644 "${staging}/blogger-collector-git-deploy.service" "${SERVICE_TARGET}"
-install -o root -g root -m 0644 "${staging}/blogger-collector-git-deploy.timer" "${TIMER_TARGET}"
+install_managed_file "${staging}/blogger-collector-git-deploy" "${PUBLISHER_TARGET}" 0755
+install_managed_file "${staging}/blogger-collector-git-deploy.service" "${SERVICE_TARGET}" 0644
+install_managed_file "${staging}/blogger-collector-git-deploy.timer" "${TIMER_TARGET}" 0644
 
 [[ "$(stat -c '%U:%G:%a' "${PUBLISHER_TARGET}")" == "root:root:755" ]] || fail "publisher mode check failed"
 printf 'publisher_sha256=%s\n' "$(sha256sum "${PUBLISHER_TARGET}" | awk '{print $1}')" \

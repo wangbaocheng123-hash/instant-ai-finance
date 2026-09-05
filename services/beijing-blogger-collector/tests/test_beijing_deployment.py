@@ -56,6 +56,7 @@ class BeijingDeploymentContractTests(unittest.TestCase):
         self.assertIn("-p 'test_*.py'", script)
         self.assertIn('"${count}" -ge 203', script)
         self.assertIn("MODEL_DOWNLOADER_BRIDGE_ENABLED=0", script)
+        self.assertNotIn('BLOGGER_AGENT_MEDIA_DIR="${source_dir}', script)
 
     def test_timer_checks_code_at_the_approved_interval(self) -> None:
         timer = self.read("blogger-collector-git-deploy.timer")
@@ -70,6 +71,8 @@ class BeijingDeploymentContractTests(unittest.TestCase):
         self.assertIn("bloggergit", installer)
         self.assertIn("bloggerbuild", installer)
         self.assertIn("enable --now blogger-collector-git-deploy.timer", installer)
+        self.assertIn("--replace-managed-files", installer)
+        self.assertIn("/var/cache/blogger-agent-pip", installer)
         self.assertNotIn("collector.env", installer)
         self.assertNotIn("model-downloader", installer)
         self.assertNotIn("caddy", installer.lower())

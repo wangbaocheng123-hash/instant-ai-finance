@@ -22,6 +22,5 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
-ReadWritePaths=/opt/blogger-agent /var/lib/blogger-agent/git-deploy /run/lock
+ReadWritePaths=/opt/blogger-agent /var/lib/blogger-agent/git-deploy /var/cache/blogger-agent-pip /run/lock
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-

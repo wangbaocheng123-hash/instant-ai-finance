@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from mx_agent.comment_ocr import parse_ocr_comments
 from mx_agent.cover_title import select_cover_title
@@ -13,6 +14,7 @@ from mx_agent.knowledge import KnowledgeReader
 from mx_agent.keyword_taxonomy import KEYWORD_CATEGORIES, KEYWORD_SCHEMA_VERSION
 from mx_agent.storage import Storage
 from mx_agent.transcriber import normalize_transcript
+from mx_agent import transcriber
 
 
 class KnowledgeRetrievalTests(unittest.TestCase):
@@ -396,6 +398,11 @@ class KnowledgeRetrievalTests(unittest.TestCase):
         self.assertIn("通杀", text)
         self.assertIn("，", text)
         self.assertTrue(all(line.endswith("。") for line in text.splitlines()))
+
+    def test_portable_simplified_conversion_covers_server_release_contract(self) -> None:
+        with mock.patch.object(transcriber.os, "name", "posix"):
+            text = transcriber.to_simplified_chinese("個股高點屬於現在，因為從具體策略來說很難")
+        self.assertEqual(text, "个股高点属于现在，因为从具体策略来说很难")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ readonly HEALTH_URL="http://127.0.0.1:18797/health"
 readonly VERSION_URL="http://127.0.0.1:18797/health/version"
 readonly STATUS_URL="http://127.0.0.1:18797/api/collector/status"
 readonly PIP_INDEX_URL="https://mirrors.aliyun.com/pypi/simple/"
+readonly PIP_CACHE_DIR="/var/cache/blogger-agent-pip"
 
 target_commit=""
 stage_dir=""
@@ -172,7 +173,6 @@ run_release_tests() {
         BLOGGER_AGENT_ENV_FILE=/dev/null \
         BLOGGER_AGENT_DATA_DIR="${source_dir}/.test-runtime/data" \
         BLOGGER_AGENT_CONFIG_DIR="${source_dir}/.test-runtime/config" \
-        BLOGGER_AGENT_MEDIA_DIR="${source_dir}/.test-runtime/media" \
         BLOGGER_AGENT_DATABASE_PATH="${source_dir}/.test-runtime/data/test.sqlite3" \
         BLOGGER_AGENT_CREATORS_PATH="${source_dir}/config/creators.example.json" \
         BLOGGER_AGENT_OUTBOX_PATH="${source_dir}/.test-runtime/outbox/transfer.sqlite3" \
@@ -186,7 +186,7 @@ run_release_tests() {
   count="$(sed -nE 's/^Ran ([0-9]+) tests?.*/\1/p' "${output_file}" | tail -n 1)"
   [[ "${count}" =~ ^[0-9]+$ && "${count}" -ge 203 ]] || fail "test count is below the 203-test release floor"
   log "isolated tests passed count=${count}"
-  rm -rf -- "${source_dir}/.test-runtime" "${output_file}" "${source_dir}/.pip-cache"
+  rm -rf -- "${source_dir}/.test-runtime" "${output_file}"
 }
 
 [[ "$(id -u)" -eq 0 ]] || fail "publisher must run as root"
@@ -271,7 +271,7 @@ if [[ ! -e "${release_dir}" ]]; then
 
   runuser -u "${BUILD_USER}" -- python3 -m venv "${stage_dir}/.venv"
   runuser -u "${BUILD_USER}" -- env \
-    PIP_CACHE_DIR="${stage_dir}/.pip-cache" \
+    PIP_CACHE_DIR="${PIP_CACHE_DIR}" \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_INDEX_URL="${PIP_INDEX_URL}" \
     "${stage_dir}/.venv/bin/python" -m pip install --no-input --requirement "${stage_dir}/requirements-collector.txt"

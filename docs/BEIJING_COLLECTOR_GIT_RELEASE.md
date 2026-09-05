@@ -11,7 +11,7 @@
 1. 在干净的 `main` 上同步 `origin/main`，修改 `services/beijing-blogger-collector/` 并运行完整测试和敏感文件检查。
 2. 提交并推送 `main`。
 3. 只有用户明确说“正式发布北京采集器”后，运行 `deploy/beijing/publish-via-git.sh <40位提交SHA>`。
-4. 脚本只做安全快进并等待公网 `/health/version` 确认精确提交；没有确认时必须报告失败。
+4. 脚本只做安全快进并等待公网 `/health/version` 确认精确提交；首次构建可能需要下载运行依赖，确认窗口为 15 分钟，没有确认时必须报告失败。
 5. 用 `deploy/beijing/check-publish-channel.sh` 做只读复查。
 
 回滚通过在 `main` 新建 revert 提交、完成测试并继续安全快进到 `beijing-production`。禁止强推、回退分支或改写历史。

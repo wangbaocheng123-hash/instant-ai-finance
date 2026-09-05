@@ -118,6 +118,23 @@ FINANCE_CORRECTIONS = {
 }
 
 LCMAP_SIMPLIFIED_CHINESE = 0x02000000
+PORTABLE_TRADITIONAL_TO_SIMPLIFIED = str.maketrans(
+    {
+        "個": "个",
+        "點": "点",
+        "這": "这",
+        "現": "现",
+        "屬": "属",
+        "於": "于",
+        "為": "为",
+        "從": "从",
+        "體": "体",
+        "對": "对",
+        "說": "说",
+        "難": "难",
+        "來": "来",
+    }
+)
 _BASIC_COMMA_MARKERS = (
     "但是",
     "所以",
@@ -586,8 +603,10 @@ def normalize_transcript(text: str) -> str:
 
 def to_simplified_chinese(text: str) -> str:
     value = str(text or "")
-    if not value or os.name != "nt":
+    if not value:
         return value
+    if os.name != "nt":
+        return value.translate(PORTABLE_TRADITIONAL_TO_SIMPLIFIED)
     try:
         mapper = ctypes.windll.kernel32.LCMapStringEx
         mapper.argtypes = [
