@@ -6,6 +6,8 @@ import json
 import os
 import re
 import sqlite3
+import threading
+import time
 import uuid
 from contextlib import closing, contextmanager
 from datetime import datetime, timezone
@@ -15,6 +17,7 @@ from urllib.parse import urlsplit
 
 from .blogger_ingest import DEFAULT_BLOGGER_AGENT_ROOT, STORE_SCHEMA_VERSION, opaque_work_key
 from . import doubao_asr
+from .model_mr_metadata import KEYWORD_CATEGORIES, clean_keyword_info, clean_words, keyword_revision
 
 
 MODULE_NAME = "blogger-library"
@@ -24,7 +27,6 @@ MAX_PUBLIC_COMMENTS = 10_000
 MAX_VIDEO_TEXT_LENGTH = 200_000
 MCP_RECORD_PREFIX = "cloud-video:"
 MODEL_MR_TRANSFER_CREATOR_ID = "732ceafb-2bb3-5042-b303-967bdcf4312d"
-
 _REQUIRED_TABLES = {"schema_meta", "transfers", "artifacts", "processing_queue"}
 _PROCESSING_STATUSES = {
     "awaiting_transfer",
@@ -168,6 +170,7 @@ class BloggerLibrary:
         self.root = Path(root)
         self.database_path = self.root / "database" / "blogger_ingest.db"
         self.owner_database_path = self.root / "database" / "blogger_owner.db"
+        self._owner_lock = threading.RLock()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -275,6 +278,10 @@ class BloggerLibrary:
         transcript_text = _text(owner.get("transcript_text"))
         transcript_source = _text(owner.get("transcript_engine"))
         video_text = _text(owner.get("video_text"))
+        video_text_source = _text(owner.get("video_text_source"))
+        keyword_info = self._owner_keyword_info(owner)
+        interpretation_text = _text(owner.get("interpretation_text"))
+        stock_mentions = self._owner_stock_mentions(owner, comments)
         media = self.video_path(work_key)
         detail["media_available"] = media is not None
         detail["video_url"] = f"/api/blogger-library/works/{work_key}/video" if media else ""
@@ -292,10 +299,15 @@ class BloggerLibrary:
             {
                 "video_text": {
                     "text": video_text,
-                    "official": bool(video_text),
-                    "source": "主人保存" if video_text else "",
+                    "official": bool(video_text) and video_text_source != "doubao-auto-unreviewed",
+                    "source": video_text_source or ("主人保存" if video_text else ""),
                     "updated_at": _text(owner.get("updated_at")),
                 },
+                "interpretation": {
+                    "text": interpretation_text,
+                    "updated_at": _text(owner.get("interpretation_updated_at")) or _text(owner.get("updated_at")),
+                },
+                "stock_mentions": stock_mentions,
                 "transcripts": transcripts,
                 "comments": comments,
                 "comment_total": len(comments),
@@ -346,14 +358,17 @@ class BloggerLibrary:
             creator_aliases = _creator_aliases(creator)
             public = self._public_work(work)
             owner = self._owner_content(public["work_key"])
-            official = _text(owner.get("video_text")).strip()
+            saved_text = _text(owner.get("video_text")).strip()
+            saved_source = _text(owner.get("video_text_source")).strip()
+            official = saved_text if saved_source != "doubao-auto-unreviewed" else ""
+            automatic = saved_text if saved_source == "doubao-auto-unreviewed" else ""
             transcript = _text(owner.get("transcript_text")).strip()
             searchable = _search_text(" ".join((
                 creator,
                 public["title"],
                 public["description"],
                 public["source_work_id"],
-                official,
+                saved_text,
                 transcript,
             )))
             creator_match = any(alias in normalized_question for alias in creator_aliases)
@@ -366,7 +381,7 @@ class BloggerLibrary:
                 name in normalized_question for name in creator_names
             ) and not creator_match:
                 continue
-            text_value = official or transcript
+            text_value = official or automatic or transcript
             matched_in: list[str] = []
             if creator_match:
                 matched_in.append("creator")
@@ -388,7 +403,11 @@ class BloggerLibrary:
                 "source_work_id": public["source_work_id"],
                 "source_url": public["source_url"],
                 "processing_status": public["processing_status"],
-                "original_status": "official" if official else ("transcript_unconfirmed" if transcript else "missing"),
+                "original_status": (
+                    "official" if official else
+                    "video_text_unconfirmed" if automatic else
+                    "transcript_unconfirmed" if transcript else "missing"
+                ),
                 "original_excerpt": text_value[:360],
                 "matched_in": matched_in or (["recency"] if latest_requested else []),
                 "relevance_score": score,
@@ -430,9 +449,12 @@ class BloggerLibrary:
         work = works[0]
         public = self._public_work(work)
         owner = self._owner_content(work_key)
-        official = _text(owner.get("video_text")).strip()
+        saved_text = _text(owner.get("video_text")).strip()
+        saved_source = _text(owner.get("video_text_source")).strip()
+        official = saved_text if saved_source != "doubao-auto-unreviewed" else ""
+        automatic = saved_text if saved_source == "doubao-auto-unreviewed" else ""
         transcript = _text(owner.get("transcript_text")).strip()
-        text_value = official or transcript
+        text_value = official or automatic or transcript
         return {
             "found": True,
             "record_id": f"{MCP_RECORD_PREFIX}{work_key}",
@@ -449,12 +471,17 @@ class BloggerLibrary:
             "video_original": {
                 "text": text_value,
                 "verified": bool(official),
-                "status": "official" if official else ("transcript_unconfirmed" if transcript else "missing"),
-                "source": "owner_saved" if official else (_text(owner.get("transcript_engine")) or ""),
+                "status": (
+                    "official" if official else
+                    "video_text_unconfirmed" if automatic else
+                    "transcript_unconfirmed" if transcript else "missing"
+                ),
+                "source": saved_source or ("owner_saved" if official else (_text(owner.get("transcript_engine")) or "")),
                 "updated_at": _text(owner.get("updated_at")) or _text(owner.get("transcript_created_at")),
             },
             "evidence_note": (
                 "这是主人已保存的正式视频原文。" if official else
+                "这是自动识别后保存、尚未人工确认的视频文字，引用前需要核对。" if automatic else
                 "这是尚未确认为正式原文的识别文字，引用前需要核对。" if transcript else
                 "这条作品尚无可读取的视频文字。"
             ),
@@ -485,8 +512,168 @@ class BloggerLibrary:
         value = str(text or "").strip()
         if len(value) > MAX_VIDEO_TEXT_LENGTH:
             raise ValueError("视频原文超过保存上限。")
-        self._save_owner_content(work_key, video_text=value)
+        self._save_owner_content(
+            work_key,
+            video_text=value,
+            video_text_source="owner-mobile-edit" if value else "",
+        )
         return {"ok": True, "text": value, "saved": True, "mode": MODULE_MODE}
+
+    def save_auto_video_text(self, work_key: str, text: str) -> str:
+        """Persist paid ASR output without presenting it as owner-confirmed text."""
+        value = str(text or "").strip()
+        if not value or len(value) > MAX_VIDEO_TEXT_LENGTH:
+            raise ValueError("自动识别视频原文无效。")
+        with self._owner_lock:
+            current = self._owner_content(work_key)
+            existing = _text(current.get("video_text")).strip()
+            if existing:
+                return existing
+            self._save_owner_content(
+                work_key,
+                video_text=value,
+                video_text_source="doubao-auto-unreviewed",
+            )
+        return value
+
+    def save_interpretation(self, work_key: str, text: str) -> dict[str, Any]:
+        if not self._valid_work_key(work_key) or self.work_detail(work_key) is None:
+            raise ValueError("博主作品不存在。")
+        value = str(text or "").strip()
+        if len(value) > MAX_VIDEO_TEXT_LENGTH:
+            raise ValueError("解读感悟超过保存上限。")
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        self._save_owner_content(
+            work_key,
+            interpretation_text=value,
+            interpretation_updated_at=now if value else "",
+        )
+        return {"ok": True, "text": value, "saved": True, "mode": MODULE_MODE}
+
+    def save_keywords(
+        self,
+        work_key: str,
+        categories: dict[str, Any],
+        keywords: list[Any],
+        expected_revision: str,
+        *,
+        ai_info: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if not self._valid_work_key(work_key) or self.work_detail(work_key) is None:
+            raise ValueError("博主作品不存在。")
+        if not isinstance(categories, dict) or not isinstance(keywords, list):
+            raise ValueError("关键词格式不正确。")
+        if any(not isinstance(words, list) or len(words) > 8 for words in categories.values()) or len(keywords) > 80:
+            raise ValueError("每类最多 8 个关键词，全部最多 80 个。")
+        if set(categories) - set(KEYWORD_CATEGORIES):
+            raise ValueError("关键词分类不支持。")
+        all_words = [word for values in categories.values() for word in values] + keywords
+        if any(not isinstance(word, str) or not clean_words([word]) for word in all_words) or len(set(all_words)) > 80:
+            raise ValueError("关键词须为不含路径的短文字，合计最多 80 个。")
+        with self._owner_lock:
+            owner = self._owner_content(work_key)
+            current = self._owner_keyword_info(owner)
+            if expected_revision != keyword_revision(current):
+                raise ValueError("关键词已被更新，请返回作品列表并重新打开后再编辑。")
+            if ai_info is not None:
+                from .model_mr_keywords import source_hash
+                if ai_info.get("source_hash") != source_hash(_text(owner.get("video_text"))):
+                    raise ValueError("视频原文已变化，提炼结果未覆盖现有资料。")
+            info = clean_keyword_info(
+                {
+                    "categories": categories,
+                    "keywords": keywords,
+                    "model": "manual",
+                    "schema_version": "owner-keywords/v1",
+                    "confirmed_at": str(int(time.time())),
+                    "edited_by_owner": True,
+                }
+            )
+            if ai_info is not None:
+                info = clean_keyword_info(
+                    {
+                        **ai_info,
+                        "categories": categories,
+                        "keywords": keywords,
+                        "confirmed_at": str(int(time.time())),
+                        "edited_by_owner": False,
+                    }
+                )
+            self._save_owner_content(
+                work_key,
+                keyword_info_json=json.dumps(info, ensure_ascii=False, separators=(",", ":")),
+            )
+        return {
+            "ok": True,
+            "saved": True,
+            "keyword_info": info,
+            "keywords": info["keywords"],
+            "keyword_revision": keyword_revision(info),
+            "mode": MODULE_MODE,
+        }
+
+    def processing_detail(self, work_key: str) -> dict[str, Any]:
+        detail = self.work_detail(work_key)
+        if detail is None:
+            raise ValueError("博主作品不存在。")
+        return detail
+
+    def processing_arrival(self, transfer_id: str) -> dict[str, str] | None:
+        """Resolve a completed ordinary-blogger transfer for the paid-work queue.
+
+        This is deliberately a narrow read projection.  It never initializes the
+        ingest store and it ignores the reserved Model Mr transport identity.
+        """
+        value = str(transfer_id or "").strip()
+        if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+            return None
+        try:
+            with self._connect() as connection:
+                transfer = connection.execute(
+                    """
+                    SELECT creator_id, opaque_work_key, state, is_current, transport_status
+                    FROM transfers WHERE transfer_id=?
+                    """,
+                    (value,),
+                ).fetchone()
+                if (
+                    transfer is None
+                    or _text(transfer["creator_id"]) == MODEL_MR_TRANSFER_CREATOR_ID
+                    or _text(transfer["state"]) != "accepted"
+                    or not bool(transfer["is_current"])
+                    or _text(transfer["transport_status"]) != "transport_completed"
+                    or not self._valid_work_key(transfer["opaque_work_key"])
+                ):
+                    return None
+                media = connection.execute(
+                    """
+                    SELECT expected_sha256 FROM artifacts
+                    WHERE transfer_id=? AND artifact_kind='media' AND media_role='video'
+                          AND mime_type='video/mp4' AND state='verified'
+                    ORDER BY ordinal, artifact_id LIMIT 1
+                    """,
+                    (value,),
+                ).fetchone()
+        except BloggerLibraryUnavailable:
+            return None
+        if media is None:
+            return None
+        return {
+            "work_key": _text(transfer["opaque_work_key"]),
+            "media_hash": _text(media["expected_sha256"]),
+        }
+
+    def save_stock_mentions(self, work_key: str, report: Mapping[str, Any]) -> dict[str, Any]:
+        """Store a precomputed deterministic report; no model or market API is called."""
+        detail = self.work_detail(work_key)
+        if detail is None:
+            raise ValueError("博主作品不存在。")
+        cleaned = self._clean_stock_mentions(report, detail.get("comments", []))
+        self._save_owner_content(
+            work_key,
+            stock_mentions_json=json.dumps(cleaned, ensure_ascii=False, separators=(",", ":")),
+        )
+        return cleaned
 
     def transcribe(self, work_key: str, engine: str) -> dict[str, Any]:
         if not self._valid_work_key(work_key) or self.work_detail(work_key) is None:
@@ -505,10 +692,16 @@ class BloggerLibrary:
         media = self.video_path(work_key)
         if media is None:
             raise BloggerLibraryUnavailable("这条博主作品没有可识别的视频。")
+        from .model_mr_processing import PROVIDER_LOCK
+        if not PROVIDER_LOCK.acquire(blocking=False):
+            raise BloggerLibraryUnavailable("自动处理或其他识别正在进行，请稍后查看，未重复提交。")
         try:
-            result = doubao_asr.transcribe_video(media[0], int(work_key[:12], 16), scope="blogger")
-        except doubao_asr.DoubaoAsrUnavailable as error:
-            raise BloggerLibraryUnavailable(str(error)) from error
+            try:
+                result = doubao_asr.transcribe_video(media[0], int(work_key[:12], 16), scope="blogger")
+            except doubao_asr.DoubaoAsrUnavailable as error:
+                raise BloggerLibraryUnavailable(str(error)) from error
+        finally:
+            PROVIDER_LOCK.release()
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         self._save_owner_content(
             work_key,
@@ -755,6 +948,7 @@ class BloggerLibrary:
         processing_status = _text(value.get("processing_status"))
         if _text(owner.get("video_text")) and processing_status == "awaiting_asr_approval":
             processing_status = "ready"
+        keyword_info = self._owner_keyword_info(owner)
         return {
             "work_key": work_key,
             "creator_id": _text(value.get("creator_id")),
@@ -779,6 +973,10 @@ class BloggerLibrary:
             "media_available": media_available,
             "video_url": f"/api/blogger-library/works/{work_key}/video" if media_available else "",
             "has_video_text": bool(_text(owner.get("video_text"))),
+            "has_interpretation": bool(_text(owner.get("interpretation_text"))),
+            "keywords": keyword_info["keywords"],
+            "keyword_info": keyword_info,
+            "keyword_revision": keyword_revision(keyword_info),
             "comment_count": _integer(snapshot.get("captured_count")) if snapshot else 0,
         }
 
@@ -866,6 +1064,7 @@ class BloggerLibrary:
                         or source_id
                     )
                     is_creator = item.get("is_creator") is True
+                    reply_depth = 1 if _text(item.get("parent_source_comment_id")) else 0
                     comments.append(
                         {
                             "id": len(comments) + 1,
@@ -874,8 +1073,12 @@ class BloggerLibrary:
                             "like_count": _integer(item.get("like_count")),
                             "reply_count": _integer(item.get("reply_count")),
                             "published_at": _timestamp(item.get("published_at")) or "",
-                            "kind": "author_reply" if is_creator else (_text(item.get("kind")) or "comment"),
-                            "reply_depth": 1 if _text(item.get("parent_source_comment_id")) else 0,
+                            "kind": (
+                                "author_reply" if is_creator and reply_depth else
+                                "author_comment" if is_creator else
+                                (_text(item.get("kind")) or "comment")
+                            ),
+                            "reply_depth": reply_depth,
                             "thread_key": hashlib.sha256(thread_source.encode("utf-8")).hexdigest()[:16],
                             "author_liked": item.get("author_liked") is True,
                         }
@@ -904,11 +1107,97 @@ class BloggerLibrary:
             return {}
         return dict(row) if row is not None else {}
 
+    @staticmethod
+    def _owner_keyword_info(owner: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            raw = json.loads(_text(owner.get("keyword_info_json")) or "{}")
+        except json.JSONDecodeError:
+            raw = {}
+        return clean_keyword_info(raw)
+
+    def _owner_stock_mentions(
+        self,
+        owner: Mapping[str, Any],
+        comments: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        try:
+            raw = json.loads(_text(owner.get("stock_mentions_json")) or "{}")
+        except json.JSONDecodeError:
+            raw = {}
+        return self._clean_stock_mentions(raw if isinstance(raw, dict) else {}, comments)
+
+    @staticmethod
+    def _clean_stock_mentions(
+        value: Mapping[str, Any],
+        comments: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        valid_ids = {_integer(comment.get("id")) for comment in comments}
+        items: list[dict[str, Any]] = []
+        raw_items = value.get("items") if isinstance(value.get("items"), list) else []
+        for index, raw in enumerate(raw_items, start=1):
+            if not isinstance(raw, Mapping):
+                continue
+            name = _text(raw.get("name")).strip()[:80]
+            code = _text(raw.get("code")).strip()[:12]
+            if not name:
+                continue
+            comment_ids: list[int] = []
+            for candidate in raw.get("comment_ids", []) if isinstance(raw.get("comment_ids"), list) else []:
+                comment_id = _integer(candidate)
+                if comment_id in valid_ids and comment_id not in comment_ids:
+                    comment_ids.append(comment_id)
+            items.append(
+                {
+                    "rank": max(1, _integer(raw.get("rank")) or index),
+                    "name": name,
+                    "code": code,
+                    "comment_count": _integer(raw.get("comment_count")),
+                    "mention_count": _integer(raw.get("mention_count")),
+                    "fan_comment_count": _integer(raw.get("fan_comment_count")),
+                    "author_comment_count": _integer(raw.get("author_comment_count")),
+                    "examples": [
+                        _text(example).strip()[:180]
+                        for example in (raw.get("examples") if isinstance(raw.get("examples"), list) else [])[:3]
+                        if _text(example).strip()
+                    ],
+                    "comment_ids": comment_ids[:200],
+                }
+            )
+        items.sort(key=lambda item: (-item["comment_count"], -item["mention_count"], item["code"]))
+        uncertain: list[dict[str, Any]] = []
+        raw_uncertain = value.get("uncertain") if isinstance(value.get("uncertain"), list) else []
+        for raw in raw_uncertain[:20]:
+            if not isinstance(raw, Mapping):
+                continue
+            text = _text(raw.get("text")).strip()[:80]
+            if text:
+                uncertain.append(
+                    {
+                        "text": text,
+                        "comment_count": _integer(raw.get("comment_count")),
+                        "candidates": [
+                            _text(name).strip()[:80]
+                            for name in (raw.get("candidates") if isinstance(raw.get("candidates"), list) else [])[:8]
+                            if _text(name).strip()
+                        ],
+                    }
+                )
+        method = "local-security-master" if items or value.get("method") == "local-security-master" else ""
+        return {
+            "total_comments": min(len(comments), _integer(value.get("total_comments")) or len(comments)),
+            "stock_count": max(len(items), _integer(value.get("stock_count"))),
+            "items": items[:20],
+            "uncertain": uncertain,
+            "method": method,
+            "api_used": False,
+            "message": _text(value.get("message")).strip()[:240],
+        }
+
     def _save_owner_content(self, work_key: str, **changes: str) -> None:
         self.owner_database_path.parent.mkdir(parents=True, exist_ok=True)
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         try:
-            with closing(sqlite3.connect(self.owner_database_path, timeout=5.0)) as connection, connection:
+            with self._owner_lock, closing(sqlite3.connect(self.owner_database_path, timeout=5.0)) as connection, connection:
                 connection.execute("PRAGMA journal_mode=WAL")
                 connection.execute("PRAGMA busy_timeout=5000")
                 connection.execute(
@@ -917,14 +1206,32 @@ class BloggerLibrary:
                         work_key TEXT PRIMARY KEY,
                         title TEXT NOT NULL DEFAULT '',
                         video_text TEXT NOT NULL DEFAULT '',
+                        video_text_source TEXT NOT NULL DEFAULT '',
                         transcript_text TEXT NOT NULL DEFAULT '',
                         transcript_engine TEXT NOT NULL DEFAULT '',
                         transcript_language TEXT NOT NULL DEFAULT '',
                         transcript_created_at TEXT NOT NULL DEFAULT '',
+                        keyword_info_json TEXT NOT NULL DEFAULT '{}',
+                        interpretation_text TEXT NOT NULL DEFAULT '',
+                        interpretation_updated_at TEXT NOT NULL DEFAULT '',
+                        stock_mentions_json TEXT NOT NULL DEFAULT '{}',
                         updated_at TEXT NOT NULL
                     )
                     """
                 )
+                existing_columns = {
+                    str(row[1]) for row in connection.execute("PRAGMA table_info(work_content)").fetchall()
+                }
+                additions = {
+                    "video_text_source": "TEXT NOT NULL DEFAULT ''",
+                    "keyword_info_json": "TEXT NOT NULL DEFAULT '{}'",
+                    "interpretation_text": "TEXT NOT NULL DEFAULT ''",
+                    "interpretation_updated_at": "TEXT NOT NULL DEFAULT ''",
+                    "stock_mentions_json": "TEXT NOT NULL DEFAULT '{}'",
+                }
+                for name, declaration in additions.items():
+                    if name not in existing_columns:
+                        connection.execute(f"ALTER TABLE work_content ADD COLUMN {name} {declaration}")
                 row = connection.execute(
                     "SELECT * FROM work_content WHERE work_key=?",
                     (work_key,),
@@ -932,10 +1239,15 @@ class BloggerLibrary:
                 fields = {
                     "title": "",
                     "video_text": "",
+                    "video_text_source": "",
                     "transcript_text": "",
                     "transcript_engine": "",
                     "transcript_language": "",
                     "transcript_created_at": "",
+                    "keyword_info_json": "{}",
+                    "interpretation_text": "",
+                    "interpretation_updated_at": "",
+                    "stock_mentions_json": "{}",
                 }
                 if row is not None:
                     names = [column[0] for column in connection.execute("SELECT * FROM work_content LIMIT 0").description]
@@ -944,26 +1256,38 @@ class BloggerLibrary:
                 connection.execute(
                     """
                     INSERT INTO work_content(
-                        work_key, title, video_text, transcript_text, transcript_engine,
-                        transcript_language, transcript_created_at, updated_at
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                        work_key, title, video_text, video_text_source, transcript_text,
+                        transcript_engine, transcript_language, transcript_created_at,
+                        keyword_info_json, interpretation_text, interpretation_updated_at,
+                        stock_mentions_json, updated_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(work_key) DO UPDATE SET
                         title=excluded.title,
                         video_text=excluded.video_text,
+                        video_text_source=excluded.video_text_source,
                         transcript_text=excluded.transcript_text,
                         transcript_engine=excluded.transcript_engine,
                         transcript_language=excluded.transcript_language,
                         transcript_created_at=excluded.transcript_created_at,
+                        keyword_info_json=excluded.keyword_info_json,
+                        interpretation_text=excluded.interpretation_text,
+                        interpretation_updated_at=excluded.interpretation_updated_at,
+                        stock_mentions_json=excluded.stock_mentions_json,
                         updated_at=excluded.updated_at
                     """,
                     (
                         work_key,
                         fields["title"],
                         fields["video_text"],
+                        fields["video_text_source"],
                         fields["transcript_text"],
                         fields["transcript_engine"],
                         fields["transcript_language"],
                         fields["transcript_created_at"],
+                        fields["keyword_info_json"],
+                        fields["interpretation_text"],
+                        fields["interpretation_updated_at"],
+                        fields["stock_mentions_json"],
                         now,
                     ),
                 )

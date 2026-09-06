@@ -1,6 +1,9 @@
 # 项目状态
 
 - 最后更新：2026-09-06
+- 即时 AI 0.21.0 开发候选已完成，尚未正式发布。正式生产 0.20.1 的模型先生 MCP 当前仍不能读取评论；候选在原统一连接新增独立只读 `get_model_mr_author_replies`，只返回来源明确标记的模型先生本人发言及脱敏原提问，不按昵称推断，也不返回整片评论区、粉丝身份、来源编号或线程键。发布后原连接 Refresh 即可发现第六个工具，不需要新建插件或重复授权。
+- 普通博主已按本轮要求补齐模型先生同级的作品阅读能力：视频/原文、作者红标与作者赞过、原问题/同楼回复、高赞前十与有效长回复、确定性评股、十类关键词、解读感悟，以及默认关闭、只处理开启后新到作品的串行识别/提炼。明确不增加投资思路和智能问答；旧作品没有已同步评股报告时不猜测股票、不把空白当作零。
+- 0.21.0 已在合并正式生产 0.20.1 后完成本地验收：163 项完整 Python 回归、19 项作者/MCP/队列针对性回归、7 项前端契约、6 项共享评论纯逻辑、TypeScript/Vite 生产构建和 npm 高危阈值审计全部通过。测试只用合成资料和模拟提供器，没有配置/读取凭据、开启自动队列、执行 ASR/豆包/AI、写生产业务资料或修改时变罗盘。
 - 0.20.1 已正式发布：生产只读核对确认截图中的作品 1000011（16 条评论、469 字正式原文、原有 0 个关键词）同时保留一条自动任务和一条主人手动任务，两者均是在文本配置补齐前停留的 `configuration` 旧状态。运行进程已经加载 Ark Key 与文本模型字段；重复点击命中旧去重任务却没有重新排队，才继续显示旧提示，并非配置再次丢失或余额不足。
 - 新逻辑只把“配置恢复后，主人再次确认费用并重新点击”的手动关键词任务从 `configuration` 恢复到 `queued`；`review` 代表调用结果不明确，仍必须走单独核对重试，自动到达任务也不会因重复送达自行恢复。提交 `29cd74c` 已推送 GitHub 并由受限发布器上线，服务器 154 项回归通过；回环与正式域名、Service Worker 均为 0.20.1，即时 AI 与 Caddy active。
 - 对作品 1000011 的单条生产验收命中原手动任务 2：请求先返回 `queued`，后台随后变为 `done`，使用已保存的 469 字正式原文生成并保存 1 个十类 schema 关键词，模型为 `doubao-seed-2-1-turbo-260628`，没有重复 ASR。自动处理仍关闭，作品 1000008、1000010 等其他旧任务未批量重试。
@@ -19,7 +22,7 @@
 - 评论资料验收补充：本地/云端一条 595 赞作者主评论缺少作者 kind，依据主人截图仅在新 Git 外 `model-comments-20260904-v3` 副本确认这一条；其他 409 文件哈希不变。生产与本地源数据未写入，正式发布时应从最新状态精确合并这条确认，不用昵称批量推断。
 - 模型先生评论阅读增强代码已随 0.20.0 上线：补齐红色作者标识、作者赞过标记与原问题上下文；粉丝评论分为正点赞前十和其余有效长回复优先，同楼回复和评股正文按展开分批渲染。发布未改生产评论资料或调用 AI，详见 ADR-0035。
 - 模型先生关键词/投资思路手机交互代码已随 0.20.0 上线：手机一级/二级分类可进入关联作品，支持 24 条分页、搜索、共用播放器、已有 AI 分类关键词完整查看/手动整理及已有解读感悟。Git 外隔离预览未合并到生产，后续如需补齐元数据必须基于最新生产状态重新合并，不能用旧预览覆盖，详见 ADR-0034。
-- 当前阶段：`P2/P3 — 即时 AI 0.20.1 旧配置任务恢复正式生产；北京采集器 Codex Git 直连更新、1.0.8 与北极采集器图标正式生产`
+- 当前阶段：`P2/P3 — 即时 AI 0.20.1 正式生产；0.21.0 作者回复 MCP 与普通博主对齐候选待发布；北京采集器 1.0.8 正式生产`
 - 0.20.0 已按所有者明确“正式发布上线”口令完成：本机 151 项、服务器 151 项 Python 回归通过；正式与应急健康接口、Service Worker、新 PNG 图标、页面资源及统一 MCP `initialize` 全部验收为 0.20.0，即时 AI 与 Caddy active。
 - 0.19.2 已按所有者明确“发布”口令正式上线：生产资料核实为 406 部作品、406 份详情，覆盖 2023-10-29 至 2026-09-03；392 条媒体引用全部存在，评论 39,023 条。客户端首屏 24 条、下滑接近底部每次再取 24 条，详情/评论/视频继续点击后按需读取。服务器完整 106 项 Python 回归、正式健康、Service Worker 和生产分页验收通过；即时 AI、Caddy active。
 - 0.19.1 已按所有者明确授权正式发布：新加坡受限发布器把生产仓库安全快进至 `c905683`，服务器 104 项 Python 回归全部通过，正式健康接口、Service Worker 与 MCP `initialize` 均返回 0.19.1，五个只读工具保持正常。随后北京按需更新到 `1b4e018` / collector 1.0.5，安装 systemd 补充组并确认无轮询定时器；只读桥首轮把模型下载器作品 `7679663804129553913` 的 MP4 与 247 条评论送达新加坡模型先生记录 `model-mr-work:1000000`。视频、评论、页面资料和现有 MCP 索引均可见；未触发采集、ASR、豆包或 AI，时变罗盘未修改。
@@ -28,7 +31,7 @@
 - 0.18.2 已正式上线并消除 OAuth 授权页的账号歧义：页面直接从当前 Git 外单主人配置带入并锁定账号，主人只输入密码；错误凭据在原页醒目显示。授权成功后保存 30 天安全主人 Cookie，不再丢弃刚创建的网页登录会话；MCP access token 与网页 Cookie 继续严格隔离。受限发布器安全快进至 `8bd242f`，服务器 93 项回归、公网 OAuth/MCP 协议及真实授权页结构均通过；未读取或重置生产账号密码。
 - 0.18.1 已修复 ADP 官方结果送达后被永久跳过的状态机缺口：已认证官方片段可作为一手证据，搜索索引滞后进入五分钟重试而不是 `skip`，最多三次并持久化原因；即时 AI schema 10 显示罗盘/Codex 回填状态并临时置顶最近变化。即时 AI 一侧已正式上线；时变罗盘三态重试仍是独立待发布候选，须另行取得正式发布授权。
 - 所有者已明确要求把主人密码最低长度调整为 9 个字符，并把 OAuth 主人账号改为指定用户名。代码只调整长度策略；真实密码仍必须在隐藏终端提示中输入，不进入 Git、聊天、命令参数或普通日志。
-- 阶段状态：`INSTANT_AI_0_20_1_CONFIGURATION_RESUME_LIVE / BEIJING_COLLECTOR_CODEX_GIT_UPDATE_LIVE / BEIJING_NORTH_POLE_ICON_1_0_8_LIVE / INSTANT_AI_BRAND_0_20_0_LIVE / COMPACT_MOBILE_HEADER_LIVE / MODEL_MR_READING_UI_0_20_0_LIVE / MODEL_MR_TEXT_KEYWORDS_LIVE / MODEL_MR_AUTOMATION_DEFAULT_OFF / MODEL_MR_LAZY_PAGING_LIVE / MODEL_MR_BEIJING_TRANSFER_LIVE / MODEL_MR_CLOUD_MCP_LIVE / UNIFIED_INSTANT_AI_MCP_FIVE_TOOLS_LIVE / GRANDPAAMU_0_20_0_LIVE / GRANDPAAMU_0_20_1_LIVE / BLOGGER_CALLBACK_LINK_LIVE / BLOGGER_CLOUD_MCP_REAL_CALL_VERIFIED / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 阶段状态：`INSTANT_AI_0_21_0_CANDIDATE / MODEL_MR_AUTHOR_REPLY_MCP_CANDIDATE / BLOGGER_PARITY_CANDIDATE / UNIFIED_INSTANT_AI_MCP_SIX_TOOLS_CANDIDATE / INSTANT_AI_0_20_1_CONFIGURATION_RESUME_LIVE / BEIJING_COLLECTOR_CODEX_GIT_UPDATE_LIVE / BEIJING_NORTH_POLE_ICON_1_0_8_LIVE / INSTANT_AI_BRAND_0_20_0_LIVE / COMPACT_MOBILE_HEADER_LIVE / MODEL_MR_READING_UI_0_20_0_LIVE / MODEL_MR_TEXT_KEYWORDS_LIVE / MODEL_MR_AUTOMATION_DEFAULT_OFF / MODEL_MR_LAZY_PAGING_LIVE / MODEL_MR_BEIJING_TRANSFER_LIVE / MODEL_MR_CLOUD_MCP_LIVE / UNIFIED_INSTANT_AI_MCP_FIVE_TOOLS_LIVE / GRANDPAAMU_0_20_1_LIVE / BLOGGER_CALLBACK_LINK_LIVE / BLOGGER_CLOUD_MCP_REAL_CALL_VERIFIED / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离；新加坡博主接收数据生产根固定为 `/var/lib/instant-ai/blogger-agent`，生命周期待后续决定
@@ -96,6 +99,7 @@
 
 ## 当前阻塞
 
+- 0.21.0 候选尚未取得本轮“正式发布”口令，因此生产仍为 0.20.1 / 五个 MCP 工具。普通博主历史作品若没有采集端基于本地证券名称表生成的确定性评股报告，候选页面只显示明确缺失状态；本轮不使用 AI 猜测或伪造历史评股结果。
 - 北京采集器 Codex Git 直连更新和北极采集器图标均无阻塞；90 秒定时轮询已关闭。后续只需给 Codex 固定口令和具体需求，Codex 会在完成 Git 修改后推进 `beijing-production`，再发送一次受控远程命令触发固定发布服务并等待验收，无需所有者打开服务器终端。
 - `P3-MODEL-AUTO-02` 已完成：云端 Ark 文本配置、服务加载和一条真实关键词提炼均通过，没有余额或模型权限阻塞。自动处理仍按设计保持关闭；图片中其余旧 `configuration` 任务只在主人逐条核对并确认费用后重试，不自动批量扣费。关键词/评论读取代码已上线，但旧 Git 外预览没有合并生产。
 
@@ -111,6 +115,7 @@
 
 ## 需要用户批准的事项
 
+- 0.21.0 正式上线仍需所有者明确说“正式发布”。发布只部署代码并验收六个只读 MCP 工具和主人页面；不会开启普通博主自动处理、批量扫描历史、生成/回填评股、调用 ASR/豆包/AI 或修改时变罗盘。发布后已有 ChatGPT 连接只需 Refresh。
 - 北极采集器图标和 Git 通道已按本轮明确授权正式上线，不需要再次批准。iPhone 已存在的旧快捷方式需删除后从 Safari 重新添加一次，才会显示新的北极采集器图标。
 - 0.20.0 已按本轮明确发布口令上线，不需要再次批准；发布没有执行元数据合并、重传模型先生媒体、ASR、豆包或 AI，既有财经自动采集按原计划继续。现有 iPhone 主屏旧图标需要删除快捷方式后重新添加一次。
 - 本轮已按所有者明确要求完成 Ark 文本凭据 Git 外安全配置、一次关键词真实调用和最终正式发布，不需要再次批准。自动处理开关仍关闭；其余旧失败任务不会自动重试，若要处理仍由主人逐条确认费用。
@@ -128,4 +133,4 @@
 
 ## 下一项唯一建议任务
 
-`P3-MODEL-METADATA-RELEASE`：只有在需要把本地已核验的历史分类/关键词补齐到生产时，才基于最新生产资料做增量合并；不得用旧预览全量覆盖。当前 AI 关键词提炼已可用，不依赖该后续任务。
+`P3-INSTANT-AI-021`：所有者明确要求“正式发布”后，先检查即时 AI 受限发布通道，再发布 0.21.0；核验服务器完整回归、健康版本、Service Worker、统一 MCP 六个只读工具和普通博主主人页面，并确认自动处理仍默认关闭、没有历史扫描或付费调用。

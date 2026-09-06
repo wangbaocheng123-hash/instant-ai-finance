@@ -54,6 +54,23 @@ export const instantApi = {
     method: 'POST',
     body: JSON.stringify({}),
   }),
+  bloggerProcessing: () => request<import('./types').BloggerProcessing>('/api/blogger-library/processing'),
+  setBloggerProcessing: (enabled: boolean) => request<import('./types').BloggerProcessing>('/api/blogger-library/processing', {
+    method: 'POST', body: JSON.stringify({ enabled, confirm_billing: true }),
+  }),
+  retryBloggerProcessing: (id: number) => request<{ message: string }>('/api/blogger-library/processing/retry', {
+    method: 'POST', body: JSON.stringify({ job_id: id, confirm_billing: true }),
+  }),
+  extractBloggerKeywords: (workKey: string, revision: string) => request<{ message: string }>(`/api/blogger-library/works/${encodeURIComponent(workKey)}/extract-keywords`, {
+    method: 'POST', body: JSON.stringify({ expected_revision: revision, confirm_billing: true }),
+  }),
+  saveBloggerKeywords: (workKey: string, categories: Record<string, string[]>, keywords: string[], revision: string) =>
+    request<{ keyword_info: import('./types').ModelMrKeywordInfo; keywords: string[]; keyword_revision: string }>(`/api/blogger-library/works/${encodeURIComponent(workKey)}/keywords`, {
+      method: 'POST', body: JSON.stringify({ categories, keywords, expected_revision: revision }),
+    }),
+  saveBloggerInterpretation: (workKey: string, text: string) => request<{ ok: boolean; text: string; saved: boolean; mode: string }>(`/api/blogger-library/works/${encodeURIComponent(workKey)}/interpretation`, {
+    method: 'POST', body: JSON.stringify({ text }),
+  }),
   modelMrStatus: () => request<ModelMrStatus>('/api/model-mr/status'),
   modelMrWorks: (limit = 24, offset = 0) => request<{
     items: ModelMrWork[];

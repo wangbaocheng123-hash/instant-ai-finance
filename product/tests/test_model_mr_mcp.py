@@ -69,7 +69,40 @@ class ModelMrMcpLibraryTests(unittest.TestCase):
                         "text": "重点观察降息预期，而不是只看单日价格。",
                         "updated_at": "2026-08-30T10:00:00+08:00",
                     },
-                    "comments": [{"author": "private user", "text": "不得通过 MCP 返回的评论"}],
+                    "comments": [
+                        {
+                            "id": 1,
+                            "author": "private user",
+                            "text": "黄金大涨后还能追吗？",
+                            "kind": "user_comment",
+                            "reply_depth": 0,
+                            "thread_key": "a1b2c3d4e5f6",
+                            "like_count": 12,
+                            "reply_count": 2,
+                            "published_at": "2026-08-30T09:30:00+08:00",
+                            "profile_url": "https://private.example/fan",
+                        },
+                        {
+                            "id": 2,
+                            "author": "模型先生",
+                            "text": "不要只看当天涨幅，要结合实际利率。",
+                            "kind": "author_reply",
+                            "reply_depth": 1,
+                            "thread_key": "a1b2c3d4e5f6",
+                            "like_count": 30,
+                            "reply_count": 0,
+                            "published_at": "2026-08-30T09:31:00+08:00",
+                            "source_comment_id": "private-source-id",
+                        },
+                        {
+                            "id": 3,
+                            "author": "模型先生",
+                            "text": "同名昵称但没有来源作者标记。",
+                            "kind": "user_comment",
+                            "reply_depth": 0,
+                            "thread_key": "abcdefabcdef",
+                        },
+                    ],
                     "private_path": "H:/secret/detail.json",
                 },
                 ensure_ascii=False,
@@ -133,6 +166,25 @@ class ModelMrMcpLibraryTests(unittest.TestCase):
         self.assertNotIn("private_path", serialized)
         self.assertNotIn("C:/private", serialized)
 
+    def test_author_replies_are_separate_bounded_and_keep_question_context(self) -> None:
+        result = self.library.get_author_replies_for_mcp("model-mr-work:7", 10, 0)
+        self.assertTrue(result["found"])
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["items"][0]["question"]["text"], "黄金大涨后还能追吗？")
+        self.assertEqual(
+            result["items"][0]["author_messages"][0]["text"],
+            "不要只看当天涨幅，要结合实际利率。",
+        )
+        serialized = json.dumps(result, ensure_ascii=False)
+        self.assertNotIn("private user", serialized)
+        self.assertNotIn("profile_url", serialized)
+        self.assertNotIn("private-source-id", serialized)
+        self.assertNotIn("同名昵称但没有来源作者标记", serialized)
+        self.assertNotIn("thread_key", serialized)
+
+        empty = self.library.get_author_replies_for_mcp("model-mr-work:8", 10, 0)
+        self.assertEqual(empty["total"], 0)
+
     def test_projection_never_calls_sidecar_asr_ai_or_writes_library_files(self) -> None:
         paths = [self.snapshot, *sorted((self.snapshot.parent / "details").glob("*.json"))]
         before = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
@@ -142,6 +194,7 @@ class ModelMrMcpLibraryTests(unittest.TestCase):
         ):
             self.library.search_works_for_mcp("黄金", 10)
             self.library.get_work_for_mcp("model-mr-work:7")
+            self.library.get_author_replies_for_mcp("model-mr-work:7")
             self.library.list_thoughts_for_mcp("", 100)
         after = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
         self.assertEqual(after, before)

@@ -86,6 +86,22 @@ class FakeModelMrLibrary:
             "interpretation": {"text": "已有投资解读"},
         }
 
+    def get_author_replies_for_mcp(self, record_id: str, limit: int, offset: int):
+        return {
+            "found": True,
+            "record_id": record_id,
+            "count": 1,
+            "total": 1,
+            "offset": offset,
+            "has_more": False,
+            "items": [
+                {
+                    "question": {"text": "怎么看黄金？"},
+                    "author_messages": [{"author": "模型先生", "text": "关注实际利率。"}],
+                }
+            ][:limit],
+        }
+
     def list_thoughts_for_mcp(self, query: str, limit: int):
         return {
             "query": query,
@@ -342,6 +358,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
                 "get_blogger_video_text",
                 "search_model_mr_works",
                 "get_model_mr_work_text",
+                "get_model_mr_author_replies",
                 "list_model_mr_investment_thoughts",
             },
         )
@@ -370,7 +387,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
             version="0.18.0",
             authenticated=False,
         )
-        self.assertEqual(len(listed["result"]["tools"]), 5)
+        self.assertEqual(len(listed["result"]["tools"]), 6)
 
         call = {
             "jsonrpc": "2.0",
@@ -457,10 +474,30 @@ class BloggerMcpCloudTests(unittest.TestCase):
             "模型先生正式原文",
         )
 
-        thoughts = handle_message(
+        author_replies = handle_message(
             {
                 "jsonrpc": "2.0",
                 "id": 7,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_model_mr_author_replies",
+                    "arguments": {"record_id": "model-mr-work:445", "limit": 30},
+                },
+            },
+            library=FakeLibrary(),
+            model_mr_library=FakeModelMrLibrary(),
+            version="0.21.0",
+            authenticated=True,
+        )
+        self.assertEqual(
+            author_replies["result"]["structuredContent"]["items"][0]["author_messages"][0]["text"],
+            "关注实际利率。",
+        )
+
+        thoughts = handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
                 "method": "tools/call",
                 "params": {"name": "list_model_mr_investment_thoughts", "arguments": {}},
             },

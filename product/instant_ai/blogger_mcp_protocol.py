@@ -138,6 +138,44 @@ def tool_definitions() -> list[dict[str, Any]]:
             "_meta": {"securitySchemes": security},
         },
         {
+            "name": "get_model_mr_author_replies",
+            "title": "读取模型先生本人评论回复",
+            "description": (
+                "根据 model-mr-work: 编号，只读返回来源明确标记的模型先生本人评论或回复，"
+                "并保留对应原提问正文作为上下文。不会按昵称猜测作者，不返回整片评论区、"
+                "粉丝账号或主页，也不会触发 AI、采集或写入。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "record_id": {
+                        "type": "string",
+                        "pattern": "^model-mr-work:[1-9][0-9]{0,11}$",
+                        "description": "搜索结果中的 model-mr-work: 编号。",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "default": 30,
+                        "description": "本次最多读取的作者互动线程数。",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100000,
+                        "default": 0,
+                    },
+                },
+                "required": ["record_id"],
+                "additionalProperties": False,
+            },
+            "outputSchema": {"type": "object", "additionalProperties": True},
+            "annotations": {"title": "读取模型先生本人评论回复", **common_annotations},
+            "securitySchemes": security,
+            "_meta": {"securitySchemes": security},
+        },
+        {
             "name": "list_model_mr_investment_thoughts",
             "title": "查询模型先生投资思路",
             "description": (
@@ -202,6 +240,7 @@ def handle_message(
                 "instructions": (
                     "这是即时 AI 新加坡端的单主人只读资料库，包含博主智能体和模型先生。"
                     "先搜索，再用 cloud-video: 或 model-mr-work: 编号读取完整文字；"
+                    "模型先生本人评论回复使用独立工具按作品读取；"
                     "不得把未确认转写冒充正式原文。"
                 ),
             },
@@ -257,6 +296,18 @@ def handle_message(
             if re.fullmatch(r"model-mr-work:[1-9][0-9]{0,11}", record_id) is None:
                 raise ValueError("record_id_invalid")
             result = model_mr_library.get_work_for_mcp(record_id)
+        elif name == "get_model_mr_author_replies":
+            record_id = str(arguments.get("record_id") or "")
+            if re.fullmatch(r"model-mr-work:[1-9][0-9]{0,11}", record_id) is None:
+                raise ValueError("record_id_invalid")
+            try:
+                limit = int(arguments.get("limit", 30))
+                offset = int(arguments.get("offset", 0))
+            except (TypeError, ValueError) as error:
+                raise ValueError("pagination_invalid") from error
+            if limit < 1 or limit > 100 or offset < 0 or offset > 100_000:
+                raise ValueError("pagination_invalid")
+            result = model_mr_library.get_author_replies_for_mcp(record_id, limit, offset)
         elif name == "list_model_mr_investment_thoughts":
             query = str(arguments.get("query") or "").strip()
             if len(query) > 2000:

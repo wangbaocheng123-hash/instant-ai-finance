@@ -24,8 +24,10 @@ test('blogger panel reuses the owner player and requires explicit paid ASR confi
   assert.deepEqual(
     [...new Set(apiCalls)].sort(),
     [
-      'bloggerCreatorWorks', 'bloggerCreators', 'bloggerLibraryStatus', 'bloggerWork',
-      'saveBloggerTitle', 'saveBloggerVideoText', 'transcribeBloggerWork',
+      'bloggerCreatorWorks', 'bloggerCreators', 'bloggerLibraryStatus', 'bloggerProcessing',
+      'bloggerWork', 'extractBloggerKeywords', 'retryBloggerProcessing',
+      'saveBloggerInterpretation', 'saveBloggerKeywords', 'saveBloggerTitle',
+      'saveBloggerVideoText', 'setBloggerProcessing', 'transcribeBloggerWork',
     ],
   );
   assert.match(panel, /createElement\('video'\)/u);
@@ -34,9 +36,14 @@ test('blogger panel reuses the owner player and requires explicit paid ASR confi
   assert.match(panel, /视频原文/u);
   assert.match(panel, /豆包识别文字/u);
   assert.match(panel, /window\.confirm\('豆包识别会提取本地视频音频并按音频时长调用付费接口/u);
-  assert.match(panel, /本人互动/u);
-  assert.match(panel, /评论排行/u);
-  assert.match(panel, /全部评论/u);
+  assert.match(panel, /作者互动/u);
+  assert.match(panel, /粉丝评论/u);
+  assert.match(panel, /评股/u);
+  assert.match(panel, /AI关键词/u);
+  assert.match(panel, /解读感悟/u);
+  assert.match(panel, /isAuthorComment/u);
+  assert.doesNotMatch(panel, /kind\.includes\('author'\)/u);
+  assert.doesNotMatch(panel, /投资思路|智能问答/u);
   assert.match(panel, /awaiting_asr_approval/u);
   assert.match(panel, /豆包只在主人确认后调用/u);
   assert.doesNotMatch(panel, /FinanceItem|<img|cover_url/u);

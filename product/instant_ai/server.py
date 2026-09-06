@@ -43,6 +43,7 @@ from .model_mr_transfer import MODEL_MR_TRANSFER_PROJECTOR
 from .model_mr_processing import MODEL_MR_PROCESSOR
 from .blogger_http import BloggerTransferHTTP
 from .blogger_library import BLOGGER_LIBRARY, BloggerLibraryUnavailable
+from .blogger_processing import BLOGGER_PROCESSOR
 from .blogger_mcp import GET_PATH as BLOGGER_MCP_GET_PATH
 from .blogger_mcp import PATHS as BLOGGER_MCP_PATHS
 from .blogger_mcp import SEARCH_PATH as BLOGGER_MCP_SEARCH_PATH
@@ -296,7 +297,7 @@ input[readonly]{{background:#f8fafc;color:#475569}}small{{display:block;margin:-
 button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;color:white;font-size:16px;font-weight:700}}
 .scope{{background:#eff6ff;border-radius:10px;padding:12px;color:#1e40af}}.error{{border:1px solid #fecaca;border-radius:10px;background:#fef2f2;padding:12px;color:#b91c1c;font-weight:700}}
 </style></head><body><main><h1>授权即时 AI 资料智能体（云端）</h1>
-<p>{identity}</p><p class="scope">只读权限：查询新加坡即时 AI 中的博主资料，以及模型先生的作品文字和投资思路。不会采集、转写、调用 AI、修改资料或读取评论与视频文件。</p>
+<p>{identity}</p><p class="scope">只读权限：查询新加坡即时 AI 中的博主资料，以及模型先生的作品文字和投资思路，并读取来源明确的作者本人回复。不会采集、转写、调用 AI、修改资料、读取整片评论区或视频文件。</p>
 {error_html}<form method="post" action="{AUTHORIZE_PATH}">{hidden_html}{credentials}<button type="submit">确认授权</button></form>
 </main></body></html>"""
 
@@ -774,6 +775,8 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             return
         elif path == "/api/blogger-library/status":
             self._json(BLOGGER_LIBRARY.status())
+        elif path == "/api/blogger-library/processing":
+            self._json(BLOGGER_PROCESSOR.status())
         elif path == "/api/blogger-library/creators":
             self._json(BLOGGER_LIBRARY.creators())
         elif re.fullmatch(r"/api/blogger-library/creators/[0-9a-f-]{36}/works", path):
@@ -930,6 +933,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         max_length = 768 * 1024 if (
             re.fullmatch(r"/api/model-mr/works/\d+/video-text", path)
             or re.fullmatch(r"/api/blogger-library/works/[0-9a-f]{64}/video-text", path)
+            or re.fullmatch(r"/api/blogger-library/works/[0-9a-f]{64}/interpretation", path)
         ) else 64 * 1024
         if content_length > max_length:
             self._json({"error": "request_too_large"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
@@ -987,7 +991,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             return
 
         blogger_work_match = re.fullmatch(
-            r"/api/blogger-library/works/([0-9a-f]{64})/(title|video-text|transcribe|doubao-transcribe)",
+            r"/api/blogger-library/works/([0-9a-f]{64})/(title|video-text|keywords|extract-keywords|interpretation|transcribe|doubao-transcribe)",
             path,
         )
         if blogger_work_match:
@@ -998,6 +1002,25 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                     self._json(BLOGGER_LIBRARY.save_title(work_key, str(payload.get("title") or "")))
                 elif action == "video-text":
                     self._json(BLOGGER_LIBRARY.save_video_text(work_key, str(payload.get("text") or "")))
+                elif action == "keywords":
+                    self._json(BLOGGER_LIBRARY.save_keywords(
+                        work_key,
+                        payload.get("categories"),
+                        payload.get("keywords", []),
+                        str(payload.get("expected_revision") or ""),
+                    ))
+                elif action == "extract-keywords":
+                    if payload.get("confirm_billing") is not True:
+                        raise ValueError("请先确认关键词提炼费用。")
+                    self._json(BLOGGER_PROCESSOR.request_keywords(
+                        work_key,
+                        str(payload.get("expected_revision") or ""),
+                    ))
+                elif action == "interpretation":
+                    self._json(BLOGGER_LIBRARY.save_interpretation(
+                        work_key,
+                        str(payload.get("text") or ""),
+                    ))
                 else:
                     self._json(
                         BLOGGER_LIBRARY.transcribe(
@@ -1009,6 +1032,19 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                 self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
             except BloggerLibraryUnavailable as error:
                 self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
+            return
+
+        if path in {"/api/blogger-library/processing", "/api/blogger-library/processing/retry"}:
+            try:
+                if not isinstance(payload, dict) or payload.get("confirm_billing") is not True:
+                    raise ValueError("请先确认自动处理费用说明。")
+                self._json(
+                    BLOGGER_PROCESSOR.retry(int(payload.get("job_id") or 0))
+                    if path.endswith("/retry")
+                    else BLOGGER_PROCESSOR.set_enabled(payload.get("enabled"))
+                )
+            except (ValueError, TypeError) as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
             return
 
         if path in {"/api/model-mr/processing", "/api/model-mr/processing/retry"}:
@@ -1145,8 +1181,12 @@ def create_server() -> BoundedThreadingHTTPServer:
     backfill_thumbnail_candidates()
     backfill_notifications()
     server = BoundedThreadingHTTPServer((HOST, PORT), InstantAIHandler)
+    def complete_blogger_transfer(transfer_id: str) -> None:
+        MODEL_MR_TRANSFER_PROJECTOR.project(transfer_id)
+        BLOGGER_PROCESSOR.enqueue_transfer(transfer_id)
+
     server.blogger_transfer = BloggerTransferHTTP.from_environment(  # type: ignore[attr-defined]
-        on_complete=MODEL_MR_TRANSFER_PROJECTOR.project,
+        on_complete=complete_blogger_transfer,
     )
     return server
 
@@ -1155,6 +1195,7 @@ def run_server(collect_on_start: bool = True) -> None:
     server = create_server()
     if os.name == "posix":
         threading.Thread(target=MODEL_MR_PROCESSOR.run, name="model-mr-processing", daemon=True).start()
+        threading.Thread(target=BLOGGER_PROCESSOR.run, name="blogger-processing", daemon=True).start()
     threading.Thread(target=_scheduler_loop, name="instant-ai-scheduler", daemon=True).start()
     if collect_on_start:
         threading.Thread(target=_collect_in_background, name="instant-ai-initial-collector", daemon=True).start()

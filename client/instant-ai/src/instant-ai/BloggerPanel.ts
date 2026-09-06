@@ -1,12 +1,12 @@
 import { instantApi } from './api';
+import { commentThreads, isAuthorComment, rankCommentThreads, threadHasAuthorInteraction, type ModelMrCommentThread } from './ModelMrComments';
 import type {
-  BloggerCreator, BloggerLibraryStatus, BloggerProcessingStatus, BloggerTransferStatus,
+  BloggerCreator, BloggerLibraryStatus, BloggerProcessing, BloggerProcessingStatus, BloggerTransferStatus,
   BloggerWork, BloggerWorkDetail, ModelMrComment,
 } from './types';
 
-type DetailTab = 'video' | 'text' | 'comments';
-type CommentTab = 'author' | 'ranking' | 'all';
-interface CommentThread { key: string; root: ModelMrComment | null; replies: ModelMrComment[] }
+type DetailTab = 'video' | 'text' | 'comments' | 'keywords' | 'interpretation';
+type CommentTab = 'author' | 'ranking' | 'stocks';
 interface StatusPresentation {
   label: string;
   detail: string;
@@ -27,7 +27,11 @@ export class BloggerPanel {
   private commentTab: CommentTab = 'author';
   private commentLimit = 60;
   private editingTitle = false;
+  private editingKeywords = false;
   private busy = false;
+  private processing: BloggerProcessing | null = null;
+  private processingBusy = false;
+  private processingMessage = '';
   private workMessage: { text: string; tone: string } | null = null;
   private requestSerial = 0;
 
@@ -38,7 +42,7 @@ export class BloggerPanel {
     this.element.hidden = true;
     this.element.innerHTML = `
       <header class="panel-header blogger-header">
-        <div class="panel-heading"><h2>博主资料</h2><span>视频、原文、豆包识别与评论</span></div>
+        <div class="panel-heading"><h2>博主资料</h2><span>视频、原文、评论、评股、关键词与解读</span></div>
         <span class="panel-count">连接中</span>
       </header>
       <div class="panel-body blogger-body"><div class="panel-message">正在读取博主资料…</div></div>`;
@@ -85,7 +89,10 @@ export class BloggerPanel {
     const action = (event.target as HTMLElement).closest<HTMLElement>('[data-blogger-action]');
     if (!action) return;
     const command = action.dataset.bloggerAction;
-    if (command === 'open-creator' && action.dataset.creatorId) await this.openCreator(action.dataset.creatorId);
+    if (['processing', 'toggle-processing', 'retry-processing'].includes(command || '')) {
+      await this.updateProcessing(command || '', Number(action.dataset.jobId || 0));
+    }
+    else if (command === 'open-creator' && action.dataset.creatorId) await this.openCreator(action.dataset.creatorId);
     else if (command === 'open-work' && action.dataset.workKey) await this.openWork(action.dataset.workKey);
     else if (command === 'back-creators') { ++this.requestSerial; this.resetSelection(); this.renderCreators(); }
     else if (command === 'back-works') { ++this.requestSerial; this.selectedWorkKey = null; this.detail = null; this.renderWorks(); }
@@ -101,6 +108,11 @@ export class BloggerPanel {
     else if (command === 'save-text') await this.saveVideoText();
     else if (command === 'transcribe') await this.transcribe('video');
     else if (command === 'doubao') await this.transcribe('doubao');
+    else if (command === 'edit-keywords') { this.editingKeywords = true; this.renderDetail(); }
+    else if (command === 'cancel-keywords') { this.editingKeywords = false; this.renderDetail(); }
+    else if (command === 'save-keywords') await this.saveKeywords();
+    else if (command === 'extract-keywords') await this.extractKeywords();
+    else if (command === 'save-interpretation') await this.saveInterpretation();
   }
 
   private async openCreator(creatorId: string): Promise<void> {
@@ -130,6 +142,7 @@ export class BloggerPanel {
     this.detailTab = 'video';
     this.commentTab = 'author';
     this.commentLimit = 60;
+    this.editingKeywords = false;
     this.workMessage = null;
     const requestId = ++this.requestSerial;
     this.renderLoading('正在读取作品视频与评论…');
@@ -222,11 +235,62 @@ export class BloggerPanel {
     const creator = this.selectedCreator();
     if (!creator) { this.renderCreators(); return; }
     const root = document.createElement('div'); root.className = 'blogger-view blogger-works-view';
-    root.append(this.renderCreatorSwitch(), this.viewHeading(creator.display_name, `${this.works.length} 部作品 · 点击进入视频、原文与评论`));
+    root.append(
+      this.renderCreatorSwitch(),
+      this.viewHeading(creator.display_name, `${this.works.length} 部作品 · 视频、原文、评论、关键词与解读`),
+      this.renderProcessing(),
+    );
     const list = document.createElement('div'); list.className = 'blogger-card-list';
     this.works.forEach((work) => list.append(this.renderWorkCard(work)));
     if (!this.works.length) list.append(this.message('这位博主当前没有已推送作品。'));
     root.append(list); this.body.replaceChildren(root);
+  }
+
+  private renderProcessing(): HTMLElement {
+    const section = document.createElement('section'); section.className = 'model-processing blogger-processing';
+    const title = document.createElement('h3'); title.textContent = '豆包自动处理';
+    const button = this.actionButton(this.processingBusy ? '读取中…' : this.processing ? '刷新处理状态' : '查看设置与处理状态', 'processing');
+    button.disabled = this.processingBusy; section.append(title, button);
+    if (this.processingMessage) section.append(this.message(this.processingMessage));
+    const status = this.processing;
+    if (!status) return section;
+    section.append(this.message(`仅处理开启后新送达的普通博主视频，不扫描历史作品。每日最多 ${status.daily_call_limit} 次模型调用，每条最多 ${status.max_video_minutes} 分钟；已有原文和关键词不覆盖。`));
+    section.append(this.message(`语音识别：${status.speech_configured ? '已配置' : '未配置'}；关键词模型：${status.keywords_configured ? '已配置' : '未配置'}`));
+    const toggle = this.actionButton(
+      status.enabled && status.failures < 3 ? '暂停自动处理' : status.failures >= 3 ? '已连续失败暂停，确认后恢复' : '开启新视频自动识别与提炼',
+      'toggle-processing',
+    );
+    toggle.disabled = this.processingBusy; section.append(toggle);
+    section.append(this.message('自动转写会保存为“尚未人工核对”的原文；暂停不取消已提交任务。'));
+    status.items.slice(0, 8).forEach((item) => {
+      const row = document.createElement('div'); row.className = 'model-processing-job';
+      row.textContent = `作品 ${item.work_key.slice(0, 8)}… · ${item.phase === 'asr' ? '语音识别' : '关键词'}：${item.message}`;
+      if (['review', 'configuration'].includes(item.state)) {
+        const retry = this.actionButton('核对后重试', 'retry-processing');
+        retry.dataset.jobId = String(item.id); retry.disabled = this.processingBusy; row.append(retry);
+      }
+      section.append(row);
+    });
+    return section;
+  }
+
+  private async updateProcessing(action: string, jobId = 0): Promise<void> {
+    if (this.processingBusy) return;
+    const enable = !this.processing?.enabled || (this.processing?.failures || 0) >= 3;
+    if (action === 'toggle-processing' && enable && !window.confirm('开启后，新送达的普通博主视频将自动调用豆包识别并提炼关键词，可能产生费用。不处理历史作品。确认开启？')) return;
+    if (action === 'retry-processing' && !window.confirm('请先核对豆包调用记录；上次中断可能已计费。确认重试所选任务？')) return;
+    this.processingBusy = true;
+    try {
+      if (action === 'toggle-processing') await instantApi.setBloggerProcessing(enable);
+      if (action === 'retry-processing') await instantApi.retryBloggerProcessing(jobId);
+      this.processing = await instantApi.bloggerProcessing();
+      this.processingMessage = '后台串行处理，关闭页面不影响；完成后重新打开作品查看。';
+    } catch (error) {
+      this.processingMessage = this.errorText(error);
+    } finally {
+      this.processingBusy = false;
+      this.renderWorks();
+    }
   }
 
   private renderWorkCard(work: BloggerWork): HTMLElement {
@@ -238,6 +302,11 @@ export class BloggerPanel {
     const meta = document.createElement('p');
     meta.textContent = `${this.formatDate(work.published_at || work.captured_at)} · ${work.media_available ? '本地视频' : '视频待传'} · ${work.comment_count} 条评论`;
     main.append(title, meta);
+    const keywordMeta = document.createElement('div'); keywordMeta.className = 'model-work-meta';
+    if (work.has_video_text) keywordMeta.append(this.pill('有视频原文'));
+    if (work.has_interpretation) keywordMeta.append(this.pill('有解读'));
+    work.keywords.slice(0, 6).forEach((keyword) => keywordMeta.append(this.pill(keyword)));
+    if (keywordMeta.childElementCount) main.append(keywordMeta);
     const statuses = document.createElement('div'); statuses.className = 'blogger-card-statuses';
     const transfer = this.transferPresentation(work.transfer.status);
     const processing = this.processingPresentation(work.processing_status);
@@ -262,14 +331,22 @@ export class BloggerPanel {
     meta.textContent = `${this.formatDate(detail.published_at || detail.captured_at)} · ${detail.media_available ? '本地视频' : '视频待传'} · ${detail.comment_total} 条评论`;
     article.append(meta);
     const tabs = document.createElement('nav'); tabs.className = 'model-detail-tabs';
-    ([['video', '本地视频'], ['text', '视频原文'], ['comments', `评论 ${detail.comment_total}`]] as const).forEach(([key, label]) => {
+    ([
+      ['video', '本地视频'],
+      ['text', '视频原文'],
+      ['comments', `评论 ${detail.comment_total}`],
+      ['keywords', 'AI关键词'],
+      ['interpretation', '解读感悟'],
+    ] as const).forEach(([key, label]) => {
       const button = this.actionButton(label, 'detail-tab');
       button.dataset.detailTab = key; button.classList.toggle('is-active', this.detailTab === key); tabs.append(button);
     });
     const content = document.createElement('div'); content.className = 'model-detail-content';
     if (this.detailTab === 'video') content.append(this.renderVideo(detail));
     else if (this.detailTab === 'text') content.append(this.renderVideoText(detail));
-    else content.append(this.renderComments(detail));
+    else if (this.detailTab === 'comments') content.append(this.renderComments(detail));
+    else if (this.detailTab === 'keywords') content.append(this.renderKeywords(detail));
+    else content.append(this.renderInterpretation(detail));
     if (this.workMessage || this.busy) {
       const message = document.createElement('p'); message.className = `model-work-status ${this.workMessage?.tone || ''}`;
       message.textContent = this.workMessage?.text || '正在处理…'; content.append(message);
@@ -307,6 +384,7 @@ export class BloggerPanel {
     text.placeholder = '尚无视频原文，可读取现有识别结果或使用豆包识别。'; text.maxLength = 200000;
     const source = document.createElement('p'); source.className = 'model-text-source';
     source.textContent = detail.video_text.official ? `当前来源：${detail.video_text.source}（正式原文）` : '识别结果请核对后保存为正式原文。';
+    if (detail.video_text.source === 'doubao-auto-unreviewed') source.textContent = '豆包已自动识别并保存，尚未人工核对；您可修改后保存确认。';
     const actions = document.createElement('div'); actions.className = 'model-text-actions';
     const cached = this.actionButton('识别视频文字', 'transcribe');
     const doubao = this.actionButton('豆包识别文字', 'doubao', true);
@@ -320,77 +398,112 @@ export class BloggerPanel {
 
   private renderComments(detail: BloggerWorkDetail): HTMLElement {
     const panel = document.createElement('div'); panel.className = 'model-comments-panel';
-    const threads = this.commentThreads(detail.comments);
-    const author = threads.filter((thread) => this.threadHasAuthorInteraction(thread));
-    const ranking = threads.filter((thread) => {
-      const lead = thread.root || thread.replies[0];
-      return lead && !this.isAuthorComment(lead) && !this.isLowValueComment(lead.text);
-    }).sort((left, right) => this.compareThreads(left, right));
+    const threads = commentThreads(detail.comments);
+    const author = threads.filter(threadHasAuthorInteraction);
+    const ranking = rankCommentThreads(threads);
     const tabs = document.createElement('nav'); tabs.className = 'model-comment-tabs';
-    ([['author', '本人互动', author.length], ['ranking', '评论排行', ranking.length], ['all', '全部评论', threads.length]] as const)
+    ([['author', '作者互动', author.length], ['ranking', '粉丝评论', ranking.topLiked.length + ranking.remaining.length], ['stocks', '评股', detail.stock_mentions?.items?.length || 0]] as const)
       .forEach(([key, label, count]) => {
         const button = this.actionButton(`${label} ${count}`, 'comment-tab'); button.dataset.commentTab = key;
         button.classList.toggle('is-active', this.commentTab === key); tabs.append(button);
       });
     panel.append(tabs);
-    const source = this.commentTab === 'author' ? author : this.commentTab === 'ranking' ? ranking : threads;
-    const note = document.createElement('p'); note.className = 'model-comment-sort-note';
-    note.textContent = this.commentTab === 'author' ? '显示博主本人回复或本人点赞过的评论，并保留提问上下文。'
-      : this.commentTab === 'ranking' ? '按点赞、回复数和有效正文长度排序，过滤纯表情等低价值评论。' : '按北京采集端保存的评论顺序显示。';
-    panel.append(note);
-    source.slice(0, this.commentLimit).forEach((thread, index) => panel.append(this.renderCommentThread(thread, this.commentTab === 'author', this.commentTab === 'ranking' ? index + 1 : 0)));
-    if (!source.length) panel.append(this.message('当前视图暂无评论。'));
-    if (source.length > this.commentLimit) panel.append(this.actionButton(`继续显示（还有 ${source.length - this.commentLimit} 组）`, 'more-comments'));
+    let remaining = 0;
+    if (this.commentTab === 'author') {
+      const note = document.createElement('p'); note.className = 'model-comment-sort-note';
+      note.textContent = '红色“作者”标识表示博主本人发言；“作者赞过”表示本人点赞。保留原提问和同楼上下文，身份只信任采集端的明确标记。';
+      panel.append(note);
+      author.slice(0, this.commentLimit).forEach((thread) => panel.append(this.renderCommentThread(thread, true)));
+      if (!author.length) panel.append(this.message('这条作品暂未识别到博主本人回复或点赞。'));
+      remaining = Math.max(0, author.length - this.commentLimit);
+    } else if (this.commentTab === 'ranking') {
+      const note = document.createElement('p'); note.className = 'model-comment-sort-note';
+      note.textContent = '高赞前十按点赞数、回复数排序；其余评论以20字以上有效文字优先。纯表情和灌水不参与；排名不代表观点正确。'; panel.append(note);
+      const high = document.createElement('section'); high.className = 'model-comment-group model-high-liked';
+      const highHeading = document.createElement('h4'); highHeading.textContent = `高赞前十 · ${ranking.topLiked.length} 组`; high.append(highHeading);
+      ranking.topLiked.forEach((thread, index) => high.append(this.renderCommentThread(thread, false, index + 1)));
+      if (!ranking.topLiked.length) high.append(this.message('暂无有点赞的有效评论。'));
+      const rest = document.createElement('section'); rest.className = 'model-comment-group model-quality-comments';
+      const restHeading = document.createElement('h4'); restHeading.textContent = `其余评论 · 有效长回复优先（${ranking.remaining.length} 组）`; rest.append(restHeading);
+      ranking.remaining.slice(0, this.commentLimit).forEach((thread) => rest.append(this.renderCommentThread(thread, false)));
+      panel.append(high, rest); remaining = Math.max(0, ranking.remaining.length - this.commentLimit);
+    } else panel.append(this.renderStockMentions(detail));
+    if (remaining) panel.append(this.actionButton(`继续显示（还有 ${remaining} 组）`, 'more-comments'));
     const boundary = document.createElement('p'); boundary.className = 'model-comments-note';
     boundary.textContent = `已安全读取 ${detail.comments.length} 条评论；账号编号、主页与原始采集数据不会显示。`;
     panel.append(boundary); return panel;
   }
 
-  private commentThreads(comments: ModelMrComment[]): CommentThread[] {
-    const map = new Map<string, CommentThread>();
-    comments.forEach((comment) => {
-      const key = comment.thread_key || `comment-${comment.id}`;
-      const thread = map.get(key) || { key, root: null, replies: [] };
-      if (!comment.reply_depth && !thread.root) thread.root = comment; else thread.replies.push(comment);
-      map.set(key, thread);
-    });
-    return Array.from(map.values());
-  }
-
-  private renderCommentThread(thread: CommentThread, authorMode: boolean, rank = 0): HTMLElement {
+  private renderCommentThread(thread: ModelMrCommentThread, authorMode: boolean, rank = 0): HTMLElement {
     const section = document.createElement('section');
     section.className = `model-comment-thread${authorMode ? ' is-author-thread' : ''}`;
+    section.dataset.threadKey = thread.key;
     if (rank) { const badge = document.createElement('span'); badge.className = 'model-comment-rank'; badge.textContent = String(rank); section.append(badge); }
     if (thread.root) section.append(this.renderComment(thread.root));
-    [...thread.replies].sort((a, b) => Number(this.isAuthorComment(b)) - Number(this.isAuthorComment(a)) || b.like_count - a.like_count)
-      .slice(0, authorMode ? 20 : 6).forEach((comment) => section.append(this.renderComment(comment)));
+    const replies = [...thread.replies].sort((a, b) => Number(isAuthorComment(b)) - Number(isAuthorComment(a)) || Number(b.author_liked) - Number(a.author_liked) || b.like_count - a.like_count);
+    replies.slice(0, 6).forEach((comment) => section.append(this.renderComment(comment)));
+    if (replies.length > 6) {
+      const more = document.createElement('details'); more.className = 'model-thread-more';
+      const summary = document.createElement('summary'); summary.textContent = `展开同楼其余回复（${replies.length - 6} 条）`; more.append(summary);
+      let loaded = 6;
+      const load = document.createElement('button'); load.type = 'button'; load.textContent = '继续显示同楼回复';
+      const appendPage = () => {
+        replies.slice(loaded, loaded + 30).forEach((comment) => more.insertBefore(this.renderComment(comment), load));
+        loaded += 30; load.hidden = loaded >= replies.length;
+      };
+      load.addEventListener('click', appendPage); more.append(load);
+      more.addEventListener('toggle', () => { if (more.open && loaded === 6) appendPage(); }); section.append(more);
+    }
     return section;
   }
 
   private renderComment(comment: ModelMrComment): HTMLElement {
-    const item = document.createElement('article'); const authorComment = this.isAuthorComment(comment);
-    item.className = `model-comment${comment.reply_depth ? ' is-reply' : ''}${authorComment ? ' is-author' : ''}`;
-    const header = document.createElement('header'); const author = document.createElement('b');
-    author.textContent = authorComment ? `${comment.author} · 作者` : comment.author;
-    const time = document.createElement('time'); time.textContent = this.formatDate(comment.published_at); header.append(author, time);
+    const item = document.createElement('article'); const authorComment = isAuthorComment(comment);
+    item.className = `model-comment${comment.reply_depth ? ' is-reply' : ''}${authorComment ? ' is-author' : ''}${comment.author_liked ? ' is-author-liked' : ''}`;
+    item.dataset.commentId = String(comment.id);
+    const header = document.createElement('header'); const identity = document.createElement('div'); identity.className = 'model-comment-identity';
+    const author = document.createElement('b'); author.textContent = comment.author; identity.append(author);
+    if (authorComment) { const badge = document.createElement('span'); badge.className = 'model-author-badge'; badge.textContent = '作者'; identity.append(badge); }
+    const time = document.createElement('time'); time.textContent = this.formatDate(comment.published_at); header.append(identity, time);
     const text = document.createElement('p'); text.textContent = comment.text;
     const metrics = document.createElement('small');
-    metrics.textContent = `赞 ${comment.like_count}${comment.reply_count ? ` · 回复 ${comment.reply_count}` : ''}${comment.author_liked ? ' · 作者点赞' : ''}`;
-    item.append(header, text, metrics); return item;
+    metrics.textContent = `赞 ${comment.like_count}${comment.reply_count ? ` · 回复 ${comment.reply_count}` : ''}`;
+    item.append(header, text, metrics);
+    if (comment.author_liked) { const liked = document.createElement('span'); liked.className = 'model-author-liked-badge'; liked.textContent = '♥ 作者赞过'; item.append(liked); }
+    return item;
   }
 
-  private threadHasAuthorInteraction(thread: CommentThread): boolean {
-    return [thread.root, ...thread.replies].some((comment) => comment && (this.isAuthorComment(comment) || comment.author_liked));
-  }
-  private isAuthorComment(comment: ModelMrComment): boolean { return comment.kind.includes('author'); }
-  private isLowValueComment(text: string): boolean {
-    const compact = text.replace(/\[[^\]]{1,12}\]/g, '').replace(/@\S+/g, '').replace(/[^A-Za-z0-9\u4e00-\u9fff]+/g, '').toLowerCase();
-    return !compact || /^(哈|呵|嘿|嘻){1,12}$/.test(compact) || /^6{1,12}$/.test(compact)
-      || new Set(['嗯', '哦', '啊', '好', '赞', '点赞', '支持', '收到', '路过', '来了', '谢谢', '感谢', '学习了']).has(compact);
-  }
-  private compareThreads(left: CommentThread, right: CommentThread): number {
-    const a = left.root || left.replies[0]; const b = right.root || right.replies[0];
-    return (b?.like_count || 0) - (a?.like_count || 0) || (b?.reply_count || b?.text.length || 0) - (a?.reply_count || a?.text.length || 0);
+  private renderStockMentions(detail: BloggerWorkDetail): HTMLElement {
+    const report = detail.stock_mentions; const root = document.createElement('section'); root.className = 'model-stock-report';
+    if (!report || (!report.method && !report.items.length)) {
+      root.append(this.message('此作品尚无已同步的评股报告，不能据此判断评论中没有股票。这里不会自动猜测股票简称。'));
+      return root;
+    }
+    const items = [...report.items].sort((a, b) => b.comment_count - a.comment_count || b.mention_count - a.mention_count || a.code.localeCompare(b.code)).slice(0, 20);
+    const heading = document.createElement('header'); const title = document.createElement('b'); title.textContent = '评论区股票热度';
+    const summary = document.createElement('span'); summary.textContent = `报告已检查 ${report.total_comments} 条评论 · 展示 ${items.length} / ${report.stock_count} 只股票`; heading.append(title, summary); root.append(heading);
+    const explanation = document.createElement('p'); explanation.className = 'model-comment-sort-note'; explanation.textContent = '按提及股票的评论条数排序，最多展示前 20 只；热度不代表博主推荐、持仓或投资建议。'; root.append(explanation);
+    const threads = commentThreads(detail.comments);
+    if (!items.length) root.append(this.message('已有报告中没有可唯一识别的股票提及。'));
+    items.forEach((stock, index) => {
+      const row = document.createElement('details'); row.className = `model-stock-row${index < 3 ? ' is-top-stock' : ''}`;
+      const rowSummary = document.createElement('summary'); const rank = document.createElement('span'); rank.className = 'model-stock-rank'; rank.textContent = String(index + 1);
+      const identity = document.createElement('div'); identity.className = 'model-stock-identity'; const name = document.createElement('b'); name.textContent = stock.name;
+      const code = document.createElement('small'); code.textContent = stock.code; const breakdown = document.createElement('small'); breakdown.className = 'model-stock-breakdown'; breakdown.textContent = `粉丝 ${stock.fan_comment_count} · 作者 ${stock.author_comment_count}`; identity.append(name, code, breakdown);
+      const count = document.createElement('span'); count.className = 'model-stock-count'; count.textContent = `${stock.comment_count} 条评论`; rowSummary.append(rank, identity, count); row.append(rowSummary);
+      let expanded = false;
+      row.addEventListener('toggle', () => {
+        if (!row.open || expanded) return; expanded = true; const ids = new Set(stock.comment_ids);
+        const matched = threads.filter((thread) => [thread.root, ...thread.replies].some((comment) => comment && ids.has(comment.id)));
+        if (matched.length) matched.slice(0, 20).forEach((thread) => row.append(this.renderCommentThread(thread, false)));
+        else stock.examples.forEach((example) => { const text = document.createElement('p'); text.className = 'model-stock-example'; text.textContent = `已保存的报告摘录：${example}`; row.append(text); });
+      }); root.append(row);
+    });
+    if (report.uncertain.length) {
+      const uncertain = document.createElement('details'); uncertain.className = 'model-stock-uncertain'; const title = document.createElement('summary'); title.textContent = `待核对简称 ${report.uncertain.length} 项（不计入排名）`; uncertain.append(title);
+      report.uncertain.forEach((item) => { const line = document.createElement('p'); line.textContent = `${item.text} · ${item.comment_count} 条${item.candidates.length ? ` · 候选：${item.candidates.join('、')}` : ''}`; uncertain.append(line); }); root.append(uncertain);
+    }
+    const footer = document.createElement('p'); footer.className = 'model-comments-note'; footer.textContent = report.message || '使用采集端已核验的本地证券名称表生成，不用 AI 猜测。'; root.append(footer); return root;
   }
 
   private renderTitleEditor(detail: BloggerWorkDetail): HTMLElement {
@@ -433,6 +546,92 @@ export class BloggerPanel {
       const result = await instantApi.transcribeBloggerWork(this.detail.work_key, engine);
       this.detail.transcripts = [{ text: result.text, source: result.engine, language: 'zh-CN', created_at: new Date().toISOString() }];
       this.workMessage = { text: result.message || '识别完成，请核对后保存正式原文。', tone: 'is-done' };
+    } catch (error) { this.workMessage = { text: this.errorText(error), tone: 'is-error' }; }
+    finally { this.busy = false; this.renderDetail(); }
+  }
+
+  private renderKeywords(detail: BloggerWorkDetail): HTMLElement {
+    const panel = document.createElement('div'); panel.className = 'model-keyword-panel';
+    const info = detail.keyword_info;
+    const note = document.createElement('p');
+    note.textContent = info?.edited_by_owner ? '已保存的主人整理结果；不会自动重提炼。' : '显示已保存的 AI 提炼结果；查看和手动整理不调用 AI。';
+    panel.append(note);
+    const extract = this.actionButton('豆包 AI 提炼关键词', 'extract-keywords');
+    extract.disabled = !detail.video_text.text.trim() || this.busy || this.editingKeywords; panel.append(extract);
+    if (info?.stale) panel.append(this.message('原文可能已变化，请核对已有关键词；本页不会自动产生新结果。'));
+    const groups = Object.entries(info?.categories || {});
+    const categorized = new Set(groups.flatMap(([, words]) => words));
+    const extra = detail.keywords.filter((word) => !categorized.has(word));
+    [...groups, ['其他关键词', extra] as [string, string[]]].forEach(([name, words]) => {
+      if (!words.length && !this.editingKeywords) return;
+      const group = document.createElement('section'); const title = document.createElement('h4'); title.textContent = name; group.append(title);
+      if (this.editingKeywords) {
+        const input = document.createElement('textarea'); input.dataset.keywordCategory = name; input.setAttribute('aria-label', name);
+        input.value = words.join('、'); input.maxLength = name === '其他关键词' ? 5000 : 600; group.append(input);
+      } else words.forEach((word) => group.append(this.pill(word)));
+      panel.append(group);
+    });
+    if (!detail.keywords.length && !this.editingKeywords) panel.append(this.message('尚无已保存关键词。可基于已保存的视频原文点击豆包提炼。'));
+    if (this.editingKeywords) {
+      panel.append(this.message('用顿号、逗号或换行分隔；每类最多 8 个关键词。'));
+      const save = this.actionButton('保存关键词', 'save-keywords', true); save.disabled = this.busy;
+      panel.append(save, this.actionButton('取消整理', 'cancel-keywords'));
+    } else if (detail.keyword_revision) panel.append(this.actionButton('手动整理关键词', 'edit-keywords'));
+    return panel;
+  }
+
+  private async extractKeywords(): Promise<void> {
+    if (!this.detail || this.busy) return;
+    if (!window.confirm('只根据已保存的视频原文调用豆包提炼十类关键词，可能产生模型费用。确认继续？')) return;
+    this.busy = true; this.setWorkMessage('正在排队提炼关键词…', '');
+    try {
+      const result = await instantApi.extractBloggerKeywords(this.detail.work_key, this.detail.keyword_revision || '');
+      this.workMessage = { text: `${result.message}。可在作品页“豆包自动处理”查看状态。`, tone: 'is-done' };
+    } catch (error) { this.workMessage = { text: this.errorText(error), tone: 'is-error' }; }
+    finally { this.busy = false; this.renderDetail(); }
+  }
+
+  private async saveKeywords(): Promise<void> {
+    if (!this.detail || this.busy) return;
+    const categories: Record<string, string[]> = {}; let extra: string[] = [];
+    this.element.querySelectorAll<HTMLTextAreaElement>('[data-keyword-category]').forEach((input) => {
+      const words = [...new Set(input.value.split(/[、,，;；\n]+/).map((word) => word.trim()).filter(Boolean))];
+      if (input.dataset.keywordCategory === '其他关键词') extra = words;
+      else categories[input.dataset.keywordCategory!] = words;
+    });
+    if (Object.values(categories).some((words) => words.length > 8) || extra.length > 80) {
+      window.alert('每类最多 8 个，其他关键词最多 80 个。请删减后保存。'); return;
+    }
+    this.busy = true;
+    try {
+      const result = await instantApi.saveBloggerKeywords(this.detail.work_key, categories, extra, this.detail.keyword_revision || '');
+      this.detail.keywords = result.keywords; this.detail.keyword_info = result.keyword_info; this.detail.keyword_revision = result.keyword_revision;
+      const work = this.works.find((item) => item.work_key === this.detail?.work_key);
+      if (work) { work.keywords = result.keywords; work.keyword_info = result.keyword_info; work.keyword_revision = result.keyword_revision; }
+      this.editingKeywords = false; this.workMessage = { text: '关键词已保存；未调用 AI。', tone: 'is-done' };
+    } catch (error) { window.alert(this.errorText(error)); }
+    finally { this.busy = false; this.renderDetail(); }
+  }
+
+  private renderInterpretation(detail: BloggerWorkDetail): HTMLElement {
+    const panel = document.createElement('div'); panel.className = 'model-video-text-panel';
+    const text = document.createElement('textarea'); text.id = 'blogger-interpretation'; text.maxLength = 200000;
+    text.value = detail.interpretation.text || ''; text.placeholder = '尚未保存解读感悟。这里不会自动调用 AI。';
+    const actions = document.createElement('div'); actions.className = 'model-text-actions';
+    const save = this.actionButton('保存解读感悟', 'save-interpretation', true); save.disabled = this.busy;
+    actions.append(save); panel.append(text, actions); return panel;
+  }
+
+  private async saveInterpretation(): Promise<void> {
+    if (!this.detail || this.busy) return;
+    const value = this.element.querySelector<HTMLTextAreaElement>('#blogger-interpretation')?.value || '';
+    this.busy = true; this.setWorkMessage('正在保存解读感悟…', '');
+    try {
+      const result = await instantApi.saveBloggerInterpretation(this.detail.work_key, value);
+      this.detail.interpretation = { text: result.text, updated_at: new Date().toISOString() };
+      this.detail.has_interpretation = Boolean(result.text);
+      const work = this.works.find((item) => item.work_key === this.detail?.work_key); if (work) work.has_interpretation = Boolean(result.text);
+      this.workMessage = { text: '解读感悟已保存；未调用 AI。', tone: 'is-done' };
     } catch (error) { this.workMessage = { text: this.errorText(error), tone: 'is-error' }; }
     finally { this.busy = false; this.renderDetail(); }
   }
@@ -482,6 +681,9 @@ export class BloggerPanel {
   private statusPill(text: string, tone: StatusPresentation['tone']): HTMLElement {
     const pill = document.createElement('span'); pill.className = `blogger-status-pill ${tone}`; pill.textContent = text; return pill;
   }
+  private pill(text: string): HTMLElement {
+    const pill = document.createElement('span'); pill.className = 'model-pill'; pill.textContent = text; return pill;
+  }
   private setWorkMessage(text: string, tone: string): void { this.workMessage = { text, tone }; this.renderDetail(); }
   private renderLoading(text: string): void { const loading = this.message(text); loading.classList.add('blogger-loading'); this.body.replaceChildren(loading); }
   private renderViewError(text: string, backAction: 'back-creators' | 'back-works'): void {
@@ -499,7 +701,7 @@ export class BloggerPanel {
   private replaceCreator(creator: BloggerCreator): void {
     const index = this.creators.findIndex((item) => item.creator_id === creator.creator_id); if (index >= 0) this.creators[index] = creator;
   }
-  private resetSelection(): void { this.selectedCreatorId = null; this.selectedWorkKey = null; this.works = []; this.detail = null; this.workMessage = null; }
+  private resetSelection(): void { this.selectedCreatorId = null; this.selectedWorkKey = null; this.works = []; this.detail = null; this.workMessage = null; this.editingKeywords = false; }
   private selectedCreator(): BloggerCreator | null { return this.creators.find((creator) => creator.creator_id === this.selectedCreatorId) || null; }
   private formatDate(value: string | null): string {
     if (!value) return '时间待确认'; const date = new Date(value); if (Number.isNaN(date.getTime())) return value;

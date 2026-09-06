@@ -160,6 +160,10 @@ export interface BloggerWork {
   media_available: boolean;
   video_url: string;
   has_video_text: boolean;
+  has_interpretation: boolean;
+  keywords: string[];
+  keyword_info?: ModelMrKeywordInfo;
+  keyword_revision?: string;
   comment_count: number;
 }
 
@@ -184,6 +188,8 @@ export interface BloggerWorkDetail extends BloggerWork {
   video_text: { text: string; official: boolean; source: string; updated_at: string };
   transcripts: ModelMrTranscript[];
   comments: ModelMrComment[];
+  interpretation: { text: string; updated_at: string };
+  stock_mentions: ModelMrStockMentionReport;
   comment_total: number;
   capabilities: {
     video: boolean;
@@ -193,6 +199,16 @@ export interface BloggerWorkDetail extends BloggerWork {
     doubao_asr: boolean;
     comments: boolean;
   };
+}
+
+export interface BloggerProcessing {
+  enabled: boolean;
+  failures: number;
+  daily_call_limit: number;
+  max_video_minutes: number;
+  speech_configured: boolean;
+  keywords_configured: boolean;
+  items: Array<{ id: number; work_key: string; state: string; phase: string; message: string; updated: number }>;
 }
 
 export interface ModelMrStatus {

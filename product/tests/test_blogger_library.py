@@ -15,7 +15,11 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from instant_ai.blogger_ingest import BloggerIngestStore, MANIFEST_SCHEMA_VERSION, opaque_work_key
-from instant_ai.blogger_library import BloggerLibrary, MODEL_MR_TRANSFER_CREATOR_ID
+from instant_ai.blogger_library import BloggerLibrary, BloggerLibraryUnavailable, MODEL_MR_TRANSFER_CREATOR_ID
+from instant_ai.blogger_processing import BloggerProcessor
+from instant_ai import model_mr_keywords
+from instant_ai.model_mr_metadata import KEYWORD_CATEGORIES
+from instant_ai.model_mr_processing import PROVIDER_LOCK
 from instant_ai.server import InstantAIHandler
 
 
@@ -356,7 +360,8 @@ class BloggerLibraryTests(unittest.TestCase):
             "work_key", "creator_id", "source_work_id", "platform", "work_type",
             "title", "description", "source_url", "published_at", "captured_at",
             "transfer", "processing_status", "media_available", "video_url",
-            "has_video_text", "comment_count",
+            "has_video_text", "has_interpretation", "keywords", "keyword_info",
+            "keyword_revision", "comment_count",
         })
         self.assertEqual(set(work["transfer"]), {
             "status", "source_revision", "received_at", "media_expected",
@@ -371,7 +376,7 @@ class BloggerLibraryTests(unittest.TestCase):
         assert detail is not None
         self.assertEqual(set(detail), set(work) | {
             "comment_snapshot", "video_text", "transcripts", "comments",
-            "comment_total", "capabilities",
+            "interpretation", "stock_mentions", "comment_total", "capabilities",
         })
         self.assertEqual(set(detail["comment_snapshot"]), {
             "captured_at", "complete", "expected_total", "captured_count",
@@ -404,6 +409,287 @@ class BloggerLibraryTests(unittest.TestCase):
         self.assertTrue(cached["cached"])
         self.assertEqual(cached["text"], "正式视频原文")
         self.assertTrue(self.library.owner_database_path.is_file())
+
+    def test_owner_keywords_interpretation_auto_text_and_stock_report_are_preserved(self) -> None:
+        transfer_id, work_key = self._insert_work(
+            "owner-parity",
+            source_work_id="work-owner-parity",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+            processing_status="awaiting_asr_approval",
+        )
+        arrival = self.library.processing_arrival(transfer_id)
+        self.assertEqual(arrival["work_key"], work_key)
+        self.assertEqual(len(arrival["media_hash"]), 64)
+
+        self.assertEqual(self.library.save_auto_video_text(work_key, "自动识别原文"), "自动识别原文")
+        detail = self.library.work_detail(work_key)
+        self.assertFalse(detail["video_text"]["official"])
+        self.assertEqual(detail["video_text"]["source"], "doubao-auto-unreviewed")
+        self.library.save_video_text(work_key, "主人核对原文")
+
+        revision = self.library.work_detail(work_key)["keyword_revision"]
+        categories = {name: [] for name in KEYWORD_CATEGORIES}
+        categories["行业与板块"] = ["黄金", "贵金属"]
+        saved = self.library.save_keywords(work_key, categories, ["降息"], revision)
+        self.assertTrue(saved["keyword_info"]["edited_by_owner"])
+        with self.assertRaisesRegex(ValueError, "已被更新"):
+            self.library.save_keywords(work_key, categories, [], revision)
+
+        self.library.save_interpretation(work_key, "这是已核对的解读。")
+        report = self.library.save_stock_mentions(work_key, {
+            "total_comments": 999,
+            "stock_count": 1,
+            "method": "local-security-master",
+            "api_used": True,
+            "items": [{
+                "name": "紫金矿业", "code": "601899", "comment_count": 2,
+                "mention_count": 3, "fan_comment_count": 1, "author_comment_count": 1,
+                "examples": ["紫金矿业怎么看"], "comment_ids": [1, 2, 999],
+            }],
+        })
+        self.assertFalse(report["api_used"])
+        self.assertEqual(report["total_comments"], 2)
+        self.assertEqual(report["items"][0]["comment_ids"], [1, 2])
+
+        detail = self.library.work_detail(work_key)
+        self.assertTrue(detail["video_text"]["official"])
+        self.assertEqual(detail["keywords"], ["黄金", "贵金属", "降息"])
+        self.assertEqual(detail["interpretation"]["text"], "这是已核对的解读。")
+        self.assertEqual(detail["stock_mentions"]["items"][0]["code"], "601899")
+
+    def test_legacy_owner_database_migrates_without_losing_existing_text(self) -> None:
+        _, work_key = self._insert_work(
+            "legacy-owner",
+            source_work_id="work-legacy-owner",
+            revision=1,
+        )
+        self.library.owner_database_path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(self.library.owner_database_path)) as connection, connection:
+            connection.execute(
+                """
+                CREATE TABLE work_content(
+                    work_key TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
+                    video_text TEXT NOT NULL DEFAULT '', transcript_text TEXT NOT NULL DEFAULT '',
+                    transcript_engine TEXT NOT NULL DEFAULT '', transcript_language TEXT NOT NULL DEFAULT '',
+                    transcript_created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO work_content(work_key,title,video_text,updated_at) VALUES(?,?,?,?)",
+                (work_key, "旧标题", "旧原文", "2026-09-01T00:00:00Z"),
+            )
+        self.library.save_interpretation(work_key, "新解读")
+        detail = self.library.work_detail(work_key)
+        self.assertEqual(detail["title"], "旧标题")
+        self.assertEqual(detail["video_text"]["text"], "旧原文")
+        self.assertEqual(detail["interpretation"]["text"], "新解读")
+        with closing(sqlite3.connect(self.library.owner_database_path)) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(work_content)")}
+        self.assertIn("keyword_info_json", columns)
+        self.assertIn("stock_mentions_json", columns)
+
+    def test_blogger_keyword_processor_is_explicit_deduplicated_and_saves_result(self) -> None:
+        _, work_key = self._insert_work(
+            "keyword-job",
+            source_work_id="work-keyword-job",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+        )
+        self.library.save_video_text(work_key, "黄金与美联储降息预期。")
+        processor = BloggerProcessor(self.library)
+        self.assertFalse(processor.status()["enabled"])
+        revision = self.library.work_detail(work_key)["keyword_revision"]
+        first = processor.request_keywords(work_key, revision)
+        second = processor.request_keywords(work_key, revision)
+        self.assertEqual(first["job_id"], second["job_id"])
+        categories = {name: [] for name in KEYWORD_CATEGORIES}
+        categories["宏观、政策与事件"] = ["美联储", "降息"]
+        result = {
+            "categories": categories,
+            "keywords": ["美联储", "降息"],
+            "model": "doubao:test",
+            "schema_version": model_mr_keywords.SCHEMA_VERSION,
+            "source_hash": model_mr_keywords.source_hash("黄金与美联储降息预期。"),
+            "edited_by_owner": False,
+        }
+        with patch("instant_ai.blogger_processing.model_mr_keywords.is_configured", return_value=True), patch(
+            "instant_ai.blogger_processing.model_mr_keywords.extract_keywords", return_value=result
+        ) as extract:
+            self.assertTrue(processor.process_one())
+        extract.assert_called_once()
+        detail = self.library.work_detail(work_key)
+        self.assertEqual(detail["keywords"], ["美联储", "降息"])
+        self.assertFalse(detail["keyword_info"]["edited_by_owner"])
+        self.assertEqual(processor.status()["items"][0]["state"], "done")
+
+    def test_blogger_manual_keyword_click_resumes_pre_call_configuration_after_recovery(self) -> None:
+        _, work_key = self._insert_work(
+            "keyword-configuration-recovery",
+            source_work_id="work-keyword-configuration-recovery",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+        )
+        original = "黄金与美联储降息预期。"
+        self.library.save_video_text(work_key, original)
+        processor = BloggerProcessor(self.library)
+        revision = self.library.work_detail(work_key)["keyword_revision"]
+        with patch("instant_ai.blogger_processing.model_mr_keywords.is_configured", return_value=False):
+            processor.request_keywords(work_key, revision)
+            self.assertTrue(processor.process_one())
+            stale = processor.request_keywords(work_key, revision)
+        self.assertEqual(stale["state"], "configuration")
+
+        categories = {name: [] for name in KEYWORD_CATEGORIES}
+        categories["宏观、政策与事件"] = ["美联储", "降息"]
+        result = {
+            "categories": categories,
+            "keywords": ["美联储", "降息"],
+            "model": "doubao:test",
+            "schema_version": model_mr_keywords.SCHEMA_VERSION,
+            "source_hash": model_mr_keywords.source_hash(original),
+            "edited_by_owner": False,
+        }
+        with patch("instant_ai.blogger_processing.model_mr_keywords.is_configured", return_value=True), patch(
+            "instant_ai.blogger_processing.model_mr_keywords.extract_keywords", return_value=result
+        ) as extract:
+            resumed = processor.request_keywords(work_key, revision)
+            self.assertEqual(resumed["state"], "queued")
+            self.assertTrue(processor.process_one())
+        extract.assert_called_once_with(original)
+        self.assertEqual(processor.status()["items"][0]["state"], "done")
+
+    def test_blogger_manual_keyword_click_never_resumes_ambiguous_review_job(self) -> None:
+        _, work_key = self._insert_work(
+            "keyword-review-boundary",
+            source_work_id="work-keyword-review-boundary",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+        )
+        self.library.save_video_text(work_key, "黄金与就业数据。")
+        processor = BloggerProcessor(self.library)
+        revision = self.library.work_detail(work_key)["keyword_revision"]
+        with patch("instant_ai.blogger_processing.model_mr_keywords.is_configured", return_value=True), patch(
+            "instant_ai.blogger_processing.model_mr_keywords.extract_keywords",
+            side_effect=RuntimeError("ambiguous paid request"),
+        ) as extract:
+            processor.request_keywords(work_key, revision)
+            self.assertTrue(processor.process_one())
+            repeated = processor.request_keywords(work_key, revision)
+            self.assertEqual(repeated["state"], "review")
+            self.assertFalse(processor.process_one())
+        extract.assert_called_once_with("黄金与就业数据。")
+
+    def test_blogger_automatic_queue_only_records_completed_arrival_while_enabled(self) -> None:
+        transfer_id, work_key = self._insert_work(
+            "automatic-arrival",
+            source_work_id="work-automatic-arrival",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+        )
+        processor = BloggerProcessor(self.library)
+        processor.enqueue_transfer(transfer_id)
+        self.assertEqual(processor.status()["items"], [])
+        processor.set_enabled(True)
+        processor.enqueue_transfer(transfer_id)
+        processor.enqueue_transfer(transfer_id)
+        status = processor.status()
+        self.assertEqual(len(status["items"]), 1)
+        self.assertEqual(status["items"][0]["work_key"], work_key)
+        processor.set_enabled(False)
+        self.assertFalse(processor.process_one())
+
+    def test_manual_blogger_asr_cannot_run_beside_an_automatic_provider_call(self) -> None:
+        _, work_key = self._insert_work(
+            "manual-shared-lock",
+            source_work_id="work-manual-shared-lock",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+        )
+        self.assertTrue(PROVIDER_LOCK.acquire(blocking=False))
+        try:
+            with patch(
+                "instant_ai.blogger_library.doubao_asr.transcribe_video",
+                side_effect=AssertionError("paid provider called"),
+            ) as transcribe, self.assertRaisesRegex(BloggerLibraryUnavailable, "其他识别正在进行"):
+                self.library.transcribe(work_key, "doubao")
+            transcribe.assert_not_called()
+        finally:
+            PROVIDER_LOCK.release()
+
+    def test_blogger_processing_routes_require_owner_csrf_and_billing_confirmation(self) -> None:
+        _, work_key = self._insert_work(
+            "processing-routes",
+            source_work_id="work-processing-routes",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+        )
+        self.library.save_video_text(work_key, "黄金与就业数据。")
+        processor = BloggerProcessor(self.library)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), InstantAIHandler)
+        server.blogger_transfer = None
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+
+        def request(method: str, path: str, payload: dict | None = None, *, owner: bool = True, csrf: bool = True):
+            body = json.dumps(payload).encode("utf-8") if payload is not None else None
+            headers = {}
+            if owner:
+                headers["Cookie"] = "owner=yes"
+            if csrf:
+                headers["X-Instant-AI"] = "1"
+            if body is not None:
+                headers.update({"Content-Type": "application/json", "Content-Length": str(len(body))})
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+            connection.request(method, path, body=body, headers=headers)
+            response = connection.getresponse()
+            result = response.status, json.loads(response.read())
+            connection.close()
+            return result
+
+        with patch("instant_ai.server.AUTH", FakeOwnerAuth()), patch(
+            "instant_ai.server.BLOGGER_LIBRARY", self.library
+        ), patch("instant_ai.server.BLOGGER_PROCESSOR", processor):
+            thread.start()
+            try:
+                route = "/api/blogger-library/processing"
+                self.assertEqual(request("GET", route, owner=False)[0], 401)
+                self.assertEqual(request("GET", route)[0], 200)
+                self.assertFalse(processor.path.exists())
+                self.assertEqual(request("POST", route, {"enabled": True}, csrf=False)[0], 403)
+                self.assertEqual(request("POST", route, {"enabled": True})[0], 400)
+                status, value = request("POST", route, {"enabled": True, "confirm_billing": True})
+                self.assertEqual(status, 200)
+                self.assertTrue(value["enabled"])
+
+                extract = f"/api/blogger-library/works/{work_key}/extract-keywords"
+                revision = self.library.work_detail(work_key)["keyword_revision"]
+                self.assertEqual(request("POST", extract, {"expected_revision": revision})[0], 400)
+                status, value = request(
+                    "POST",
+                    extract,
+                    {"expected_revision": revision, "confirm_billing": True},
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(value["state"], "queued")
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
 
     def test_reserved_model_mr_transport_identity_is_hidden_from_blogger_views_and_mcp(self) -> None:
         transfer_id, _ = self._insert_work(
@@ -610,7 +896,7 @@ class BloggerLibraryTests(unittest.TestCase):
         detail = self.library.work_detail(work_key)
         self.assertEqual(detail["processing_status"], "awaiting_asr_approval")
 
-    def test_four_get_routes_require_owner_cookie_and_have_no_write_variant(self) -> None:
+    def test_owner_get_routes_require_cookie_and_status_has_no_write_variant(self) -> None:
         _, work_key = self._insert_work(
             "route",
             source_work_id="work-route",
@@ -622,12 +908,15 @@ class BloggerLibraryTests(unittest.TestCase):
         owner_auth = FakeOwnerAuth()
         routes = (
             "/api/blogger-library/status",
+            "/api/blogger-library/processing",
             "/api/blogger-library/creators",
             f"/api/blogger-library/creators/{CREATOR_ID}/works",
             f"/api/blogger-library/works/{work_key}",
         )
         with patch("instant_ai.server.AUTH", owner_auth), patch(
             "instant_ai.server.BLOGGER_LIBRARY", self.library
+        ), patch(
+            "instant_ai.server.BLOGGER_PROCESSOR", BloggerProcessor(self.library)
         ), patch("instant_ai.server.queue_analysis", Mock(side_effect=AssertionError("AI called"))):
             thread.start()
             try:
@@ -725,9 +1014,17 @@ class BloggerLibraryTests(unittest.TestCase):
                 self.assertEqual(body, b"\x00\x00\x00\x18")
                 connection.close()
 
+                categories = {name: [] for name in KEYWORD_CATEGORIES}
+                categories["行业与板块"] = ["黄金"]
                 for action, payload in (
                     ("title", {"title": "手机修改标题"}),
                     ("video-text", {"text": "手机保存原文"}),
+                    ("interpretation", {"text": "手机保存解读"}),
+                    ("keywords", {
+                        "categories": categories,
+                        "keywords": [],
+                        "expected_revision": self.library.work_detail(work_key)["keyword_revision"],
+                    }),
                 ):
                     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                     connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
