@@ -1,15 +1,18 @@
 # 项目状态
 
 - 最后更新：2026-09-06
+- 模型先生云端 AI 关键词故障已修复并完成真实验收。三端核对确认：本地模型先生的语音与文本能力均为 configured/enabled，文本模型为 `doubao-seed-2-1-turbo-260628`；GitHub 0.20.0 已包含同协议关键词适配器；新加坡生产原先只有语音配置，缺少独立 Ark 文本配置，因此请求在计费前即停为“缺少豆包配置”，不是余额不足。
+- 现已把既有文本凭据经加密 SSH 写入 Git 外 `/etc/instant-ai/model-mr-text-secrets.env`，文件为 `root:root 0600`，运行进程只确认加载了 `INSTANT_AI_DOUBAO_ARK_API_KEY` 与模型名而未输出值。受限发布器把生产仓库从 `77a870c` 安全快进到 GitHub 当前 `d74a952`，服务器 151 项测试、服务重启与 0.20.0 健康检查通过。
+- 单条付费验收只重试作品 1000009：复用已保存的 141 字原文，没有重复 ASR；豆包文本调用成功生成并保存 7 个关键词，任务变为 `done`，模型和十类 schema 正确。这证明当前 Key、模型权限和账户余额可用。自动处理仍保持关闭，其余旧任务没有批量重试，避免未经逐条核对继续计费。
 - 北京采集器 1.0.8 已通过 Git 专用生产分支正式上线并完成两次连续更新验收：真实安全后继基线为 collector 1.0.7 / `05287e9f6c06736034f23374de6568bc09cb3307`，公共源码位于 `services/beijing-blogger-collector/`；“北极采集器”1024/512/192/180/32 图标、共享页面标签和严格 `/health/version` 均已上线。本机完整 218 项测试通过（2 项平台跳过）；服务器两次各通过 218 项隔离测试，最终部署 `7da442128f8aef619c593766a4b62736fb19a4de`。`beijing-production`、子树 tree 门禁、非 root 断网测试、失败 SHA 抑制和健康回滚已实际验证。
 - Codex 固定口令为“更新并发布北京博主采集器：<具体需求>”。收到这句话后，Codex 在同一任务内完成 Git 同步、修改、测试、提交、推送 `main`、推进 `beijing-production`，并通过 Alibaba Cloud Client 只触发一次固定发布服务后完成公网精确版本验收；所有者不需要自己打开客户端或服务器终端。
 - 北京服务器的 90 秒 Git 定时检查已按所有者要求停止。`blogger-collector-git-deploy.timer` 现场复核为 `UnitFileState=disabled`、`ActiveState=inactive`；正式 `blogger-collector.service` 保持 `ActiveState=active`。
 - 本轮边界已纠正：30 天登录和“指定一条视频”均为已有能力，不属于北极采集器图标或 Codex Git 直连更新建设；以后不得以这两项建设为由重复修改模型下载器或采集业务功能。
 - 即时 AI 0.20.0 已正式上线：使用所有者提供的方形蓝色“即时 AI”图作为页面、登录页、PWA 192/512 与 iPhone 180 图标；手机端把标识、名称、汉化、来源、退出和实时采集合并为单行，页头压缩至 44px 且 390px 无横向溢出。正式与应急域名、Service Worker 和三种图标均已核验。
-- 正式发布检查：受限发布通道返回 `CODEX_CLOUD_PUBLISH_READY`；生产从 `5ddd22c` 安全快进至 `77a870c` / 0.20.0，服务器 151 项回归通过。独立文本模型隐藏输入脚本随代码上线，但本次没有读取或改动任何凭据，没有开启自动处理或执行付费验收。
+- 0.20.0 首次正式发布时，受限发布通道返回 `CODEX_CLOUD_PUBLISH_READY`，生产从 `5ddd22c` 安全快进至 `77a870c`，服务器 151 项回归通过；当时只上线独立文本配置入口，尚未配置或付费验收。本轮已补齐 Git 外文本配置并在 `d74a952` 完成单条真实验收。
 - 配置入口验收：新加坡隔离资料根完整 151 项 Python 测试通过（新增 13 项），涵盖隐藏输入/取消、拒绝参数与管道、格式与双输入校验、现有文件/链接冲突、600 权限、新文件精确撤销和仅重载定义。帮助命令可用，未执行真实配置入口。
 - 本轮开发验收：新加坡隔离目录完整138项Python回归、4项前端契约、TypeScript/Vite构建、生产依赖零漏洞审计通过；390/1280px自动开关/取消费用确认/缺配置状态/原文草稿保留/关键词排队及原分类、播放器、评论交互回归通过。24项新增后端用例含重启不重计费、写入中断缓存恢复、并发保护、时长/配额/三次失败暂停和MCP未人工确认语义。所有模型请求为模拟，没有真实识别费用。
-- 模型先生豆包自动处理代码已随 0.20.0 上线但保持默认关闭：云端原有语音适配器继续复用，新增同协议十类原文提炼、原文哈希/并发保护、新 complete 串行队列、自动保存与去重、费用上限/开关/待核对状态。本次未读取或配置真实云端文本凭据，未做付费调用；后续启用仍需主人明确确认费用并单条验收，详见 ADR-0036。
+- 模型先生豆包自动处理代码已随 0.20.0 上线并保持默认关闭：云端复用原有语音适配器，文本提炼使用与本地一致的 Ark 模型和十类契约；原文哈希、并发保护、串行队列、去重、费用上限与待核对状态继续有效。本轮文本配置和单条真实调用均已通过；以后若开启“新视频自动识别与提炼”，仍须由主人在页面确认费用，详见 ADR-0036。
 - 评论资料验收补充：本地/云端一条 595 赞作者主评论缺少作者 kind，依据主人截图仅在新 Git 外 `model-comments-20260904-v3` 副本确认这一条；其他 409 文件哈希不变。生产与本地源数据未写入，正式发布时应从最新状态精确合并这条确认，不用昵称批量推断。
 - 模型先生评论阅读增强代码已随 0.20.0 上线：补齐红色作者标识、作者赞过标记与原问题上下文；粉丝评论分为正点赞前十和其余有效长回复优先，同楼回复和评股正文按展开分批渲染。发布未改生产评论资料或调用 AI，详见 ADR-0035。
 - 模型先生关键词/投资思路手机交互代码已随 0.20.0 上线：手机一级/二级分类可进入关联作品，支持 24 条分页、搜索、共用播放器、已有 AI 分类关键词完整查看/手动整理及已有解读感悟。Git 外隔离预览未合并到生产，后续如需补齐元数据必须基于最新生产状态重新合并，不能用旧预览覆盖，详见 ADR-0034。
@@ -22,7 +25,7 @@
 - 0.18.2 已正式上线并消除 OAuth 授权页的账号歧义：页面直接从当前 Git 外单主人配置带入并锁定账号，主人只输入密码；错误凭据在原页醒目显示。授权成功后保存 30 天安全主人 Cookie，不再丢弃刚创建的网页登录会话；MCP access token 与网页 Cookie 继续严格隔离。受限发布器安全快进至 `8bd242f`，服务器 93 项回归、公网 OAuth/MCP 协议及真实授权页结构均通过；未读取或重置生产账号密码。
 - 0.18.1 已修复 ADP 官方结果送达后被永久跳过的状态机缺口：已认证官方片段可作为一手证据，搜索索引滞后进入五分钟重试而不是 `skip`，最多三次并持久化原因；即时 AI schema 10 显示罗盘/Codex 回填状态并临时置顶最近变化。即时 AI 一侧已正式上线；时变罗盘三态重试仍是独立待发布候选，须另行取得正式发布授权。
 - 所有者已明确要求把主人密码最低长度调整为 9 个字符，并把 OAuth 主人账号改为指定用户名。代码只调整长度策略；真实密码仍必须在隐藏终端提示中输入，不进入 Git、聊天、命令参数或普通日志。
-- 阶段状态：`BEIJING_COLLECTOR_CODEX_GIT_UPDATE_LIVE / BEIJING_NORTH_POLE_ICON_1_0_8_LIVE / INSTANT_AI_BRAND_0_20_0_LIVE / COMPACT_MOBILE_HEADER_LIVE / MODEL_MR_READING_UI_0_20_0_LIVE / MODEL_MR_AUTOMATION_DEFAULT_OFF / MODEL_MR_LAZY_PAGING_LIVE / MODEL_MR_BEIJING_TRANSFER_LIVE / MODEL_MR_CLOUD_MCP_LIVE / UNIFIED_INSTANT_AI_MCP_FIVE_TOOLS_LIVE / GRANDPAAMU_0_20_0_LIVE / BLOGGER_CALLBACK_LINK_LIVE / BLOGGER_CLOUD_MCP_REAL_CALL_VERIFIED / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 阶段状态：`BEIJING_COLLECTOR_CODEX_GIT_UPDATE_LIVE / BEIJING_NORTH_POLE_ICON_1_0_8_LIVE / INSTANT_AI_BRAND_0_20_0_LIVE / COMPACT_MOBILE_HEADER_LIVE / MODEL_MR_READING_UI_0_20_0_LIVE / MODEL_MR_TEXT_KEYWORDS_LIVE / MODEL_MR_AUTOMATION_DEFAULT_OFF / MODEL_MR_LAZY_PAGING_LIVE / MODEL_MR_BEIJING_TRANSFER_LIVE / MODEL_MR_CLOUD_MCP_LIVE / UNIFIED_INSTANT_AI_MCP_FIVE_TOOLS_LIVE / GRANDPAAMU_0_20_0_LIVE / BLOGGER_CALLBACK_LINK_LIVE / BLOGGER_CLOUD_MCP_REAL_CALL_VERIFIED / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离；新加坡博主接收数据生产根固定为 `/var/lib/instant-ai/blogger-agent`，生命周期待后续决定
@@ -91,7 +94,7 @@
 ## 当前阻塞
 
 - 北京采集器 Codex Git 直连更新和北极采集器图标均无阻塞；90 秒定时轮询已关闭。后续只需给 Codex 固定口令和具体需求，Codex 会在完成 Git 修改后推进 `beijing-production`，再发送一次受控远程命令触发固定发布服务并等待验收，无需所有者打开服务器终端。
-- `P3-MODEL-AUTO-01` 代码已随 0.20.0 上线并保持默认关闭；新云端 Ark 文本凭据尚未由本轮安全配置/实测，不能把本地已配置或云端语音可用当成文本提炼已可用。不得读取或复制本地 `.env`；后续应先安全配置，再由主人确认费用、开启并单条验收。关键词/评论读取代码已上线，但旧 Git 外预览没有合并生产。
+- `P3-MODEL-AUTO-02` 已完成：云端 Ark 文本配置、服务加载和一条真实关键词提炼均通过，没有余额或模型权限阻塞。自动处理仍按设计保持关闭；图片中其余旧 `configuration` 任务只在主人逐条核对并确认费用后重试，不自动批量扣费。关键词/评论读取代码已上线，但旧 Git 外预览没有合并生产。
 
 - 0.19.2 代码、正式发布与生产分页验收无阻塞；手机若仍显示旧页面，只需完全关闭后重新打开以更新 0.19.2 Service Worker。
 - 0.19.1 与北京 1.0.5 的代码、正式发布和首条真实传输均无阻塞；桥接器仅在模型下载器资料实际变化时工作，不存在十分钟轮询更新任务。
@@ -107,6 +110,7 @@
 
 - 北极采集器图标和 Git 通道已按本轮明确授权正式上线，不需要再次批准。iPhone 已存在的旧快捷方式需删除后从 Safari 重新添加一次，才会显示新的北极采集器图标。
 - 0.20.0 已按本轮明确发布口令上线，不需要再次批准；发布没有执行元数据合并、重传模型先生媒体、ASR、豆包或 AI，既有财经自动采集按原计划继续。现有 iPhone 主屏旧图标需要删除快捷方式后重新添加一次。
+- 本轮已按所有者明确要求完成 Ark 文本凭据 Git 外安全配置、一次关键词真实调用和最终正式发布，不需要再次批准。自动处理开关仍关闭；其余旧失败任务不会自动重试，若要处理仍由主人逐条确认费用。
 - 0.19.1 正式发布和北京生产桥启用已按本轮授权完成，不需要再次确认；后续新代码或付费 ASR/豆包/AI 仍须另行明确授权。
 - 即时 AI 0.19.0 已按本轮明确授权正式发布，不再需要发布批准；后续若修改代码或再次发布，仍须取得新的明确授权。
 - 0.18.1 OAuth/DCR 兼容修复已按所有者本轮明确授权正式上线，不需要再次确认；公网协议验收通过，未修改时变罗盘、域名、业务资料或主人密码。
@@ -121,4 +125,4 @@
 
 ## 下一项唯一建议任务
 
-北京采集器本轮已完成；下一项仍按 `TASKS.md` 中未完成事项和所有者的新指令确定，不需要再为本轮打开阿里云客户端终端。
+`P3-MODEL-METADATA-RELEASE`：只有在需要把本地已核验的历史分类/关键词补齐到生产时，才基于最新生产资料做增量合并；不得用旧预览全量覆盖。当前 AI 关键词提炼已可用，不依赖该后续任务。
