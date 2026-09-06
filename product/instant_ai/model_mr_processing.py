@@ -100,15 +100,30 @@ class ModelMrProcessor:
         if (info.get("source_hash") == model_mr_keywords.source_hash(text)
                 and info["schema_version"] == model_mr_keywords.SCHEMA_VERSION):
             return {"ok": True, "state": "done", "message": "原文未变化，沿用已保存关键词，没有调用 API。"}
-        return self._enqueue(work_id, f"keywords:{work_id}:{model_mr_keywords.source_hash(text)}:{revision}",
-                             "keywords", False, revision)
+        return self._enqueue(
+            work_id,
+            f"keywords:{work_id}:{model_mr_keywords.source_hash(text)}:{revision}",
+            "keywords",
+            False,
+            revision,
+            resume_configuration=model_mr_keywords.is_configured(),
+        )
 
-    def _enqueue(self, work_id: int, dedupe: str, kind: str, automatic: bool, revision: str) -> dict[str, Any]:
+    def _enqueue(self, work_id: int, dedupe: str, kind: str, automatic: bool, revision: str,
+                 *, resume_configuration: bool = False) -> dict[str, Any]:
         self.client.processing_detail(work_id)
         with self.db() as conn:
             conn.execute("INSERT OR IGNORE INTO jobs(dedupe,work_id,kind,automatic,revision,updated) VALUES(?,?,?,?,?,?)",
                          (dedupe, work_id, kind, int(automatic), revision, int(time.time())))
             row = conn.execute("SELECT id,state FROM jobs WHERE dedupe=?", (dedupe,)).fetchone()
+            if resume_configuration and row["state"] == "configuration":
+                # Repeating the paid keyword POST is an explicit owner retry. A
+                # recovered configuration may therefore resume this known-safe
+                # pre-call state. Ambiguous review jobs still require the
+                # separate audit/retry action and are never resumed here.
+                conn.execute("UPDATE jobs SET state='queued',updated=? WHERE id=?",
+                             (int(time.time()), row["id"]))
+                return {"ok": True, "job_id": row["id"], "state": "queued", "message": MESSAGES["queued"]}
             return {"ok": True, "job_id": row["id"], "state": row["state"], "message": MESSAGES[row["state"]]}
 
     def retry(self, job_id: int) -> dict[str, Any]:

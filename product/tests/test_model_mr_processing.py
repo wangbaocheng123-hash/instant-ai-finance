@@ -204,6 +204,47 @@ class ProcessingTests(unittest.TestCase):
         self.assertIn('没有调用 API', cached['message'])
         self.kw.assert_called_once()
 
+    def test_manual_keyword_click_resumes_pre_call_configuration_after_recovery(self):
+        self.detail['video_text']['text'] = '科技股原文'
+        self.write_detail()
+        revision = keyword_revision(None, [])
+        with patch('instant_ai.model_mr_processing.model_mr_keywords.is_configured', return_value=False):
+            self.processor.request_keywords(1, revision)
+            self.processor.process_one()
+            stale = self.processor.request_keywords(1, revision)
+        self.assertEqual(stale['state'], 'configuration')
+        resumed = self.processor.request_keywords(1, revision)
+        self.assertEqual(resumed['state'], 'queued')
+        self.assertTrue(self.processor.process_one())
+        self.assertEqual(self.state(), 'done')
+        self.kw.assert_called_once_with('科技股原文')
+
+    def test_manual_keyword_click_never_resumes_ambiguous_review_job(self):
+        self.detail['video_text']['text'] = '科技股原文'
+        self.write_detail()
+        revision = keyword_revision(None, [])
+        self.kw.side_effect = RuntimeError('ambiguous paid request')
+        self.processor.request_keywords(1, revision)
+        self.processor.process_one()
+        self.assertEqual(self.state(), 'review')
+        repeated = self.processor.request_keywords(1, revision)
+        self.assertEqual(repeated['state'], 'review')
+        self.assertFalse(self.processor.process_one())
+        self.kw.assert_called_once()
+
+    def test_automatic_arrival_is_not_resumed_by_duplicate_delivery(self):
+        self.detail['video_text']['text'] = '科技股原文'
+        self.write_detail()
+        self.processor.set_enabled(True)
+        self.processor.enqueue_arrival(1, 'a' * 64)
+        with patch('instant_ai.model_mr_processing.model_mr_keywords.is_configured', return_value=False):
+            self.processor.process_one()
+        self.assertEqual(self.state(), 'configuration')
+        self.processor.enqueue_arrival(1, 'a' * 64)
+        self.assertEqual(self.state(), 'configuration')
+        self.assertFalse(self.processor.process_one())
+        self.kw.assert_not_called()
+
     def test_quota_and_pause_are_checked_before_next_paid_stage(self):
         self.enqueue()
         with self.processor.db() as conn:
