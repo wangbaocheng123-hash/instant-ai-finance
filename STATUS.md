@@ -1,8 +1,9 @@
 # 项目状态
 
-- 最后更新：2026-09-05
-- 北京采集器 1.0.8 已通过 Git 专用生产通道正式上线并完成两次连续发布验收：真实安全后继基线为 collector 1.0.7 / `05287e9f6c06736034f23374de6568bc09cb3307`，公共源码位于 `services/beijing-blogger-collector/`；“北极采集器”1024/512/192/180/32 图标、共享页面标签、手机端指定单条视频入口和严格 `/health/version` 均已上线。本机完整 218 项测试通过（2 项平台跳过）；服务器两次各通过 218 项隔离测试，最终部署 `7da442128f8aef619c593766a4b62736fb19a4de`。`beijing-production`、90 秒检查、子树 tree 门禁、非 root 断网测试、失败 SHA 抑制和健康回滚已实际验证。
-- 北京统一入口的 30 天登录已真正进入运行态：模型下载器已在不读取、不改写账号密码的前提下加载现有 root `0600` 网页认证配置和独立 HTTPS Cookie 配置，随后重启到 `login30d-05287e9f6c06`。运行进程确认持久会话密钥、账号、密码和 HTTPS Cookie 四项均已加载；源码以 `30 * 24 * 60 * 60` 设置永久会话并在登录成功后执行 `session.permanent = True`。本次重启后需再登录一次，此后 30 天内直接进入。
+- 最后更新：2026-09-06
+- 北京采集器 1.0.8 已通过 Git 专用生产分支正式上线并完成两次连续更新验收：真实安全后继基线为 collector 1.0.7 / `05287e9f6c06736034f23374de6568bc09cb3307`，公共源码位于 `services/beijing-blogger-collector/`；“北极采集器”1024/512/192/180/32 图标、共享页面标签和严格 `/health/version` 均已上线。本机完整 218 项测试通过（2 项平台跳过）；服务器两次各通过 218 项隔离测试，最终部署 `7da442128f8aef619c593766a4b62736fb19a4de`。`beijing-production`、90 秒检查、子树 tree 门禁、非 root 断网测试、失败 SHA 抑制和健康回滚已实际验证。
+- Codex 固定口令为“更新并发布北京博主采集器：<具体需求>”。收到这句话后，Codex 在同一任务内完成 Git 同步、修改、测试、提交、推送 `main`、推进 `beijing-production` 和公网精确版本验收，所有者不需要打开 Alibaba Cloud Client 或服务器终端。
+- 本轮边界已纠正：30 天登录和“指定一条视频”均为已有能力，不属于北极采集器图标或 Codex Git 直连更新建设；以后不得以这两项建设为由重复修改模型下载器或采集业务功能。
 - 即时 AI 0.20.0 已正式上线：使用所有者提供的方形蓝色“即时 AI”图作为页面、登录页、PWA 192/512 与 iPhone 180 图标；手机端把标识、名称、汉化、来源、退出和实时采集合并为单行，页头压缩至 44px 且 390px 无横向溢出。正式与应急域名、Service Worker 和三种图标均已核验。
 - 正式发布检查：受限发布通道返回 `CODEX_CLOUD_PUBLISH_READY`；生产从 `5ddd22c` 安全快进至 `77a870c` / 0.20.0，服务器 151 项回归通过。独立文本模型隐藏输入脚本随代码上线，但本次没有读取或改动任何凭据，没有开启自动处理或执行付费验收。
 - 配置入口验收：新加坡隔离资料根完整 151 项 Python 测试通过（新增 13 项），涵盖隐藏输入/取消、拒绝参数与管道、格式与双输入校验、现有文件/链接冲突、600 权限、新文件精确撤销和仅重载定义。帮助命令可用，未执行真实配置入口。
@@ -11,7 +12,7 @@
 - 评论资料验收补充：本地/云端一条 595 赞作者主评论缺少作者 kind，依据主人截图仅在新 Git 外 `model-comments-20260904-v3` 副本确认这一条；其他 409 文件哈希不变。生产与本地源数据未写入，正式发布时应从最新状态精确合并这条确认，不用昵称批量推断。
 - 模型先生评论阅读增强代码已随 0.20.0 上线：补齐红色作者标识、作者赞过标记与原问题上下文；粉丝评论分为正点赞前十和其余有效长回复优先，同楼回复和评股正文按展开分批渲染。发布未改生产评论资料或调用 AI，详见 ADR-0035。
 - 模型先生关键词/投资思路手机交互代码已随 0.20.0 上线：手机一级/二级分类可进入关联作品，支持 24 条分页、搜索、共用播放器、已有 AI 分类关键词完整查看/手动整理及已有解读感悟。Git 外隔离预览未合并到生产，后续如需补齐元数据必须基于最新生产状态重新合并，不能用旧预览覆盖，详见 ADR-0034。
-- 当前阶段：`P2/P3 — 即时 AI 0.20.0 正式生产；北京采集器 Git 通道、1.0.8、北极采集器图标和单条视频入口正式生产`
+- 当前阶段：`P2/P3 — 即时 AI 0.20.0 正式生产；北京采集器 Codex Git 直连更新、1.0.8 与北极采集器图标正式生产`
 - 0.20.0 已按所有者明确“正式发布上线”口令完成：本机 151 项、服务器 151 项 Python 回归通过；正式与应急健康接口、Service Worker、新 PNG 图标、页面资源及统一 MCP `initialize` 全部验收为 0.20.0，即时 AI 与 Caddy active。
 - 0.19.2 已按所有者明确“发布”口令正式上线：生产资料核实为 406 部作品、406 份详情，覆盖 2023-10-29 至 2026-09-03；392 条媒体引用全部存在，评论 39,023 条。客户端首屏 24 条、下滑接近底部每次再取 24 条，详情/评论/视频继续点击后按需读取。服务器完整 106 项 Python 回归、正式健康、Service Worker 和生产分页验收通过；即时 AI、Caddy active。
 - 0.19.1 已按所有者明确授权正式发布：新加坡受限发布器把生产仓库安全快进至 `c905683`，服务器 104 项 Python 回归全部通过，正式健康接口、Service Worker 与 MCP `initialize` 均返回 0.19.1，五个只读工具保持正常。随后北京按需更新到 `1b4e018` / collector 1.0.5，安装 systemd 补充组并确认无轮询定时器；只读桥首轮把模型下载器作品 `7679663804129553913` 的 MP4 与 247 条评论送达新加坡模型先生记录 `model-mr-work:1000000`。视频、评论、页面资料和现有 MCP 索引均可见；未触发采集、ASR、豆包或 AI，时变罗盘未修改。
@@ -20,7 +21,7 @@
 - 0.18.2 已正式上线并消除 OAuth 授权页的账号歧义：页面直接从当前 Git 外单主人配置带入并锁定账号，主人只输入密码；错误凭据在原页醒目显示。授权成功后保存 30 天安全主人 Cookie，不再丢弃刚创建的网页登录会话；MCP access token 与网页 Cookie 继续严格隔离。受限发布器安全快进至 `8bd242f`，服务器 93 项回归、公网 OAuth/MCP 协议及真实授权页结构均通过；未读取或重置生产账号密码。
 - 0.18.1 已修复 ADP 官方结果送达后被永久跳过的状态机缺口：已认证官方片段可作为一手证据，搜索索引滞后进入五分钟重试而不是 `skip`，最多三次并持久化原因；即时 AI schema 10 显示罗盘/Codex 回填状态并临时置顶最近变化。即时 AI 一侧已正式上线；时变罗盘三态重试仍是独立待发布候选，须另行取得正式发布授权。
 - 所有者已明确要求把主人密码最低长度调整为 9 个字符，并把 OAuth 主人账号改为指定用户名。代码只调整长度策略；真实密码仍必须在隐藏终端提示中输入，不进入 Git、聊天、命令参数或普通日志。
-- 阶段状态：`BEIJING_COLLECTOR_GIT_CHANNEL_LIVE / BEIJING_NORTH_POLE_ICON_1_0_8_LIVE / BEIJING_SINGLE_VIDEO_LIVE / INSTANT_AI_BRAND_0_20_0_LIVE / COMPACT_MOBILE_HEADER_LIVE / MODEL_MR_READING_UI_0_20_0_LIVE / MODEL_MR_AUTOMATION_DEFAULT_OFF / MODEL_MR_LAZY_PAGING_LIVE / MODEL_MR_BEIJING_TRANSFER_LIVE / MODEL_MR_CLOUD_MCP_LIVE / UNIFIED_INSTANT_AI_MCP_FIVE_TOOLS_LIVE / GRANDPAAMU_0_20_0_LIVE / BLOGGER_CALLBACK_LINK_LIVE / BLOGGER_CLOUD_MCP_REAL_CALL_VERIFIED / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 阶段状态：`BEIJING_COLLECTOR_CODEX_GIT_UPDATE_LIVE / BEIJING_NORTH_POLE_ICON_1_0_8_LIVE / INSTANT_AI_BRAND_0_20_0_LIVE / COMPACT_MOBILE_HEADER_LIVE / MODEL_MR_READING_UI_0_20_0_LIVE / MODEL_MR_AUTOMATION_DEFAULT_OFF / MODEL_MR_LAZY_PAGING_LIVE / MODEL_MR_BEIJING_TRANSFER_LIVE / MODEL_MR_CLOUD_MCP_LIVE / UNIFIED_INSTANT_AI_MCP_FIVE_TOOLS_LIVE / GRANDPAAMU_0_20_0_LIVE / BLOGGER_CALLBACK_LINK_LIVE / BLOGGER_CLOUD_MCP_REAL_CALL_VERIFIED / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离；新加坡博主接收数据生产根固定为 `/var/lib/instant-ai/blogger-agent`，生命周期待后续决定
@@ -88,7 +89,7 @@
 
 ## 当前阻塞
 
-- 北京采集器 Git 通道、图标、单条视频入口与 30 天登录复核均无阻塞；后续普通功能更新只需在 Git `main` 完成检查，明确发布后快进 `beijing-production`，服务器会自动更新。
+- 北京采集器 Codex Git 直连更新和北极采集器图标均无阻塞；后续只需给 Codex 固定口令和具体需求，Codex 会在完成 Git 修改后推进 `beijing-production` 并等待服务器更新，无需所有者打开服务器终端。
 - `P3-MODEL-AUTO-01` 代码已随 0.20.0 上线并保持默认关闭；新云端 Ark 文本凭据尚未由本轮安全配置/实测，不能把本地已配置或云端语音可用当成文本提炼已可用。不得读取或复制本地 `.env`；后续应先安全配置，再由主人确认费用、开启并单条验收。关键词/评论读取代码已上线，但旧 Git 外预览没有合并生产。
 
 - 0.19.2 代码、正式发布与生产分页验收无阻塞；手机若仍显示旧页面，只需完全关闭后重新打开以更新 0.19.2 Service Worker。

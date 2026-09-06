@@ -50,6 +50,8 @@ $requiredFiles = @(
     'docs/decisions/ADR-0031-codex-verification-retry-and-feedback.md',
     'docs/decisions/ADR-0032-model-mr-readonly-cloud-mcp.md',
     'docs/decisions/ADR-0033-beijing-model-downloader-model-mr-transport.md',
+    'docs/decisions/ADR-0037-beijing-collector-git-production-channel.md',
+    'docs/BEIJING_COLLECTOR_GIT_RELEASE.md',
     'deploy/aliyun/check-publish-channel.sh',
     'deploy/aliyun/update-model-mr-owner-metadata.sh',
     'deploy/aliyun/install-codex-publish-channel.sh',
@@ -79,12 +81,14 @@ $requiredMemoryRules = @(
     @{ Path = 'PROJECT_CHARTER.md'; Text = ConvertFrom-Utf8Base64 '5Y2V5Li75Lq644CB5peg5rOo5YaM44CB5peg5aSa55So5oi35L2T57O7' },
     @{ Path = 'docs/decisions/ADR-0020-single-owner-thirty-day-session.md'; Text = ConvertFrom-Utf8Base64 '5LiN5bu656uL55So5oi36KGo' },
     @{ Path = 'docs/decisions/ADR-0022-model-mr-owner-mobile-library.md'; Text = 'single-owner-mobile-library' },
-    @{ Path = 'STATUS.md'; Text = 'GRANDPAAMU_0_19_2_LIVE' },
+    @{ Path = 'STATUS.md'; Text = 'GRANDPAAMU_0_20_0_LIVE' },
     @{ Path = 'STATUS.md'; Text = 'https://grandpaamu.com/' },
     @{ Path = 'PROJECT_CHARTER.md'; Text = 'ADR-0010' },
     @{ Path = 'AGENTS.md'; Text = ConvertFrom-Utf8Base64 '5LiN5b6X5omT5byA5oiW5o6n5Yi2IENocm9tZeOAgUVkZ2XjgIHlhoXnva7mtY/op4jlmajmiJbpmL/ph4zkupHnvZHpobXmjqfliLblj7A=' },
     @{ Path = 'AGENTS.md'; Text = 'sudo -n /usr/local/sbin/instant-ai-publish' },
-    @{ Path = 'STATUS.md'; Text = 'CODEX_CLOUD_PUBLISH_READY' }
+    @{ Path = 'STATUS.md'; Text = 'CODEX_CLOUD_PUBLISH_READY' },
+    @{ Path = 'AGENTS.md'; Text = ConvertFrom-Utf8Base64 '5pu05paw5bm25Y+R5biD5YyX5Lqs5Y2a5Li76YeH6ZuG5Zmo' },
+    @{ Path = 'docs/BEIJING_COLLECTOR_GIT_RELEASE.md'; Text = ConvertFrom-Utf8Base64 '5pu05paw5bm25Y+R5biD5YyX5Lqs5Y2a5Li76YeH6ZuG5Zmo' }
 )
 
 foreach ($relativePath in $requiredFiles) {
