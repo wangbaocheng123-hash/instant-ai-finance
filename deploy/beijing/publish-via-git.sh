@@ -53,6 +53,9 @@ fi
 
 git push origin "${target}:refs/heads/beijing-production"
 
+printf 'BEIJING_ON_DEMAND_TRIGGER_REQUIRED\n'
+printf 'remote_command=systemctl start --no-block blogger-collector-git-deploy.service\n'
+
 for attempt in $(seq 1 90); do
   payload="$(fetch_version_payload)"
   deployed="$(printf '%s' "${payload}" | python3 -c 'import json,sys; value=json.load(sys.stdin); required={"service","status","version","repository_revision","deployed_time"}; assert set(value)==required and value["status"]=="ok"; print(value["repository_revision"])' 2>/dev/null || true)"

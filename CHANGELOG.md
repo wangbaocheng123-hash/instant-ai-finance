@@ -7,7 +7,9 @@
 - 纠正北京采集器本轮记录：30 天登录和“指定一条视频”是已有能力，不属于北极采集器图标与 Git 直连更新建设，也不再作为本轮新增成果记录。
 - 本轮前序执行曾误把既有 30 天登录当成新任务，额外增加模型下载器的 systemd 配置加载并重启服务；该操作属于任务越界，不计入用户要求的交付成果。本次纠正没有继续改动或回退这个独立服务，避免在未核对原维护现场前再次扰动现有登录。
 - 固定用户口令“更新并发布北京博主采集器：<具体需求>”。该口令一次性授权 Codex 在同一任务完成源码修改、测试、敏感文件检查、提交并推送 `main`、安全推进 `beijing-production`，以及等待公网 `/health/version` 返回精确提交；所有者无需打开 Alibaba Cloud Client 或服务器终端。
-- 本次纠正只修改项目记忆和操作说明，没有修改采集器或模型下载器源码、业务数据、凭据、`beijing-production` 或生产服务。
+- 纠正提交 `23136ac` 只修改项目记忆和操作说明，没有修改采集器或模型下载器源码、业务数据、凭据、`beijing-production` 或生产服务。
+- 按所有者后续明确要求，通过电脑版 Alibaba Cloud Client 的“发送远程命令”执行 `systemctl disable --now blogger-collector-git-deploy.timer`。复核结果为 timer `ActiveState=inactive`、`UnitFileState=disabled`，正式采集器服务 `ActiveState=active`；90 秒自动检查已停止，现有生产页面未重启。
+- Codex Git 直连流程同步调整为按需触发：只有固定发布口令才推进生产分支，并由 Codex 通过客户端发送一次 `systemctl start --no-block blogger-collector-git-deploy.service`。服务器仍由原 root 固定发布器测试、原子切换和健康回滚，应用代码继续只从 Git 发布。
 
 ## 2026-09-05 — 北京采集器 1.0.8 与 Git 专用发布通道
 

@@ -88,7 +88,8 @@ $requiredMemoryRules = @(
     @{ Path = 'AGENTS.md'; Text = 'sudo -n /usr/local/sbin/instant-ai-publish' },
     @{ Path = 'STATUS.md'; Text = 'CODEX_CLOUD_PUBLISH_READY' },
     @{ Path = 'AGENTS.md'; Text = ConvertFrom-Utf8Base64 '5pu05paw5bm25Y+R5biD5YyX5Lqs5Y2a5Li76YeH6ZuG5Zmo' },
-    @{ Path = 'docs/BEIJING_COLLECTOR_GIT_RELEASE.md'; Text = ConvertFrom-Utf8Base64 '5pu05paw5bm25Y+R5biD5YyX5Lqs5Y2a5Li76YeH6ZuG5Zmo' }
+    @{ Path = 'docs/BEIJING_COLLECTOR_GIT_RELEASE.md'; Text = ConvertFrom-Utf8Base64 '5pu05paw5bm25Y+R5biD5YyX5Lqs5Y2a5Li76YeH6ZuG5Zmo' },
+    @{ Path = 'AGENTS.md'; Text = ConvertFrom-Utf8Base64 'YGJsb2dnZXItY29sbGVjdG9yLWdpdC1kZXBsb3kudGltZXJgIOW/hemhu+S/neaMgSBgZGlzYWJsZWRgIOWSjCBgaW5hY3RpdmVg' }
 )
 
 foreach ($relativePath in $requiredFiles) {
@@ -102,7 +103,7 @@ foreach ($rule in $requiredMemoryRules) {
     $fullPath = Join-Path $projectRoot $rule.Path
     if ((Test-Path -LiteralPath $fullPath -PathType Leaf) -and
         -not (Get-Content -LiteralPath $fullPath -Raw -Encoding UTF8).Contains($rule.Text)) {
-        $issues.Add("Required project rule is missing or changed: $($rule.Path)")
+        $issues.Add("Required project rule is missing or changed: $($rule.Path) :: $($rule.Text)")
     }
 }
 

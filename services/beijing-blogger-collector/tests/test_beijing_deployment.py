@@ -58,11 +58,8 @@ class BeijingDeploymentContractTests(unittest.TestCase):
         self.assertIn("MODEL_DOWNLOADER_BRIDGE_ENABLED=0", script)
         self.assertNotIn('BLOGGER_AGENT_MEDIA_DIR="${source_dir}', script)
 
-    def test_timer_checks_code_at_the_approved_interval(self) -> None:
-        timer = self.read("blogger-collector-git-deploy.timer")
-        self.assertIn("OnUnitActiveSec=90s", timer)
-        self.assertIn("RandomizedDelaySec=5s", timer)
-        self.assertIn("blogger-collector-git-deploy.service", timer)
+    def test_recurring_timer_is_retired(self) -> None:
+        self.assertFalse((DEPLOY_ROOT / "blogger-collector-git-deploy.timer").exists())
 
     def test_installer_only_adds_the_fixed_channel(self) -> None:
         installer = self.read("install-git-deploy-channel.sh")
@@ -70,7 +67,8 @@ class BeijingDeploymentContractTests(unittest.TestCase):
         self.assertIn("root:root:755", installer)
         self.assertIn("bloggergit", installer)
         self.assertIn("bloggerbuild", installer)
-        self.assertIn("enable --now blogger-collector-git-deploy.timer", installer)
+        self.assertIn("disable --now blogger-collector-git-deploy.timer", installer)
+        self.assertNotIn("enable --now blogger-collector-git-deploy.timer", installer)
         self.assertIn("--replace-managed-files", installer)
         self.assertIn("/var/cache/blogger-agent-pip", installer)
         self.assertNotIn("collector.env", installer)

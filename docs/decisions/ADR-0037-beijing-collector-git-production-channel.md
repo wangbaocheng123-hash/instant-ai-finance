@@ -1,6 +1,6 @@
 # ADR-0037：北京采集器使用独立 Git 生产分支与 Codex 直连更新
 
-日期：2026-09-05。状态：已采纳并完成两次连续生产验收。
+日期：2026-09-05。状态：已采纳并完成两次连续生产验收；2026-09-06 修订为 Codex 按需触发。
 
 ## 背景
 
@@ -11,12 +11,12 @@
 ## 决定
 
 1. 北京可公开源码固定在 `services/beijing-blogger-collector/`。`main` 是开发检查点；`beijing-production` 只有在所有者明确要求正式发布北京采集器时，才从已经测试并推送的 `origin/main` 做安全快进。禁止强推、回退和改写历史；回滚使用新的 revert 提交继续向前发布。
-2. 北京服务器每 90 秒以独立低权限用户只读获取公共 HTTPS 仓库的生产分支。只有采集器子树 tree 变化才构建和重启，仓库其他目录的变化只推进已接受提交，不触碰服务。
-3. root 持有的固定发布器只编排白名单步骤：锁、快进检查、安全 tree 检查、Git archive、新 release、低权限构建/测试、原子链接、服务重启、健康确认和失败回滚。Git 文件中的部署脚本不会由定时通道自行安装或覆盖正式 publisher/unit。
+2. 北京服务器不定时获取 Git。`blogger-collector-git-deploy.timer` 保持 `disabled/inactive`；只有 Codex 在用户明确发布后通过 Alibaba Cloud Client 发送一次 `systemctl start --no-block blogger-collector-git-deploy.service`，才读取生产分支。只有采集器子树 tree 变化才构建和重启，仓库其他目录的变化只推进已接受提交，不触碰服务。
+3. root 持有的固定发布器只编排白名单步骤：锁、快进检查、安全 tree 检查、Git archive、新 release、低权限构建/测试、原子链接、服务重启、健康确认和失败回滚。Git 文件中的部署脚本不会自行安装或覆盖正式 publisher/unit。
 4. 构建和至少 203 项完整测试由无生产凭据的 `bloggerbuild` 运行，测试阶段使用 `PrivateNetwork=yes`；Git 拉取由 `bloggergit` 运行。拒绝符号链接、特殊文件、越界字符以及数据库、密钥、运行数据路径。失败 SHA 被持久记录，新提交出现前不重复重启。
 5. 应用以 `DEPLOYMENT.json` 生成文件记录公开提交和 UTC 部署时间；`/health/version` 只输出 service、status、version、repository revision、deployed time。原 `/health` 保持兼容。
 6. Git 通道只发布 `blogger-collector`。模型下载器、Caddy、域名、安全组、证书、数据和凭据均在授权范围之外。首次安装固定基础设施及以后任何基础设施修改，继续通过电脑版 Alibaba Cloud Client 受控维护。
-7. 面向所有者的操作入口是一句 Codex 口令：“更新并发布北京博主采集器：<具体需求>”。该口令同时授权同一任务内的修改、测试、提交、推送、正式分支安全快进和公网版本验收。90 秒定时检查是服务器内部实现细节，所有者不需要手工登录服务器。30 天登录和“指定一条视频”是已有能力，不属于本决定的新增范围。
+7. 面向所有者的操作入口是一句 Codex 口令：“更新并发布北京博主采集器：<具体需求>”。该口令同时授权同一任务内的修改、测试、提交、推送、正式分支安全快进、一次性远程触发和公网版本验收。所有者不需要手工登录服务器；没有这句发布指令时服务器不会检查 Git。30 天登录和“指定一条视频”是已有能力，不属于本决定的新增范围。
 
 ## 回滚与故障语义
 

@@ -9,9 +9,7 @@ readonly BARE_REPOSITORY="/opt/blogger-agent/production-source.git"
 readonly PUBLISHER_SOURCE="${SOURCE_DIR}/blogger-collector-git-deploy"
 readonly PUBLISHER_TARGET="/usr/local/sbin/blogger-collector-git-deploy"
 readonly SERVICE_SOURCE="${SOURCE_DIR}/blogger-collector-git-deploy.service"
-readonly TIMER_SOURCE="${SOURCE_DIR}/blogger-collector-git-deploy.timer"
 readonly SERVICE_TARGET="/etc/systemd/system/blogger-collector-git-deploy.service"
-readonly TIMER_TARGET="/etc/systemd/system/blogger-collector-git-deploy.timer"
 readonly GIT_USER="bloggergit"
 readonly BUILD_USER="bloggerbuild"
 replace_managed_files=false
@@ -49,7 +47,7 @@ esac
 for required in awk cmp git id install mktemp rm runuser sha256sum stat systemctl useradd; do
   require_command "${required}"
 done
-for source in "${PUBLISHER_SOURCE}" "${SERVICE_SOURCE}" "${TIMER_SOURCE}"; do
+for source in "${PUBLISHER_SOURCE}" "${SERVICE_SOURCE}"; do
   [[ -f "${source}" ]] || fail "reviewed channel file is missing"
 done
 systemctl is-active --quiet blogger-collector.service || fail "existing collector service is not healthy enough to migrate"
@@ -82,11 +80,9 @@ staging="$(mktemp -d)"
 trap 'rm -rf -- "${staging}"' EXIT
 install -o root -g root -m 0755 "${PUBLISHER_SOURCE}" "${staging}/blogger-collector-git-deploy"
 install -o root -g root -m 0644 "${SERVICE_SOURCE}" "${staging}/blogger-collector-git-deploy.service"
-install -o root -g root -m 0644 "${TIMER_SOURCE}" "${staging}/blogger-collector-git-deploy.timer"
 
 install_managed_file "${staging}/blogger-collector-git-deploy" "${PUBLISHER_TARGET}" 0755
 install_managed_file "${staging}/blogger-collector-git-deploy.service" "${SERVICE_TARGET}" 0644
-install_managed_file "${staging}/blogger-collector-git-deploy.timer" "${TIMER_TARGET}" 0644
 
 [[ "$(stat -c '%U:%G:%a' "${PUBLISHER_TARGET}")" == "root:root:755" ]] || fail "publisher mode check failed"
 printf 'publisher_sha256=%s\n' "$(sha256sum "${PUBLISHER_TARGET}" | awk '{print $1}')" \
@@ -95,5 +91,5 @@ chown root:root /var/lib/blogger-agent/git-deploy/infrastructure-manifest
 chmod 0644 /var/lib/blogger-agent/git-deploy/infrastructure-manifest
 
 systemctl daemon-reload
-systemctl enable --now blogger-collector-git-deploy.timer >/dev/null
-log "installed fixed root publisher and 90-second production branch timer"
+systemctl disable --now blogger-collector-git-deploy.timer >/dev/null 2>&1 || true
+log "installed fixed root publisher for explicit one-shot execution; recurring timer is disabled"
