@@ -610,6 +610,160 @@ class BloggerLibraryTests(unittest.TestCase):
         processor.set_enabled(False)
         self.assertFalse(processor.process_one())
 
+    def test_blogger_worker_reconciles_only_verified_arrivals_after_activation(self) -> None:
+        processor = BloggerProcessor(self.library)
+        with patch("instant_ai.blogger_processing.time.time", return_value=1_000):
+            processor.set_enabled(True)
+        _, old_work_key = self._insert_work(
+            "before-automatic-activation",
+            source_work_id="work-before-automatic-activation",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+            received_at=999,
+        )
+        _, new_work_key = self._insert_work(
+            "after-automatic-activation",
+            source_work_id="work-after-automatic-activation",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+            received_at=1_001,
+        )
+
+        with patch("instant_ai.blogger_processing.time.time", return_value=1_002):
+            self.assertEqual(processor.reconcile_new_arrivals(), 1)
+            self.assertEqual(processor.reconcile_new_arrivals(), 1)
+
+        status = processor.status()
+        self.assertEqual(len(status["items"]), 1)
+        self.assertEqual(status["items"][0]["work_key"], new_work_key)
+        self.assertNotEqual(status["items"][0]["work_key"], old_work_key)
+        self.assertEqual(status["items"][0]["title"], "作品 after-automatic-activation")
+        self.assertEqual(status["items"][0]["creator_name"], "测试博主")
+        self.assertEqual(status["items"][0]["steps"]["asr"]["state"], "queued")
+        self.assertEqual(status["items"][0]["steps"]["keywords"]["state"], "waiting")
+        self.assertEqual(status["summary"]["queued"], 1)
+        self.assertEqual(status["last_reconciled"], 1_002)
+
+    def test_blogger_reconciliation_outage_does_not_advance_past_missed_arrivals(self) -> None:
+        processor = BloggerProcessor(self.library)
+        with patch("instant_ai.blogger_processing.time.time", return_value=2_000):
+            processor.set_enabled(True)
+        with patch.object(
+            self.library,
+            "processing_arrivals_since",
+            side_effect=BloggerLibraryUnavailable("temporary read outage"),
+        ), self.assertRaises(BloggerLibraryUnavailable):
+            processor.reconcile_new_arrivals()
+        self.assertEqual(processor.status()["last_reconciled"], 0)
+
+    def test_manual_pipeline_repairs_one_old_work_while_global_switch_is_off(self) -> None:
+        _, work_key = self._insert_work(
+            "manual-pipeline",
+            source_work_id="work-manual-pipeline",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+        )
+        processor = BloggerProcessor(self.library)
+        queued = processor.request_pipeline(work_key)
+        self.assertEqual(queued["state"], "queued")
+        original = "贵金属与就业数据影响市场。"
+        categories = {name: [] for name in KEYWORD_CATEGORIES}
+        categories["宏观、政策与事件"] = ["就业数据"]
+        result = {
+            "categories": categories,
+            "keywords": ["就业数据"],
+            "model": "doubao:test",
+            "schema_version": model_mr_keywords.SCHEMA_VERSION,
+            "source_hash": model_mr_keywords.source_hash(original),
+            "edited_by_owner": False,
+        }
+        with patch("instant_ai.blogger_processing.doubao_asr.is_configured", return_value=True), patch(
+            "instant_ai.blogger_processing.model_mr_keywords.is_configured", return_value=True
+        ), patch(
+            "instant_ai.blogger_processing.doubao_asr.transcribe_video",
+            return_value={"text": original, "engine": "doubao:test"},
+        ) as transcribe, patch(
+            "instant_ai.blogger_processing.model_mr_keywords.extract_keywords", return_value=result
+        ) as extract:
+            self.assertTrue(processor.process_one())
+        transcribe.assert_called_once()
+        extract.assert_called_once_with(original)
+        detail = self.library.work_detail(work_key)
+        self.assertEqual(detail["video_text"]["text"], original)
+        self.assertEqual(detail["video_text"]["source"], "doubao-auto-unreviewed")
+        self.assertEqual(detail["keywords"], ["就业数据"])
+        status = processor.status()
+        self.assertFalse(status["enabled"])
+        self.assertEqual(status["items"][0]["mode"], "手动补做")
+        self.assertEqual(status["items"][0]["phase"], "complete")
+        self.assertEqual(status["items"][0]["steps"]["asr"]["state"], "done")
+        self.assertEqual(status["items"][0]["steps"]["keywords"]["state"], "done")
+
+    def test_manual_pipeline_promotes_a_pre_call_automatic_stop_without_duplicate_job(self) -> None:
+        transfer_id, work_key = self._insert_work(
+            "promote-automatic-stop",
+            source_work_id="work-promote-automatic-stop",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+        )
+        processor = BloggerProcessor(self.library)
+        processor.set_enabled(True)
+        processor.enqueue_transfer(transfer_id)
+        with patch("instant_ai.blogger_processing.doubao_asr.is_configured", return_value=False):
+            self.assertTrue(processor.process_one())
+        self.assertEqual(processor.status()["items"][0]["state"], "configuration")
+        processor.set_enabled(False)
+
+        with patch("instant_ai.blogger_processing.doubao_asr.is_configured", return_value=True), patch(
+            "instant_ai.blogger_processing.model_mr_keywords.is_configured", return_value=True
+        ):
+            resumed = processor.request_pipeline(work_key)
+        self.assertEqual(resumed["state"], "queued")
+        status = processor.status()
+        self.assertEqual(len(status["items"]), 1)
+        self.assertFalse(status["items"][0]["automatic"])
+        self.assertEqual(status["items"][0]["mode"], "手动补做")
+
+    def test_blogger_processing_settings_migrate_without_resetting_existing_switch(self) -> None:
+        processor = BloggerProcessor(self.library)
+        processor.path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(processor.path)) as connection, connection:
+            connection.executescript(
+                """
+                CREATE TABLE settings(
+                    id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL,
+                    failures INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO settings(id,enabled,failures) VALUES(1,1,2);
+                CREATE TABLE jobs(
+                    id INTEGER PRIMARY KEY, dedupe TEXT UNIQUE NOT NULL,
+                    work_key TEXT NOT NULL, kind TEXT NOT NULL,
+                    automatic INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'queued',
+                    phase TEXT NOT NULL DEFAULT 'asr', revision TEXT NOT NULL DEFAULT '',
+                    result TEXT NOT NULL DEFAULT '{}', updated INTEGER NOT NULL
+                );
+                CREATE TABLE calls(id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, phase TEXT NOT NULL, day TEXT NOT NULL);
+                """
+            )
+        processor.set_enabled(True)
+        with closing(sqlite3.connect(processor.path)) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(settings)")}
+            setting = connection.execute(
+                "SELECT enabled,failures,enabled_since,last_reconciled FROM settings WHERE id=1"
+            ).fetchone()
+        self.assertTrue({"enabled_since", "last_reconciled"}.issubset(columns))
+        self.assertEqual(setting[0], 1)
+        self.assertEqual(setting[1], 0)
+        self.assertGreater(setting[2], 0)
+
     def test_manual_blogger_asr_cannot_run_beside_an_automatic_provider_call(self) -> None:
         _, work_key = self._insert_work(
             "manual-shared-lock",
@@ -684,6 +838,12 @@ class BloggerLibraryTests(unittest.TestCase):
                     extract,
                     {"expected_revision": revision, "confirm_billing": True},
                 )
+                self.assertEqual(status, 200)
+                self.assertEqual(value["state"], "queued")
+
+                process = f"/api/blogger-library/works/{work_key}/process"
+                self.assertEqual(request("POST", process, {})[0], 400)
+                status, value = request("POST", process, {"confirm_billing": True})
                 self.assertEqual(status, 200)
                 self.assertEqual(value["state"], "queued")
             finally:

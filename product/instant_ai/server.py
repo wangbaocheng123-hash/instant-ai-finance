@@ -991,7 +991,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             return
 
         blogger_work_match = re.fullmatch(
-            r"/api/blogger-library/works/([0-9a-f]{64})/(title|video-text|keywords|extract-keywords|interpretation|transcribe|doubao-transcribe)",
+            r"/api/blogger-library/works/([0-9a-f]{64})/(title|video-text|keywords|extract-keywords|process|interpretation|transcribe|doubao-transcribe)",
             path,
         )
         if blogger_work_match:
@@ -1016,6 +1016,10 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                         work_key,
                         str(payload.get("expected_revision") or ""),
                     ))
+                elif action == "process":
+                    if payload.get("confirm_billing") is not True:
+                        raise ValueError("请先确认视频原文识别与关键词提炼费用。")
+                    self._json(BLOGGER_PROCESSOR.request_pipeline(work_key))
                 elif action == "interpretation":
                     self._json(BLOGGER_LIBRARY.save_interpretation(
                         work_key,

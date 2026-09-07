@@ -31,6 +31,9 @@ export class BloggerPanel {
   private busy = false;
   private processing: BloggerProcessing | null = null;
   private processingBusy = false;
+  private processingPollBusy = false;
+  private processingFingerprint = '';
+  private processingRefreshPending = false;
   private processingMessage = '';
   private workMessage: { text: string; tone: string } | null = null;
   private requestSerial = 0;
@@ -49,13 +52,19 @@ export class BloggerPanel {
     this.body = this.required('.blogger-body');
     this.badge = this.required('.panel-count');
     this.element.addEventListener('click', (event) => void this.handleClick(event));
+    window.setInterval(() => void this.pollProcessing(), 4_000);
   }
 
   async refresh(): Promise<void> {
     const requestId = ++this.requestSerial;
-    const status = await instantApi.bloggerLibraryStatus();
+    const [status, processing] = await Promise.all([
+      instantApi.bloggerLibraryStatus(),
+      instantApi.bloggerProcessing(),
+    ]);
     if (requestId !== this.requestSerial) return;
     this.status = status;
+    this.processing = processing;
+    this.processingFingerprint = this.processingSignature(processing);
     if (!status.available) {
       this.badge.textContent = '未连接';
       this.renderUnavailable(status.message);
@@ -89,7 +98,7 @@ export class BloggerPanel {
     const action = (event.target as HTMLElement).closest<HTMLElement>('[data-blogger-action]');
     if (!action) return;
     const command = action.dataset.bloggerAction;
-    if (['processing', 'toggle-processing', 'retry-processing'].includes(command || '')) {
+    if (['processing', 'toggle-processing', 'resume-processing', 'retry-processing'].includes(command || '')) {
       await this.updateProcessing(command || '', Number(action.dataset.jobId || 0));
     }
     else if (command === 'open-creator' && action.dataset.creatorId) await this.openCreator(action.dataset.creatorId);
@@ -112,6 +121,7 @@ export class BloggerPanel {
     else if (command === 'cancel-keywords') { this.editingKeywords = false; this.renderDetail(); }
     else if (command === 'save-keywords') await this.saveKeywords();
     else if (command === 'extract-keywords') await this.extractKeywords();
+    else if (command === 'repair-pipeline') await this.repairPipeline();
     else if (command === 'save-interpretation') await this.saveInterpretation();
   }
 
@@ -246,51 +256,166 @@ export class BloggerPanel {
     root.append(list); this.body.replaceChildren(root);
   }
 
-  private renderProcessing(): HTMLElement {
-    const section = document.createElement('section'); section.className = 'model-processing blogger-processing';
-    const title = document.createElement('h3'); title.textContent = '豆包自动处理';
-    const button = this.actionButton(this.processingBusy ? '读取中…' : this.processing ? '刷新处理状态' : '查看设置与处理状态', 'processing');
-    button.disabled = this.processingBusy; section.append(title, button);
+  private renderProcessing(compact = false): HTMLElement {
+    const section = document.createElement('section'); section.className = `model-processing blogger-processing${compact ? ' is-compact' : ''}`;
+    const heading = document.createElement('header'); heading.className = 'blogger-processing-heading';
+    const title = document.createElement('h3'); title.textContent = '豆包自动识别与 AI 关键词';
+    const button = this.actionButton(this.processingBusy ? '读取中…' : '立即刷新', 'processing');
+    button.disabled = this.processingBusy; heading.append(title, button); section.append(heading);
     if (this.processingMessage) section.append(this.message(this.processingMessage));
     const status = this.processing;
     if (!status) return section;
-    section.append(this.message(`仅处理开启后新送达的普通博主视频，不扫描历史作品。每日最多 ${status.daily_call_limit} 次模型调用，每条最多 ${status.max_video_minutes} 分钟；已有原文和关键词不覆盖。`));
-    section.append(this.message(`语音识别：${status.speech_configured ? '已配置' : '未配置'}；关键词模型：${status.keywords_configured ? '已配置' : '未配置'}`));
+    const switchRow = document.createElement('div'); switchRow.className = 'blogger-processing-switch';
+    const switchState = document.createElement('div');
+    const switchTitle = document.createElement('b');
+    switchTitle.textContent = status.enabled && status.failures < 3 ? '自动处理已开启' : status.failures >= 3 ? '连续异常，自动处理已暂停' : '自动处理已关闭';
+    const switchNote = document.createElement('span');
+    switchNote.textContent = status.enabled && status.failures < 3
+      ? '新视频传输完成后，系统会自动识别原文并提炼关键词。'
+      : '关闭期间到达的视频不会产生自动模型费用。';
+    switchState.append(switchTitle, switchNote);
     const toggle = this.actionButton(
-      status.enabled && status.failures < 3 ? '暂停自动处理' : status.failures >= 3 ? '已连续失败暂停，确认后恢复' : '开启新视频自动识别与提炼',
+      status.enabled ? '手动关闭' : '手动开启',
       'toggle-processing',
     );
-    toggle.disabled = this.processingBusy; section.append(toggle);
-    section.append(this.message('自动转写会保存为“尚未人工核对”的原文；暂停不取消已提交任务。'));
-    status.items.slice(0, 8).forEach((item) => {
+    toggle.disabled = this.processingBusy; switchRow.append(switchState, toggle); section.append(switchRow);
+    if (status.enabled && status.failures >= 3) {
+      const resume = this.actionButton('核对异常后恢复自动处理', 'resume-processing');
+      resume.disabled = this.processingBusy; section.append(resume);
+    }
+
+    if (!compact) {
+      const summary = document.createElement('div'); summary.className = 'blogger-processing-summary';
+      const waiting = status.summary.queued + status.summary.quota;
+      ([['等待', waiting], ['处理中', status.summary.running], ['已完成', status.summary.done], ['需处理', status.summary.configuration + status.summary.review + status.summary.conflict]] as const)
+        .forEach(([label, count]) => {
+          const item = document.createElement('div'); const value = document.createElement('b'); value.textContent = String(count);
+          const name = document.createElement('span'); name.textContent = label; item.append(value, name); summary.append(item);
+        });
+      section.append(summary);
+    }
+    const monitor = document.createElement('p'); monitor.className = 'blogger-processing-monitor';
+    monitor.textContent = `${status.worker_running ? '后台执行器运行中' : '后台执行器未运行'} · 语音识别${status.speech_configured ? '已配置' : '未配置'} · 关键词模型${status.keywords_configured ? '已配置' : '未配置'}${status.last_reconciled ? ` · 最近核对 ${this.formatEpoch(status.last_reconciled)}` : ''}`;
+    section.append(monitor);
+    if (!compact) {
+      section.append(this.message(`只自动处理本次开启时刻之后完成传输的视频；每 4 秒显示进度，并持久补偿漏掉的到达通知。每日最多 ${status.daily_call_limit} 次模型调用，每条最多 ${status.max_video_minutes} 分钟，已有原文或关键词不会覆盖。开启前的个别漏项，请打开作品后点“一键补做”。`));
+      section.append(this.message('自动原文会标记为“尚未人工核对”。手动关闭会暂停尚未发起的自动任务；已经提交给模型的单次调用不会强行中断。'));
+    }
+    const visibleItems = compact && this.selectedWorkKey
+      ? status.items.filter((item) => item.work_key === this.selectedWorkKey).slice(0, 2)
+      : status.items.slice(0, 20);
+    const listTitle = document.createElement('h4'); listTitle.className = 'blogger-processing-list-title'; listTitle.textContent = compact ? '本作品处理进度' : '最近处理明细'; section.append(listTitle);
+    visibleItems.forEach((item) => {
       const row = document.createElement('div'); row.className = 'model-processing-job';
-      row.textContent = `作品 ${item.work_key.slice(0, 8)}… · ${item.phase === 'asr' ? '语音识别' : '关键词'}：${item.message}`;
+      const rowHeading = document.createElement('div'); rowHeading.className = 'blogger-processing-job-heading';
+      const identity = document.createElement('div'); const jobTitle = document.createElement('b'); jobTitle.textContent = item.title;
+      const meta = document.createElement('span'); meta.textContent = `${item.creator_name} · ${item.mode} · ${this.formatEpoch(item.updated)}`;
+      identity.append(jobTitle, meta); const overall = document.createElement('strong'); overall.className = `processing-state state-${item.state}`; overall.textContent = item.message;
+      rowHeading.append(identity, overall);
+      const steps = document.createElement('div'); steps.className = 'blogger-processing-steps';
+      steps.append(
+        this.processingStep('视频原文', item.steps.asr.state, item.steps.asr.message),
+        this.processingStep('AI关键词', item.steps.keywords.state, item.steps.keywords.message),
+      );
+      row.append(rowHeading, steps);
       if (['review', 'configuration'].includes(item.state)) {
         const retry = this.actionButton('核对后重试', 'retry-processing');
         retry.dataset.jobId = String(item.id); retry.disabled = this.processingBusy; row.append(retry);
       }
       section.append(row);
     });
+    if (!visibleItems.length) section.append(this.message(compact ? '本作品还没有自动或手动补做任务。' : status.enabled ? '正在监控新视频，目前没有排队任务。' : '当前没有处理记录。'));
     return section;
   }
 
   private async updateProcessing(action: string, jobId = 0): Promise<void> {
     if (this.processingBusy) return;
-    const enable = !this.processing?.enabled || (this.processing?.failures || 0) >= 3;
-    if (action === 'toggle-processing' && enable && !window.confirm('开启后，新送达的普通博主视频将自动调用豆包识别并提炼关键词，可能产生费用。不处理历史作品。确认开启？')) return;
+    const enable = action === 'resume-processing' || !this.processing?.enabled;
+    if ((action === 'resume-processing' || (action === 'toggle-processing' && enable)) && !window.confirm('开启后，新送达的普通博主视频将自动调用豆包识别并提炼关键词，可能产生费用。不处理开启前的历史作品。确认开启？')) return;
     if (action === 'retry-processing' && !window.confirm('请先核对豆包调用记录；上次中断可能已计费。确认重试所选任务？')) return;
     this.processingBusy = true;
     try {
-      if (action === 'toggle-processing') await instantApi.setBloggerProcessing(enable);
+      if (action === 'toggle-processing' || action === 'resume-processing') await instantApi.setBloggerProcessing(enable);
       if (action === 'retry-processing') await instantApi.retryBloggerProcessing(jobId);
       this.processing = await instantApi.bloggerProcessing();
-      this.processingMessage = '后台串行处理，关闭页面不影响；完成后重新打开作品查看。';
+      this.processingFingerprint = this.processingSignature(this.processing);
+      this.processingMessage = action === 'toggle-processing' || action === 'resume-processing'
+        ? (this.processing.enabled ? '自动处理已开启，新视频到达后会自动排队。' : '自动处理已关闭。')
+        : '后台串行处理，页面会自动刷新进度。';
     } catch (error) {
       this.processingMessage = this.errorText(error);
     } finally {
       this.processingBusy = false;
-      this.renderWorks();
+      this.renderCurrentView();
     }
+  }
+
+  private processingStep(labelText: string, state: string, messageText: string): HTMLElement {
+    const step = document.createElement('div'); step.className = `blogger-processing-step step-${state}`;
+    const label = document.createElement('b'); label.textContent = labelText;
+    const message = document.createElement('span'); message.textContent = messageText;
+    step.append(label, message); return step;
+  }
+
+  private processingSignature(status: BloggerProcessing): string {
+    return JSON.stringify({
+      enabled: status.enabled,
+      failures: status.failures,
+      worker: status.worker_running,
+      speech: status.speech_configured,
+      keywords: status.keywords_configured,
+      items: status.items.map((item) => [item.id, item.state, item.phase, item.updated]),
+    });
+  }
+
+  private async pollProcessing(): Promise<void> {
+    if (this.element.hidden || !this.selectedCreatorId || this.processingBusy || this.processingPollBusy) return;
+    this.processingPollBusy = true;
+    try {
+      const previous = this.processing;
+      const next = await instantApi.bloggerProcessing();
+      const signature = this.processingSignature(next);
+      const completed = next.items.some((item) => item.state === 'done'
+        && !previous?.items.some((old) => old.id === item.id && old.state === 'done'));
+      this.processing = next;
+      if (signature !== this.processingFingerprint) {
+        this.processingFingerprint = signature;
+        this.processingRefreshPending ||= completed;
+      }
+      if (this.processingRefreshPending && !this.hasFocusedEditor()) {
+        await this.refreshSelectedContent();
+        this.processingRefreshPending = false;
+      } else {
+        const processing = this.element.querySelector('.blogger-processing');
+        processing?.replaceWith(this.renderProcessing(processing.classList.contains('is-compact')));
+      }
+    } catch {
+      // The normal 60-second application refresh reports persistent connection errors.
+    } finally {
+      this.processingPollBusy = false;
+    }
+  }
+
+  private async refreshSelectedContent(): Promise<void> {
+    const creatorId = this.selectedCreatorId;
+    const workKey = this.selectedWorkKey;
+    const requestId = this.requestSerial;
+    if (!creatorId) return;
+    const works = await instantApi.bloggerCreatorWorks(creatorId);
+    if (requestId !== this.requestSerial || creatorId !== this.selectedCreatorId) return;
+    this.works = works.items; this.replaceCreator(works.creator);
+    if (workKey) {
+      const detail = await instantApi.bloggerWork(workKey);
+      if (requestId !== this.requestSerial || workKey !== this.selectedWorkKey) return;
+      this.detail = detail;
+    }
+    this.renderCurrentView();
+  }
+
+  private hasFocusedEditor(): boolean {
+    const active = document.activeElement as HTMLElement | null;
+    return Boolean(active && this.element.contains(active)
+      && (active.matches('input, textarea') || active.isContentEditable));
   }
 
   private renderWorkCard(work: BloggerWork): HTMLElement {
@@ -320,11 +445,17 @@ export class BloggerPanel {
     const detail = this.detail;
     if (!detail) { this.renderWorks(); return; }
     const root = document.createElement('div'); root.className = 'blogger-view blogger-detail-view';
-    root.append(this.renderCreatorSwitch(), this.backButton('返回作品', 'back-works'));
+    root.append(this.renderCreatorSwitch(), this.backButton('返回作品', 'back-works'), this.renderProcessing(true));
     const article = document.createElement('article'); article.className = 'blogger-work-detail';
     const header = document.createElement('header'); header.className = 'blogger-workspace-header';
     const title = document.createElement('h3'); title.textContent = detail.title || detail.description || '未命名作品';
-    header.append(title, this.actionButton('改标题', 'edit-title'));
+    const headerActions = document.createElement('div'); headerActions.className = 'blogger-workspace-actions';
+    headerActions.append(this.actionButton('改标题', 'edit-title'));
+    if (detail.media_available && this.needsPipeline(detail)) {
+      const repair = this.actionButton('一键补做原文 + AI关键词', 'repair-pipeline', true);
+      repair.disabled = this.busy; headerActions.append(repair);
+    }
+    header.append(title, headerActions);
     article.append(header);
     if (this.editingTitle) article.append(this.renderTitleEditor(detail));
     const meta = document.createElement('p'); meta.className = 'blogger-detail-kicker';
@@ -550,6 +681,26 @@ export class BloggerPanel {
     finally { this.busy = false; this.renderDetail(); }
   }
 
+  private async repairPipeline(): Promise<void> {
+    if (!this.detail || this.busy || !this.needsPipeline(this.detail)) return;
+    if (!window.confirm('只补做这条作品缺少的步骤：豆包识别视频原文、再提炼 AI 关键词，可能产生费用；已有内容不会覆盖。确认排队？')) return;
+    this.busy = true; this.setWorkMessage('正在把这条作品加入补做队列…', '');
+    try {
+      const result = await instantApi.processBloggerWork(this.detail.work_key);
+      this.processing = await instantApi.bloggerProcessing();
+      this.processingFingerprint = this.processingSignature(this.processing);
+      this.processingMessage = '单条补做已加入后台队列，页面每 4 秒自动显示进度。';
+      this.workMessage = { text: result.message || '已加入补做队列。', tone: result.state === 'done' ? 'is-done' : '' };
+    } catch (error) { this.workMessage = { text: this.errorText(error), tone: 'is-error' }; }
+    finally { this.busy = false; this.renderDetail(); }
+  }
+
+  private needsPipeline(detail: BloggerWorkDetail): boolean {
+    const keywordInfo = detail.keyword_info;
+    const hasKeywords = Boolean(detail.keywords.length || keywordInfo?.confirmed_at || keywordInfo?.schema_version);
+    return !detail.video_text.text.trim() || !hasKeywords;
+  }
+
   private renderKeywords(detail: BloggerWorkDetail): HTMLElement {
     const panel = document.createElement('div'); panel.className = 'model-keyword-panel';
     const info = detail.keyword_info;
@@ -706,6 +857,10 @@ export class BloggerPanel {
   private formatDate(value: string | null): string {
     if (!value) return '时间待确认'; const date = new Date(value); if (Number.isNaN(date.getTime())) return value;
     return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
+  }
+  private formatEpoch(value: number): string {
+    if (!value) return '尚未运行';
+    return this.formatDate(new Date(value * 1_000).toISOString());
   }
   private safeHttpsUrl(value: string): string | null {
     try { const url = new URL(value); const hostname = url.hostname.toLowerCase(); return url.protocol === 'https:' && (hostname === 'douyin.com' || hostname.endsWith('.douyin.com')) ? url.href : null; }

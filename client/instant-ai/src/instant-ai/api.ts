@@ -61,6 +61,9 @@ export const instantApi = {
   retryBloggerProcessing: (id: number) => request<{ message: string }>('/api/blogger-library/processing/retry', {
     method: 'POST', body: JSON.stringify({ job_id: id, confirm_billing: true }),
   }),
+  processBloggerWork: (workKey: string) => request<{ job_id?: number; state: string; message: string }>(`/api/blogger-library/works/${encodeURIComponent(workKey)}/process`, {
+    method: 'POST', body: JSON.stringify({ confirm_billing: true }),
+  }),
   extractBloggerKeywords: (workKey: string, revision: string) => request<{ message: string }>(`/api/blogger-library/works/${encodeURIComponent(workKey)}/extract-keywords`, {
     method: 'POST', body: JSON.stringify({ expected_revision: revision, confirm_billing: true }),
   }),

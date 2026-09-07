@@ -1,8 +1,10 @@
 """Durable, sequential, owner-controlled processing for ordinary bloggers.
 
 The queue mirrors the Model Mr safety contract: it is off by default, only
-handles arrivals received after it is enabled, never scans history and never
-automatically retries an ambiguous paid request.
+handles arrivals completed after it is enabled, never starts a historical
+batch and never automatically retries an ambiguous paid request.  A persisted
+activation boundary lets the worker reconcile completion callbacks that were
+missed during a restart without widening that paid-work boundary.
 """
 from __future__ import annotations
 
@@ -38,6 +40,8 @@ class BloggerProcessor:
     def __init__(self, library: BloggerLibrary = BLOGGER_LIBRARY):
         self.library = library
         self.path = library.root / "database" / "blogger_processing.sqlite3"
+        self._worker_active = False
+        self._worker_last_seen = 0
 
     @contextmanager
     def db(self):
@@ -51,7 +55,9 @@ class BloggerProcessor:
                 """
                 CREATE TABLE IF NOT EXISTS settings(
                     id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL,
-                    failures INTEGER NOT NULL DEFAULT 0
+                    failures INTEGER NOT NULL DEFAULT 0,
+                    enabled_since INTEGER NOT NULL DEFAULT 0,
+                    last_reconciled INTEGER NOT NULL DEFAULT 0
                 );
                 INSERT OR IGNORE INTO settings(id,enabled) VALUES(1,0);
                 CREATE TABLE IF NOT EXISTS jobs(
@@ -67,6 +73,27 @@ class BloggerProcessor:
                 );
                 """
             )
+            setting_columns = {
+                str(row[1]) for row in connection.execute("PRAGMA table_info(settings)")
+            }
+            added_enabled_since = "enabled_since" not in setting_columns
+            if added_enabled_since:
+                connection.execute(
+                    "ALTER TABLE settings ADD COLUMN enabled_since INTEGER NOT NULL DEFAULT 0"
+                )
+            if "last_reconciled" not in setting_columns:
+                connection.execute(
+                    "ALTER TABLE settings ADD COLUMN last_reconciled INTEGER NOT NULL DEFAULT 0"
+                )
+            if added_enabled_since:
+                # Legacy queues did not persist their activation time.  Starting
+                # the new boundary at migration is the only safe choice: future
+                # callbacks gain durable recovery without silently billing an
+                # unknown amount of older content.
+                connection.execute(
+                    "UPDATE settings SET enabled_since=? WHERE enabled=1 AND enabled_since=0",
+                    (int(time.time()),),
+                )
             with connection:
                 yield connection
         finally:
@@ -75,35 +102,119 @@ class BloggerProcessor:
     def status(self) -> dict[str, Any]:
         # Merely opening the page must not create queue state.
         if not self.path.exists():
-            enabled, failures, items = False, 0, []
+            enabled, failures, enabled_since, last_reconciled, items = False, 0, 0, 0, []
+            persisted_counts: dict[str, int] = {}
         else:
             with closing(sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)) as connection:
                 connection.row_factory = sqlite3.Row
-                setting = connection.execute("SELECT enabled,failures FROM settings WHERE id=1").fetchone()
-                enabled, failures = bool(setting[0]), int(setting[1])
+                setting_columns = {
+                    str(row[1]) for row in connection.execute("PRAGMA table_info(settings)")
+                }
+                setting_fields = ["enabled", "failures"]
+                setting_fields.extend(
+                    name for name in ("enabled_since", "last_reconciled") if name in setting_columns
+                )
+                setting = connection.execute(
+                    f"SELECT {','.join(setting_fields)} FROM settings WHERE id=1"
+                ).fetchone()
+                enabled, failures = bool(setting["enabled"]), int(setting["failures"])
+                enabled_since = int(setting["enabled_since"]) if "enabled_since" in setting.keys() else 0
+                last_reconciled = int(setting["last_reconciled"]) if "last_reconciled" in setting.keys() else 0
                 rows = connection.execute(
-                    "SELECT id,work_key,state,phase,updated FROM jobs ORDER BY id DESC LIMIT 30"
+                    "SELECT id,work_key,kind,automatic,state,phase,updated "
+                    "FROM jobs ORDER BY id DESC LIMIT 30"
                 ).fetchall()
-                items = [{**dict(row), "message": MESSAGES[row["state"]]} for row in rows]
+                items = [dict(row) for row in rows]
+                persisted_counts = {
+                    str(row["state"]): int(row["count"])
+                    for row in connection.execute(
+                        "SELECT state,count(*) AS count FROM jobs GROUP BY state"
+                    )
+                }
+        labels = self.library.processing_labels([str(item["work_key"]) for item in items])
+        for item in items:
+            item.update(labels.get(str(item["work_key"]), {}))
+            item.setdefault("title", "作品资料待刷新")
+            item.setdefault("creator_name", "博主待确认")
+            item["automatic"] = bool(item["automatic"])
+            item["mode"] = "自动处理" if item["automatic"] else "手动补做"
+            item["message"] = MESSAGES.get(str(item["state"]), "状态待确认")
+            item["steps"] = self._step_status(item)
+        state_counts = {
+            state: persisted_counts.get(state, 0)
+            for state in ("queued", "running", "done", "configuration", "review", "quota", "conflict")
+        }
         return {
             "enabled": enabled,
             "failures": failures,
+            "enabled_since": enabled_since,
+            "last_reconciled": last_reconciled,
+            "worker_running": self._worker_active,
+            "worker_last_seen": self._worker_last_seen,
             "daily_call_limit": DAILY_CALL_LIMIT,
             "max_video_minutes": MAX_VIDEO_SECONDS // 60,
             "speech_configured": doubao_asr.is_configured(),
             "keywords_configured": model_mr_keywords.is_configured(),
+            "summary": {**state_counts, "total": sum(persisted_counts.values())},
             "items": items,
+        }
+
+    @staticmethod
+    def _step_status(job: dict[str, Any]) -> dict[str, dict[str, str]]:
+        """Project a job state into the two owner-visible pipeline steps."""
+        state = str(job.get("state") or "queued")
+        kind = str(job.get("kind") or "arrival")
+        phase = "keywords" if kind == "keywords" else str(job.get("phase") or "asr")
+        current = {
+            "queued": "queued",
+            "running": "running",
+            "configuration": "blocked",
+            "review": "review",
+            "quota": "waiting",
+            "conflict": "review",
+        }.get(state, "waiting")
+        if kind == "keywords":
+            return {
+                "asr": {"state": "skipped", "message": "使用已有视频原文"},
+                "keywords": {
+                    "state": "done" if state == "done" else current,
+                    "message": "已完成" if state == "done" else MESSAGES.get(state, "等待处理"),
+                },
+            }
+        if state == "done" or phase == "complete":
+            return {
+                "asr": {"state": "done", "message": "已完成或复用已有原文"},
+                "keywords": {"state": "done", "message": "已完成或复用已有关键词"},
+            }
+        if phase == "keywords":
+            return {
+                "asr": {"state": "done", "message": "已完成或复用已有原文"},
+                "keywords": {"state": current, "message": MESSAGES.get(state, "等待处理")},
+            }
+        return {
+            "asr": {"state": current, "message": MESSAGES.get(state, "等待处理")},
+            "keywords": {"state": "waiting", "message": "等待视频原文"},
         }
 
     def set_enabled(self, enabled: bool) -> dict[str, Any]:
         if not isinstance(enabled, bool):
             raise ValueError("自动处理开关必须为布尔值。")
         with self.db() as connection:
-            connection.execute("UPDATE settings SET enabled=?,failures=0 WHERE id=1", (int(enabled),))
+            current = bool(connection.execute("SELECT enabled FROM settings WHERE id=1").fetchone()[0])
+            if enabled and not current:
+                connection.execute(
+                    "UPDATE settings SET enabled=1,failures=0,enabled_since=?,last_reconciled=0 WHERE id=1",
+                    (int(time.time()),),
+                )
+            else:
+                connection.execute(
+                    "UPDATE settings SET enabled=?,failures=0 WHERE id=1",
+                    (int(enabled),),
+                )
         return self.status()
 
     def enqueue_transfer(self, transfer_id: str) -> None:
-        # Enabling later never sweeps old works into a paid queue.
+        # The persisted activation boundary is enforced again by reconciliation.
         if not self.status()["enabled"]:
             return
         arrival = self.library.processing_arrival(transfer_id)
@@ -116,6 +227,59 @@ class BloggerProcessor:
             "arrival",
             True,
             "",
+        )
+
+    def reconcile_new_arrivals(self) -> int:
+        """Idempotently repair missed callbacks inside the enabled time window."""
+        if not self.path.exists():
+            return 0
+        with self.db() as connection:
+            setting = connection.execute(
+                "SELECT enabled,enabled_since,last_reconciled FROM settings WHERE id=1"
+            ).fetchone()
+            if setting is None or not bool(setting["enabled"]) or int(setting["enabled_since"]) <= 0:
+                return 0
+            enabled_since = int(setting["enabled_since"])
+            # Keep a one-second overlap because transfer timestamps have second
+            # precision. Queue dedupe makes this overlap safe and prevents a
+            # completion exactly on the scan boundary from being missed.
+            scan_since = max(enabled_since, int(setting["last_reconciled"]) - 1)
+        arrivals = self.library.processing_arrivals_since(scan_since)
+        for arrival in arrivals:
+            work_key = arrival["work_key"]
+            self._enqueue(
+                work_key,
+                f"arrival:{work_key}:{arrival['media_hash']}",
+                "arrival",
+                True,
+                "",
+            )
+        with self.db() as connection:
+            connection.execute(
+                "UPDATE settings SET last_reconciled=? WHERE id=1",
+                (int(time.time()),),
+            )
+        return len(arrivals)
+
+    def request_pipeline(self, work_key: str) -> dict[str, Any]:
+        """Explicitly repair ASR and keyword extraction for one selected work."""
+        detail = self.library.processing_detail(work_key)
+        candidate = self.library.processing_candidate(work_key)
+        if candidate is None:
+            raise ValueError("这条作品没有已完成传输的可识别视频。")
+        text = str(detail.get("video_text", {}).get("text") or "").strip()
+        info = clean_keyword_info(detail.get("keyword_info"), detail.get("keywords"))
+        if text and (info["keywords"] or info["confirmed_at"] or info["schema_version"]):
+            return {"ok": True, "state": "done", "message": "原文和关键词均已存在，没有调用 API"}
+        return self._enqueue(
+            work_key,
+            f"arrival:{work_key}:{candidate['media_hash']}",
+            "pipeline",
+            False,
+            "",
+            resume_configuration=(bool(text) or doubao_asr.is_configured())
+            and model_mr_keywords.is_configured(),
+            promote_manual=True,
         )
 
     def request_keywords(self, work_key: str, revision: str) -> dict[str, Any]:
@@ -150,14 +314,24 @@ class BloggerProcessor:
         revision: str,
         *,
         resume_configuration: bool = False,
+        promote_manual: bool = False,
     ) -> dict[str, Any]:
         self.library.processing_detail(work_key)
+        phase = "keywords" if kind == "keywords" else "asr"
         with self.db() as connection:
             connection.execute(
-                "INSERT OR IGNORE INTO jobs(dedupe,work_key,kind,automatic,revision,updated) VALUES(?,?,?,?,?,?)",
-                (dedupe, work_key, kind, int(automatic), revision, int(time.time())),
+                "INSERT OR IGNORE INTO jobs(dedupe,work_key,kind,automatic,phase,revision,updated) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (dedupe, work_key, kind, int(automatic), phase, revision, int(time.time())),
             )
-            row = connection.execute("SELECT id,state FROM jobs WHERE dedupe=?", (dedupe,)).fetchone()
+            row = connection.execute(
+                "SELECT id,state,automatic FROM jobs WHERE dedupe=?", (dedupe,)
+            ).fetchone()
+            if promote_manual and bool(row["automatic"]):
+                connection.execute(
+                    "UPDATE jobs SET automatic=0,updated=? WHERE id=?",
+                    (int(time.time()), row["id"]),
+                )
             if resume_configuration and row["state"] == "configuration":
                 # Repeating this paid keyword POST is an explicit owner action.
                 # A known pre-call configuration stop is safe to resume after
@@ -181,7 +355,7 @@ class BloggerProcessor:
             if row is None or row["state"] not in {"review", "configuration"}:
                 raise ValueError("此任务不可重试；已完成结果不会重复调用。")
             connection.execute(
-                "UPDATE jobs SET state='queued',updated=? WHERE id=?",
+                "UPDATE jobs SET state='queued',automatic=0,updated=? WHERE id=?",
                 (int(time.time()), job_id),
             )
         return {"ok": True, "message": "已按主人确认重新排队；已缓存的结果不会重复调用。"}
@@ -259,7 +433,7 @@ class BloggerProcessor:
             cached = json.loads(job["result"])
             detail = self.library.processing_detail(work_key)
             text = str(detail.get("video_text", {}).get("text") or "").strip()
-            if not text and job["kind"] == "arrival":
+            if not text and job["kind"] in {"arrival", "pipeline"}:
                 text = str(cached.get("asr_text") or "").strip()
                 if not text:
                     text = next(
@@ -297,7 +471,7 @@ class BloggerProcessor:
             text = str(detail.get("video_text", {}).get("text") or "")
             info = clean_keyword_info(detail.get("keyword_info"), detail.get("keywords"))
             has_keywords = bool(info["keywords"] or info["confirmed_at"] or info["schema_version"])
-            if job["kind"] == "arrival" and has_keywords:
+            if job["kind"] in {"arrival", "pipeline"} and has_keywords:
                 self._finish(job_id)
                 return
             current_revision = keyword_revision(info)
@@ -352,7 +526,7 @@ class BloggerProcessor:
                 connection.execute("UPDATE settings SET failures=failures+1 WHERE id=1")
 
     def _finish(self, job_id: int) -> None:
-        self._update(job_id, "done")
+        self._update(job_id, "done", "complete")
         with self.db() as connection:
             connection.execute("UPDATE settings SET failures=0 WHERE id=1")
 
@@ -367,15 +541,21 @@ class BloggerProcessor:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return
-            with self.db() as connection:
-                # An interrupted provider request may already have incurred a charge.
-                connection.execute("UPDATE jobs SET state='review' WHERE state='running'")
-            while not stop.is_set():
-                try:
-                    self.process_one()
-                except Exception:
-                    pass
-                stop.wait(3)
+            self._worker_active = True
+            try:
+                with self.db() as connection:
+                    # An interrupted provider request may already have incurred a charge.
+                    connection.execute("UPDATE jobs SET state='review' WHERE state='running'")
+                while not stop.is_set():
+                    self._worker_last_seen = int(time.time())
+                    try:
+                        self.reconcile_new_arrivals()
+                        self.process_one()
+                    except Exception:
+                        pass
+                    stop.wait(3)
+            finally:
+                self._worker_active = False
 
 
 BLOGGER_PROCESSOR = BloggerProcessor()

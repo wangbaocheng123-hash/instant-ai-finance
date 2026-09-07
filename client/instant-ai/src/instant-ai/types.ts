@@ -204,11 +204,29 @@ export interface BloggerWorkDetail extends BloggerWork {
 export interface BloggerProcessing {
   enabled: boolean;
   failures: number;
+  enabled_since: number;
+  last_reconciled: number;
+  worker_running: boolean;
+  worker_last_seen: number;
   daily_call_limit: number;
   max_video_minutes: number;
   speech_configured: boolean;
   keywords_configured: boolean;
-  items: Array<{ id: number; work_key: string; state: string; phase: string; message: string; updated: number }>;
+  summary: Record<'queued' | 'running' | 'done' | 'configuration' | 'review' | 'quota' | 'conflict' | 'total', number>;
+  items: Array<{
+    id: number;
+    work_key: string;
+    title: string;
+    creator_name: string;
+    kind: string;
+    automatic: boolean;
+    mode: string;
+    state: string;
+    phase: string;
+    message: string;
+    updated: number;
+    steps: Record<'asr' | 'keywords', { state: string; message: string }>;
+  }>;
 }
 
 export interface ModelMrStatus {

@@ -410,6 +410,7 @@ img { display: block; }
 .blogger-workspace-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 9px; }
 .blogger-workspace-header h3 { margin: 0; color: #172c29; font-size: 20px; line-height: 1.55; }
 .blogger-workspace-header button { min-height: 30px; padding: 5px 8px; border: 1px solid #89bdb6; border-radius: 7px; background: #f7fcfb; color: #176e63; cursor: pointer; font-size: 10px; font-weight: 700; }
+.blogger-workspace-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .blogger-detail-kicker { margin: 0; color: #188173; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
 .blogger-workspace-header + .blogger-detail-kicker, .blogger-workspace-header + .model-title-editor + .blogger-detail-kicker { margin-top: 6px; }
 .blogger-panel .model-detail-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 12px; border: 1px solid #d7e7e3; border-radius: 9px 9px 0 0; background: #edf7f5; }
@@ -820,4 +821,33 @@ img { display: block; }
 .model-processing-job { padding: 8px 0; border-top: 1px solid #e8e2f5; }
 .model-processing .panel-message { display: block; min-height: 0; padding: 7px 0; color: #65718a; text-align: left; line-height: 1.65; font-size: 12px; }
 .model-processing button, .model-keyword-panel > button { min-height: 44px; cursor: pointer; }
+.blogger-processing-heading, .blogger-processing-switch, .blogger-processing-job-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.blogger-processing-heading h3 { margin: 0; }
+.blogger-processing-heading button { flex: 0 0 auto; min-height: 34px; padding: 5px 9px; }
+.blogger-processing-switch { margin: 7px 0; padding: 10px; border: 1px solid #d8e4e1; border-radius: 9px; background: #f5fbf9; }
+.blogger-processing-switch > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.blogger-processing-switch b { color: #176758; font-size: 13px; }
+.blogger-processing-switch span { color: #627c76; font-size: 11px; line-height: 1.5; }
+.blogger-processing-switch button { flex: 0 0 auto; margin: 0; border-color: #8cc6ba; color: #176758; }
+.blogger-processing-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
+.blogger-processing-summary > div { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 4px; border: 1px solid #e3e7ec; border-radius: 7px; background: #fff; }
+.blogger-processing-summary b { color: #27364b; font-size: 16px; }
+.blogger-processing-summary span { color: #788497; font-size: 10px; }
+.blogger-processing-monitor { margin: 7px 0; color: #416359; font-size: 11px; line-height: 1.55; }
+.blogger-processing-list-title { margin: 10px 0 3px; color: #384458; font-size: 12px; }
+.blogger-processing-job-heading { align-items: flex-start; }
+.blogger-processing-job-heading > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.blogger-processing-job-heading b { overflow: hidden; color: #27364b; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.blogger-processing-job-heading span { color: #8590a1; font-size: 10px; }
+.processing-state { flex: 0 0 auto; padding: 3px 6px; border-radius: 5px; background: #eef1f5; color: #5f6b7c; font-size: 10px; }
+.processing-state.state-running, .processing-state.state-queued { background: #e9f1ff; color: #2d61a8; }
+.processing-state.state-done { background: #e9f7ef; color: #24724e; }
+.processing-state.state-review, .processing-state.state-conflict, .processing-state.state-configuration { background: #fff0e3; color: #9a5b18; }
+.blogger-processing-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-top: 7px; }
+.blogger-processing-step { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 7px; border: 1px solid #e2e6eb; border-radius: 7px; background: #fff; }
+.blogger-processing-step b { color: #465266; font-size: 11px; }
+.blogger-processing-step span { overflow: hidden; color: #8791a0; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+.blogger-processing-step.step-running, .blogger-processing-step.step-queued { border-color: #b8ccef; background: #f1f6ff; }
+.blogger-processing-step.step-done, .blogger-processing-step.step-skipped { border-color: #bedfca; background: #f2faf5; }
+.blogger-processing-step.step-blocked, .blogger-processing-step.step-review { border-color: #ecd0ae; background: #fff8ee; }
 .model-keyword-panel > button { padding: 8px 12px; border: 1px solid #cfc5f4; border-radius: 8px; color: #5949af; background: #fff; margin: 5px 4px 5px 0; }

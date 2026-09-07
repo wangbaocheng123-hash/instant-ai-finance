@@ -663,6 +663,77 @@ class BloggerLibrary:
             "media_hash": _text(media["expected_sha256"]),
         }
 
+    def processing_arrivals_since(self, completed_since: int, limit: int = 500) -> list[dict[str, str]]:
+        """List current, verified videos completed after automatic processing was enabled.
+
+        The processing worker uses this narrow projection to repair a missed
+        completion callback after a restart or a short database lock.  The
+        caller supplies the persisted activation boundary, so this never turns
+        enabling the switch into an unbounded historical paid batch.
+        """
+        try:
+            boundary = max(0, int(completed_since))
+            safe_limit = max(1, min(int(limit), 500))
+        except (TypeError, ValueError):
+            return []
+        with self._connect() as connection:
+            works = self._current_works(connection, completed_since=boundary)
+            return [
+                candidate
+                for work in works
+                if (candidate := self._processing_candidate(connection, work)) is not None
+            ][:safe_limit]
+
+    def processing_candidate(self, work_key: str) -> dict[str, str] | None:
+        """Resolve one current verified video for an explicit owner repair."""
+        if not self._valid_work_key(work_key):
+            return None
+        try:
+            with self._connect() as connection:
+                works = self._current_works(connection, work_key=work_key)
+                return self._processing_candidate(connection, works[0]) if works else None
+        except BloggerLibraryUnavailable:
+            return None
+
+    def processing_labels(self, work_keys: list[str]) -> dict[str, dict[str, str]]:
+        """Return only owner-safe display labels for queue status rows."""
+        wanted = {value for value in work_keys[:30] if self._valid_work_key(value)}
+        if not wanted:
+            return {}
+        try:
+            with self._connect() as connection:
+                works = self._current_works(connection)
+        except BloggerLibraryUnavailable:
+            return {}
+        labels: dict[str, dict[str, str]] = {}
+        for work in works:
+            work_key = _text(work.get("work_key"))
+            if work_key not in wanted:
+                continue
+            public = self._public_work(work)
+            labels[work_key] = {
+                "title": _text(public.get("title")) or _text(public.get("description")) or "未命名作品",
+                "creator_name": _text(work.get("creator_display_name")) or "未命名博主",
+            }
+        return labels
+
+    def _processing_candidate(
+        self,
+        connection: sqlite3.Connection,
+        work: Mapping[str, Any],
+    ) -> dict[str, str] | None:
+        if (
+            _text(work.get("creator_id")) == MODEL_MR_TRANSFER_CREATOR_ID
+            or _text(work.get("transport_status")) != "transport_completed"
+        ):
+            return None
+        descriptor = self._artifact_descriptor(connection, work, "media")
+        media_hash = _text(descriptor.get("expected_sha256")) if descriptor else ""
+        work_key = _text(work.get("work_key"))
+        if not self._valid_work_key(work_key) or len(media_hash) != 64:
+            return None
+        return {"work_key": work_key, "media_hash": media_hash}
+
     def save_stock_mentions(self, work_key: str, report: Mapping[str, Any]) -> dict[str, Any]:
         """Store a precomputed deterministic report; no model or market API is called."""
         detail = self.work_detail(work_key)
@@ -734,12 +805,16 @@ class BloggerLibrary:
         *,
         creator_id: str | None = None,
         work_key: str | None = None,
+        completed_since: int | None = None,
     ) -> list[dict[str, Any]]:
         filters: list[str] = ["t.creator_id<>?"]
         parameters: list[object] = [MODEL_MR_TRANSFER_CREATOR_ID]
         if creator_id is not None:
             filters.append("t.creator_id=?")
             parameters.append(creator_id)
+        if completed_since is not None:
+            filters.append("t.completed_at>=?")
+            parameters.append(max(0, int(completed_since)))
         extra_where = "" if not filters else " AND " + " AND ".join(filters)
         parameters.append(MAX_CURRENT_ROWS + 1)
         rows = connection.execute(
@@ -754,6 +829,7 @@ class BloggerLibrary:
                 t.source_revision,
                 t.transport_status,
                 t.received_at,
+                t.completed_at,
                 t.manifest_json,
                 p.processing_status,
                 SUM(CASE WHEN a.artifact_kind='media' THEN 1 ELSE 0 END) AS media_expected,
