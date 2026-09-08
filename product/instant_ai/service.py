@@ -11,6 +11,7 @@ from typing import Any
 from .collectors import Entry, Source, collect_source
 from .database import connect, transaction, utc_now
 from .paths import BACKUPS_ROOT, DATABASE_PATH, EVIDENCE_ROOT, EXPORTS_ROOT, LIBRARY_ROOT, RAW_ROOT
+from .publishers import UNKNOWN_PUBLISHER
 from .rules import analyze, canonical_key
 from .retention import published_within_hard_limit, run_retention_cleanup
 from .thumbnails import (
@@ -153,10 +154,20 @@ def _upsert_entry(
     evidence_id = hashlib.sha256(evidence_basis.encode("utf-8")).hexdigest()
     connection.execute(
         """
-        INSERT OR IGNORE INTO evidence(
+        INSERT INTO evidence(
             id, source_id, source_item_id, url, title, fetched_at,
-            published_at, content_hash, raw_path, mime_type, http_status, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            published_at, content_hash, raw_path, mime_type, http_status,
+            publisher_name, publisher_url, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            publisher_name=CASE
+                WHEN excluded.publisher_name<>'' THEN excluded.publisher_name
+                ELSE evidence.publisher_name
+            END,
+            publisher_url=CASE
+                WHEN excluded.publisher_url<>'' THEN excluded.publisher_url
+                ELSE evidence.publisher_url
+            END
         """,
         (
             evidence_id,
@@ -170,10 +181,14 @@ def _upsert_entry(
             raw_path,
             mime_type,
             http_status,
+            entry.publisher,
+            entry.publisher_url,
             json.dumps(
                 {
                     "source_key": source.key,
                     "image_url": entry.image_url or None,
+                    "publisher": entry.publisher or None,
+                    "publisher_url": entry.publisher_url or None,
                     "feed_content_hash": content_hash,
                 },
                 ensure_ascii=False,
@@ -298,8 +313,17 @@ def run_collection() -> dict[str, Any]:
 
 def _decode_item(row: sqlite3.Row) -> dict[str, Any]:
     item = dict(row)
-    source_names = item.pop("source_names", "") or ""
-    item["sources"] = [name for name in source_names.split(",") if name]
+    publisher_names_json = item.pop("publisher_names_json", None)
+    if publisher_names_json is None:
+        source_names = item.pop("source_names", "") or ""
+        publisher_names = [name for name in source_names.split(",") if name]
+    else:
+        try:
+            decoded_names = json.loads(publisher_names_json)
+        except (TypeError, json.JSONDecodeError):
+            decoded_names = []
+        publisher_names = [name for name in decoded_names if isinstance(name, str) and name]
+    item["sources"] = _preferred_publisher_names(publisher_names)
     item["topics"] = json.loads(item.pop("topics_json"))
     item["entities"] = json.loads(item.pop("entities_json"))
     item["is_saved"] = bool(item["is_saved"])
@@ -308,6 +332,12 @@ def _decode_item(row: sqlite3.Row) -> dict[str, Any]:
         f"/api/items/{item['id']}/thumbnail?v={THUMBNAIL_BROWSER_CACHE_VERSION}"
     )
     return item
+
+
+def _preferred_publisher_names(names: list[str]) -> list[str]:
+    unique = list(dict.fromkeys(name for name in names if name))
+    identified = [name for name in unique if name != UNKNOWN_PUBLISHER]
+    return identified or unique
 
 
 def query_items(
@@ -335,7 +365,8 @@ def query_items(
             ORDER BY COALESCE(i.published_at, i.first_seen_at) DESC, i.importance_score DESC
             LIMIT ? OFFSET ?
         )
-        SELECT selected.*, GROUP_CONCAT(DISTINCT s.name) AS source_names
+        SELECT selected.*,
+               json_group_array(DISTINCT NULLIF(e.publisher_name, '')) AS publisher_names_json
         FROM selected
         LEFT JOIN item_evidence ie ON ie.item_id=selected.id
         LEFT JOIN evidence e ON e.id=ie.evidence_id
@@ -362,7 +393,8 @@ def query_hot_items(limit: int = 40) -> list[dict[str, Any]]:
             ORDER BY hot_score DESC, COALESCE(i.published_at, i.first_seen_at) DESC
             LIMIT ?
         )
-        SELECT selected.*, GROUP_CONCAT(DISTINCT s.name) AS source_names
+        SELECT selected.*,
+               json_group_array(DISTINCT NULLIF(e.publisher_name, '')) AS publisher_names_json
         FROM selected
         LEFT JOIN item_evidence ie ON ie.item_id=selected.id
         LEFT JOIN evidence e ON e.id=ie.evidence_id
@@ -438,7 +470,9 @@ def get_item(item_id: int) -> dict[str, Any] | None:
             return None
         evidence_rows = connection.execute(
             """
-            SELECT e.*, s.name AS source_name, s.trust_level
+            SELECT e.*,
+                   COALESCE(NULLIF(e.publisher_name, ''), '原站待识别') AS source_name,
+                   s.name AS collection_source_name, s.trust_level
             FROM item_evidence ie
             JOIN evidence e ON e.id=ie.evidence_id
             JOIN sources s ON s.id=e.source_id
@@ -453,8 +487,8 @@ def get_item(item_id: int) -> dict[str, Any] | None:
         ).fetchone()
     item = _decode_item(row)
     item["evidence"] = [dict(evidence) for evidence in evidence_rows]
-    item["sources"] = list(
-        dict.fromkeys(evidence["source_name"] for evidence in evidence_rows)
+    item["sources"] = _preferred_publisher_names(
+        [evidence["source_name"] for evidence in evidence_rows]
     )
     item["ai_job"] = dict(ai_row) if ai_row else None
     if item["ai_job"] and item["ai_job"]["result_json"]:

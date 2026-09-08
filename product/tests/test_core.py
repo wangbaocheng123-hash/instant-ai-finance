@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -8,8 +9,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from instant_ai import thumbnails
+from instant_ai.ai_provider import _evidence_packet
 from instant_ai.collectors import (
+    Entry,
+    FetchResult,
     Source,
+    collect_source,
     parse_bing_news_feed,
     parse_feed,
     parse_kb_research_today,
@@ -17,11 +22,17 @@ from instant_ai.collectors import (
     parse_wechat_public_index,
 )
 from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources, transaction, utc_now
+from instant_ai.publishers import (
+    UNKNOWN_PUBLISHER,
+    publisher_from_title,
+    resolve_publisher_identity,
+)
 from instant_ai.launch import client_window_bounds, mobile_preview_window_bounds
 from instant_ai.paths import STATIC_ROOT
 from instant_ai.reader_translation import translate_reader_item
 from instant_ai.rules import analyze, canonical_key, normalized_url
 from instant_ai.retention import published_within_hard_limit, retention_preview, run_retention_cleanup
+from instant_ai.service import _upsert_entry, get_item, query_items
 from instant_ai.thumbnails import (
     DownloadedImage,
     DownloadedHtml,
@@ -47,6 +58,14 @@ RSS_SAMPLE = b"""<?xml version="1.0" encoding="UTF-8"?>
 <guid>item-1</guid><description>Copper and gold production increased.</description>
 <media:content medium="image" type="image/jpeg" url="https://images.example.com/copper.jpg" />
 <pubDate>Sun, 23 Aug 2026 08:00:00 GMT</pubDate></item></channel></rss>"""
+
+GOOGLE_NEWS_RSS_SAMPLE = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Google News</title><item>
+<title>Gold rises as markets assess rate outlook - Reuters</title>
+<link>https://news.google.com/rss/articles/example</link><guid>google-item-1</guid>
+<pubDate>Tue, 08 Sep 2026 00:00:00 GMT</pubDate>
+<source url="https://www.reuters.com">Reuters</source>
+</item></channel></rss>"""
 
 WECHAT_PUBLIC_INDEX_SAMPLE = """<!doctype html><html><head><title>财联社 - 微信公众号</title></head><body>
 <div class="ae"><a class="ae-container-2" href="/articles/article-one">
@@ -168,6 +187,60 @@ class FeedTests(unittest.TestCase):
         self.assertTrue(entries[0].published_at.startswith("2026-08-23"))
         self.assertEqual(entries[0].image_url, "https://images.example.com/copper.jpg")
 
+    def test_google_news_feed_keeps_real_publisher_metadata(self) -> None:
+        entry = parse_feed(GOOGLE_NEWS_RSS_SAMPLE)[0]
+        self.assertEqual(entry.publisher, "Reuters")
+        self.assertEqual(entry.publisher_url, "https://www.reuters.com")
+
+    def test_collection_enriches_feed_publisher_before_evidence_storage(self) -> None:
+        source = Source(
+            1,
+            "china-finance-wire",
+            "中国财经资讯发现",
+            "rss",
+            "https://news.google.com/rss/search?q=china",
+            3,
+            ["中国财经"],
+            {"discovery_only": True, "max_entries": 10},
+        )
+        response = FetchResult(200, "application/rss+xml", GOOGLE_NEWS_RSS_SAMPLE, None, None)
+        with patch("instant_ai.collectors.fetch", return_value=response), patch(
+            "instant_ai.collectors.store_raw", return_value=("feed-hash", "/tmp/feed.xml")
+        ):
+            _result, entries, _digest, _raw_path = collect_source(source)
+        self.assertEqual(entries[0].publisher, "路透社")
+        self.assertEqual(entries[0].publisher_url, "https://www.reuters.com")
+
+    def test_publisher_resolution_never_treats_a_collection_channel_as_media(self) -> None:
+        resolved = resolve_publisher_identity(
+            article_url="https://news.google.com/rss/articles/example",
+            title="Credit outlook is revised - Moody's",
+            source_name="中国财经资讯发现",
+            source_url="https://news.google.com/rss/search?q=china",
+            source_config={"discovery_only": True},
+        )
+        self.assertEqual(resolved.name, "穆迪")
+        self.assertNotEqual(resolved.name, "中国财经资讯发现")
+        self.assertEqual(publisher_from_title("Markets rally - Reuters"), "路透社")
+        self.assertEqual(publisher_from_title("Investment outlook - Morgan Stanley"), "摩根士丹利")
+
+        unknown = resolve_publisher_identity(
+            article_url="https://news.google.com/rss/articles/no-source",
+            title="Headline without a publisher suffix",
+            source_name="全球财经媒体发现",
+            source_url="https://news.google.com/rss/search?q=markets",
+            source_config={"discovery_only": True},
+        )
+        self.assertEqual(unknown.name, UNKNOWN_PUBLISHER)
+
+    def test_unknown_original_site_uses_its_domain_as_the_publisher(self) -> None:
+        resolved = resolve_publisher_identity(
+            article_url="https://research.example.org/market/outlook",
+            source_name="华尔街即时资讯发现",
+            source_config={"discovery_only": True},
+        )
+        self.assertEqual(resolved.name, "research.example.org")
+
     def test_missing_feed_date_is_inferred_only_from_a_trailing_date(self) -> None:
         body = b"""<?xml version='1.0' encoding='UTF-8'?>
         <rss version='2.0'><channel><item>
@@ -288,6 +361,55 @@ class FeedTests(unittest.TestCase):
 
 
 class DatabaseTests(unittest.TestCase):
+    def test_schema_ten_evidence_table_migrates_without_replacing_data(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "schema-ten.db"
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE evidence (
+                        id TEXT PRIMARY KEY,
+                        source_id INTEGER NOT NULL,
+                        source_item_id TEXT,
+                        url TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        fetched_at TEXT NOT NULL,
+                        published_at TEXT,
+                        content_hash TEXT NOT NULL,
+                        raw_path TEXT NOT NULL,
+                        mime_type TEXT NOT NULL,
+                        http_status INTEGER NOT NULL,
+                        metadata_json TEXT NOT NULL DEFAULT '{}'
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO evidence(
+                        id, source_id, url, title, fetched_at, content_hash,
+                        raw_path, mime_type, http_status
+                    ) VALUES ('kept', 1, 'https://example.com/story', 'Kept evidence',
+                              '2026-09-08T00:00:00+00:00', 'hash', '/tmp/raw',
+                              'application/rss+xml', 200)
+                    """
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            initialize(path)
+            with connect(path) as migrated:
+                columns = {
+                    row[1] for row in migrated.execute("PRAGMA table_info(evidence)")
+                }
+                kept = migrated.execute(
+                    "SELECT publisher_name, publisher_url FROM evidence WHERE id='kept'"
+                ).fetchone()
+            self.assertIn("publisher_name", columns)
+            self.assertIn("publisher_url", columns)
+            self.assertEqual(dict(kept), {"publisher_name": "", "publisher_url": ""})
+
     def test_cls_sources_are_scoped_to_china_and_title_metadata(self) -> None:
         sources = {source["key"]: source for source in DEFAULT_SOURCES}
         website = sources["cls-official-news"]
@@ -333,7 +455,7 @@ class DatabaseTests(unittest.TestCase):
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             self.assertEqual(source_count, len(DEFAULT_SOURCES))
-            self.assertEqual(version, "10")
+            self.assertEqual(version, "11")
             with connect(path) as connection:
                 tables = {
                     row[0]
@@ -350,6 +472,112 @@ class DatabaseTests(unittest.TestCase):
             self.assertIn("watch_events", tables)
             self.assertIn("watch_event_matches", tables)
             self.assertIn("watch_sync_state", tables)
+
+    def test_existing_discovery_evidence_backfills_the_real_publisher(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "publisher-backfill.db"
+            initialize(path)
+            seed_sources(path)
+            now = utc_now()
+            with transaction(path) as connection:
+                source_id = connection.execute(
+                    "SELECT id FROM sources WHERE key='china-finance-wire'"
+                ).fetchone()[0]
+                connection.execute(
+                    """
+                    INSERT INTO items(
+                        id, canonical_key, title, url, first_seen_at, last_seen_at
+                    ) VALUES (1, 'publisher-backfill', ?, ?, ?, ?)
+                    """,
+                    (
+                        "China credit outlook changes - Moody's",
+                        "https://news.google.com/rss/articles/legacy",
+                        now,
+                        now,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO evidence(
+                        id, source_id, url, title, fetched_at, content_hash,
+                        raw_path, mime_type, http_status
+                    ) VALUES ('legacy-evidence', ?, ?, ?, ?, 'legacy-hash',
+                              '/tmp/legacy.xml', 'application/rss+xml', 200)
+                    """,
+                    (
+                        source_id,
+                        "https://news.google.com/rss/articles/legacy",
+                        "China credit outlook changes - Moody's",
+                        now,
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO item_evidence(item_id, evidence_id) VALUES (1, 'legacy-evidence')"
+                )
+
+            seed_sources(path)
+            with connect(path) as connection:
+                evidence = connection.execute(
+                    "SELECT publisher_name FROM evidence WHERE id='legacy-evidence'"
+                ).fetchone()
+            self.assertEqual(evidence["publisher_name"], "穆迪")
+
+    def test_item_list_detail_and_ai_packet_expose_publisher_not_collection_channel(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "publisher-api.db"
+            initialize(path)
+            seed_sources(path)
+            with transaction(path) as connection:
+                row = connection.execute(
+                    "SELECT * FROM sources WHERE key='china-finance-wire'"
+                ).fetchone()
+                source = Source(
+                    id=row["id"],
+                    key=row["key"],
+                    name=row["name"],
+                    kind=row["kind"],
+                    url=row["url"],
+                    trust_level=row["trust_level"],
+                    topic_hints=json.loads(row["topic_hints_json"]),
+                    config=json.loads(row["config_json"]),
+                )
+                _upsert_entry(
+                    connection,
+                    source,
+                    Entry(
+                        source_item_id="publisher-item",
+                        title="China credit outlook changes - Moody's",
+                        url="https://news.google.com/rss/articles/publisher-item",
+                        summary="",
+                        published_at=utc_now(),
+                        publisher="穆迪",
+                        publisher_url="https://www.moodys.com/",
+                    ),
+                    "feed-hash",
+                    "/tmp/feed.xml",
+                    "application/rss+xml",
+                    200,
+                )
+
+            with patch("instant_ai.database.DATABASE_PATH", path):
+                listing = query_items(limit=10)
+                detail = get_item(listing[0]["id"])
+                packet = _evidence_packet(listing[0]["id"])
+
+            self.assertEqual(listing[0]["sources"], ["穆迪"])
+            self.assertIsNotNone(detail)
+            self.assertEqual(detail["sources"], ["穆迪"])
+            self.assertEqual(detail["evidence"][0]["source_name"], "穆迪")
+            self.assertEqual(
+                detail["evidence"][0]["collection_source_name"],
+                "中国财经资讯发现",
+            )
+            self.assertIsNotNone(packet)
+            self.assertEqual(packet["evidence"][0]["source_name"], "穆迪")
+            self.assertEqual(
+                packet["evidence"][0]["collection_source_name"],
+                "中国财经资讯发现",
+            )
 
 
 class RetentionTests(unittest.TestCase):
@@ -704,6 +932,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("aria-current", app)
         self.assertIn('behavior:"auto"', app)
         self.assertIn("即时热点", app)
+        self.assertIn("来源：", app)
         self.assertIn("临时置顶", app)
         self.assertIn("浏览器翻译原文", app)
         self.assertIn("googlechromes://", app)

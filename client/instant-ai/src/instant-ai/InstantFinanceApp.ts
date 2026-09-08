@@ -101,7 +101,7 @@ export class InstantFinanceApp {
           <div class="header-actions">
             <div class="header-tools" role="group" aria-label="客户端状态工具">
                <button type="button" class="translate-button" data-action="translate" title="把英文财经标题翻译成中文，并保留英文原题">汉化开启</button>
-               <button type="button" data-action="sources" title="查看文字来源状态">来源</button>
+               <button type="button" data-action="sources" title="查看内部采集通道状态">采集</button>
               ${this.authRequired ? '<button type="button" data-action="logout" title="退出主人账户">退出</button>' : ''}
               <div class="auto-collection" title="客户端启动后立即更新一轮，之后每 5 分钟自动采集全球财经文字来源">
                 <span></span><b id="collectionMode" data-compact-label="实时采集">自动实时采集</b><small id="collectionCadence" class="visually-hidden">每 5 分钟持续更新</small>
@@ -462,7 +462,7 @@ export class InstantFinanceApp {
       originalTitle.classList.toggle('hidden', !originalTitle.textContent);
       const meta = document.createElement('p');
       meta.className = 'detail-meta';
-      meta.textContent = `${formatFullTime(item.published_at || item.first_seen_at)} · ${(item.sources || []).join('、') || `${item.source_count} 个来源`}`;
+      meta.textContent = `${formatFullTime(item.published_at || item.first_seen_at)} · 来源：${(item.sources || []).join('、') || '原站待识别'}`;
       const detailHeader = document.createElement('div');
       detailHeader.className = 'detail-header';
       const detailThumbnail = document.createElement('img');
@@ -639,17 +639,17 @@ export class InstantFinanceApp {
       close.dataset.action = 'close-overlay';
       close.textContent = '×';
       const title = document.createElement('h1');
-      title.textContent = `文字来源状态（${sources.length}）`;
+      title.textContent = `采集通道状态（${sources.length}）`;
       const note = document.createElement('p');
       note.className = 'detail-summary';
-      note.textContent = '证据只在当前热点窗口临时保留。付费媒体只使用允许公开访问的标题、摘要或授权接口，不绕过付费墙。';
+      note.textContent = '这里显示内部采集线路，不代表新闻发布方。新闻卡片和详情中的“来源”只显示真实发布方或原站域名；证据仅在当前热点窗口临时保留。';
       const list = document.createElement('div');
       list.className = 'source-list';
       sources.forEach((source) => list.append(this.sourceRow(source)));
       card.append(close, title, note, list);
       this.required('#overlay').classList.remove('hidden');
     } catch (error) {
-      this.toast(error instanceof Error ? error.message : '来源状态读取失败', true);
+      this.toast(error instanceof Error ? error.message : '采集通道状态读取失败', true);
     }
   }
 

@@ -42,7 +42,9 @@ def _evidence_packet(item_id: int) -> dict[str, Any] | None:
         evidence = connection.execute(
             """
             SELECT e.id, e.url, e.title, e.fetched_at, e.published_at,
-                   e.content_hash, s.name AS source_name, s.trust_level
+                   e.content_hash,
+                   COALESCE(NULLIF(e.publisher_name, ''), '原站待识别') AS source_name,
+                   e.publisher_url, s.name AS collection_source_name, s.trust_level
             FROM item_evidence ie
             JOIN evidence e ON e.id=ie.evidence_id
             JOIN sources s ON s.id=e.source_id

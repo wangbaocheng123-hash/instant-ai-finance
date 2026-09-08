@@ -6,7 +6,7 @@ import re
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 from .database import utc_now
 from .date_hints import infer_embedded_published_at
 from .paths import RAW_ROOT
+from .publishers import resolve_publisher_identity
 from .rules import clean_text, normalized_url
 
 
@@ -44,6 +45,8 @@ class Entry:
     summary: str
     published_at: str | None
     image_url: str = ""
+    publisher: str = ""
+    publisher_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -166,6 +169,19 @@ def _entry_image(element: ET.Element, link: str) -> str:
     return ""
 
 
+def _entry_publisher(element: ET.Element) -> tuple[str, str]:
+    for child in element.iter():
+        if _local_name(child.tag) != "source":
+            continue
+        name = clean_text(child.text or "")
+        if not name:
+            name = clean_text(_first_text(child, {"title", "name"}))
+        url = str(child.attrib.get("url") or child.attrib.get("href") or "").strip()
+        if name or url:
+            return name, url
+    return "", ""
+
+
 def parse_date(value: str) -> str | None:
     value = value.strip()
     if not value:
@@ -201,6 +217,7 @@ def parse_feed(body: bytes, max_entries: int = 50) -> list[Entry]:
         if not title or not link:
             continue
         normalized_link = normalized_url(link)
+        publisher, publisher_url = _entry_publisher(element)
         entries.append(
             Entry(
                 identifier,
@@ -209,6 +226,8 @@ def parse_feed(body: bytes, max_entries: int = 50) -> list[Entry]:
                 summary[:4000],
                 published,
                 _entry_image(element, normalized_link),
+                publisher,
+                publisher_url,
             )
         )
     return entries
@@ -607,7 +626,17 @@ def parse_bing_news_feed(source: Source, body: bytes) -> list[Entry]:
         identifier = hashlib.sha256(
             f"{entry.published_at or ''}|{link}|{entry.title}".encode("utf-8")
         ).hexdigest()
-        entries.append(Entry(identifier, entry.title, link, "", entry.published_at))
+        entries.append(
+            Entry(
+                identifier,
+                entry.title,
+                link,
+                "",
+                entry.published_at,
+                publisher=entry.publisher,
+                publisher_url=entry.publisher_url,
+            )
+        )
     if not entries:
         raise ValueError("Bing News response returned no links from the configured publisher domains")
     return entries
@@ -634,14 +663,21 @@ def collect_source(source: Source) -> tuple[FetchResult, list[Entry], str, str]:
         raise ValueError(f"Unsupported source kind: {source.kind}")
     if source.config.get("title_link_only"):
         entries = [
-            Entry(
-                entry.source_item_id,
-                entry.title,
-                entry.url,
-                "",
-                entry.published_at,
-                entry.image_url,
-            )
+            replace(entry, summary="")
             for entry in entries
         ]
-    return result, entries, digest, raw_path
+    enriched: list[Entry] = []
+    for entry in entries:
+        publisher = resolve_publisher_identity(
+            explicit_name=entry.publisher,
+            explicit_url=entry.publisher_url,
+            article_url=entry.url,
+            title=entry.title,
+            source_name=source.name,
+            source_url=source.url,
+            source_config=source.config,
+        )
+        enriched.append(
+            replace(entry, publisher=publisher.name, publisher_url=publisher.url)
+        )
+    return result, enriched, digest, raw_path

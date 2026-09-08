@@ -93,7 +93,7 @@ export class FinancePanel {
     meta.className = 'news-meta';
     const source = document.createElement('span');
     source.className = 'news-source';
-    source.textContent = item.sources?.[0] || item.event_type;
+    source.textContent = `来源：${item.sources?.[0] || '原站待识别'}`;
     const time = document.createElement('time');
     time.textContent = formatTime(item.published_at || item.first_seen_at);
     const score = document.createElement('b');

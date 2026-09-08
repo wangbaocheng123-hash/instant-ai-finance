@@ -22,6 +22,8 @@ export interface FinanceItem {
 export interface Evidence {
   id: string;
   source_name: string;
+  collection_source_name?: string;
+  publisher_url?: string;
   fetched_at: string;
   content_hash: string;
 }

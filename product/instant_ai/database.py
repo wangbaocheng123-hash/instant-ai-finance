@@ -10,9 +10,10 @@ from typing import Iterator
 from urllib.parse import quote_plus
 
 from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensure_layout
+from .publishers import resolve_publisher_identity
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -186,6 +187,7 @@ DEFAULT_SOURCES = (
             "discovery_only": True,
             "title_link_only": True,
             "publisher": "财联社",
+            "publisher_url": "https://www.cls.cn/",
             "rights_scope": "title_date_link_only",
         },
     },
@@ -201,6 +203,7 @@ DEFAULT_SOURCES = (
             "discovery_only": True,
             "title_link_only": True,
             "expected_account": "财联社",
+            "publisher_url": "https://www.cls.cn/",
             "wechat_id": "cailianpress",
             "wechat_biz": "Mzg5MzEyNzEwNQ==",
             "index_provider": "瓦斯阅读",
@@ -219,6 +222,7 @@ DEFAULT_SOURCES = (
             "discovery_only": True,
             "title_link_only": True,
             "publisher": "KB증권 리서치",
+            "publisher_url": "https://www.kbsec.com/",
             "language": "ko",
             "evidence_role": "broker_research_primary",
             "not_company_disclosure": True,
@@ -237,6 +241,7 @@ DEFAULT_SOURCES = (
             "discovery_only": True,
             "title_link_only": True,
             "publisher": "한국경제",
+            "publisher_url": "https://www.hankyung.com/",
             "language": "ko",
             "allowed_domains": ["hankyung.com"],
             "required_title_keywords": KOREAN_FINANCE_TITLE_KEYWORDS,
@@ -257,6 +262,7 @@ DEFAULT_SOURCES = (
             "discovery_only": True,
             "title_link_only": True,
             "publisher": "서울경제",
+            "publisher_url": "https://www.sedaily.com/",
             "language": "ko",
             "allowed_domains": ["sedaily.com"],
             "required_title_keywords": KOREAN_FINANCE_TITLE_KEYWORDS,
@@ -277,6 +283,7 @@ DEFAULT_SOURCES = (
             "discovery_only": True,
             "title_link_only": True,
             "publisher": "증권플러스 뉴스룸",
+            "publisher_url": "https://newsroom.stockplus.com/",
             "language": "ko",
             "evidence_role": "early_discovery_only",
             "public_page": "https://newsroom.stockplus.com/breaking-news",
@@ -447,6 +454,8 @@ def initialize(path: Path | str | None = None) -> None:
                 raw_path TEXT NOT NULL,
                 mime_type TEXT NOT NULL,
                 http_status INTEGER NOT NULL,
+                publisher_name TEXT NOT NULL DEFAULT '',
+                publisher_url TEXT NOT NULL DEFAULT '',
                 metadata_json TEXT NOT NULL DEFAULT '{}'
             );
 
@@ -645,6 +654,13 @@ def initialize(path: Path | str | None = None) -> None:
             connection.execute("ALTER TABLE watch_events ADD COLUMN monitoring_json TEXT NOT NULL DEFAULT '{}'")
         if "analysis_feedback_json" not in watch_event_columns:
             connection.execute("ALTER TABLE watch_events ADD COLUMN analysis_feedback_json TEXT NOT NULL DEFAULT '{}'")
+        evidence_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(evidence)").fetchall()
+        }
+        if "publisher_name" not in evidence_columns:
+            connection.execute("ALTER TABLE evidence ADD COLUMN publisher_name TEXT NOT NULL DEFAULT ''")
+        if "publisher_url" not in evidence_columns:
+            connection.execute("ALTER TABLE evidence ADD COLUMN publisher_url TEXT NOT NULL DEFAULT ''")
         watch_channel_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(watch_event_channels)").fetchall()
         }
@@ -716,6 +732,33 @@ def seed_sources(path: Path | str | None = None) -> None:
                     now,
                     now,
                 ),
+            )
+        rows = connection.execute(
+            """
+            SELECT e.id, e.title, e.url, e.publisher_name, e.publisher_url,
+                   s.name AS source_name, s.url AS source_url, s.config_json
+            FROM evidence e
+            JOIN sources s ON s.id=e.source_id
+            WHERE e.publisher_name=''
+            """
+        ).fetchall()
+        for row in rows:
+            try:
+                config = json.loads(row["config_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                config = {}
+            publisher = resolve_publisher_identity(
+                explicit_name=row["publisher_name"],
+                explicit_url=row["publisher_url"],
+                article_url=row["url"],
+                title=row["title"],
+                source_name=row["source_name"],
+                source_url=row["source_url"],
+                source_config=config,
+            )
+            connection.execute(
+                "UPDATE evidence SET publisher_name=?, publisher_url=? WHERE id=?",
+                (publisher.name, publisher.url, row["id"]),
             )
 
 
