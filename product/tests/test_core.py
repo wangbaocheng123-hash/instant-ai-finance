@@ -8,7 +8,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from instant_ai import thumbnails
-from instant_ai.collectors import Source, parse_feed, parse_wechat_public_index
+from instant_ai.collectors import (
+    Source,
+    parse_bing_news_feed,
+    parse_feed,
+    parse_kb_research_today,
+    parse_stockplus_breaking,
+    parse_wechat_public_index,
+)
 from instant_ai.database import DEFAULT_SOURCES, connect, initialize, seed_sources, transaction, utc_now
 from instant_ai.launch import client_window_bounds, mobile_preview_window_bounds
 from instant_ai.paths import STATIC_ROOT
@@ -51,6 +58,45 @@ WECHAT_PUBLIC_INDEX_SAMPLE = """<!doctype html><html><head><title>财联社 - �
   <span>8 / 29</span><span class="pretty">上市公司发布半年报</span>
 </a></div></body></html>""".encode("utf-8")
 
+KB_RESEARCH_TODAY_SAMPLE = """<!doctype html><html lang="ko"><body>
+<div class="ytb-tit"><span>2026년 9월 7일</span><span>LIVE</span></div>
+<div id="ytb-cont"><p>
+  <span><a href="https://www.youtube.com/watch?v=sample&amp;t=13s">00:13</a></span>
+  <span>[KB리서치 모닝코멘트 0907]</span>
+  <span><a href="https://www.youtube.com/watch?v=sample&amp;t=444s">07:24</a></span>
+  <span>[반도체 - 내년 사상 초유의 공급 부족]</span>
+</p></div></body></html>""".encode("utf-8")
+
+STOCKPLUS_BREAKING_SAMPLE = json.dumps(
+    {
+        "data": {
+            "cursor": "1788827171048",
+            "breakingNews": [
+                {
+                    "id": 34125,
+                    "title": "코스피, 0.72% 상승 출발..7,000선 회복",
+                    "publishedAt": 1788827171048,
+                    "summaries": ["不应保存的摘要"],
+                }
+            ],
+            "hasNext": True,
+        }
+    },
+    ensure_ascii=False,
+).encode("utf-8")
+
+BING_KOREAN_NEWS_SAMPLE = """<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0"><channel><title>Bing News</title><item>
+  <title>삼성·SK하이닉스 반도체 공급 전망</title>
+  <link>http://www.bing.com/news/apiclick.aspx?url=https%3A%2F%2Fwww.hankyung.com%2Farticle%2F202609078162H&amp;c=1</link>
+  <guid>bing-result-1</guid><pubDate>Mon, 07 Sep 2026 09:46:00 GMT</pubDate>
+  <description>不应保存的索引摘要</description>
+</item><item>
+  <title>Unrelated result must be dropped</title>
+  <link>http://www.bing.com/news/apiclick.aspx?url=https%3A%2F%2Fexample.com%2Farticle&amp;c=2</link>
+  <guid>bing-result-2</guid><pubDate>Mon, 07 Sep 2026 09:45:00 GMT</pubDate>
+</item></channel></rss>""".encode("utf-8")
+
 
 class RuleTests(unittest.TestCase):
     def test_tracking_parameters_are_removed(self) -> None:
@@ -81,6 +127,18 @@ class RuleTests(unittest.TestCase):
         self.assertIn("AI产业链", result.topics)
         self.assertIn("英伟达", result.entities)
         self.assertNotIn("AI产业链", analyze("Daily oil market update", "", 3, []).topics)
+
+    def test_korean_chip_headline_is_classified_without_relabeling_its_source(self) -> None:
+        result = analyze(
+            "삼성전자·SK하이닉스 메모리 재고 10일 미만 전망",
+            "",
+            4,
+            ["全球财经", "亚洲市场", "投行观点"],
+        )
+        self.assertIn("AI产业链", result.topics)
+        self.assertIn("三星电子", result.entities)
+        self.assertIn("SK海力士", result.entities)
+        self.assertEqual(result.event_type, "产量/库存")
 
     def test_desktop_client_window_has_a_bounded_size(self) -> None:
         width, height, left, top = client_window_bounds()
@@ -170,6 +228,64 @@ class FeedTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identifier mismatch"):
             parse_wechat_public_index(source, WECHAT_PUBLIC_INDEX_SAMPLE)
 
+    def test_kb_research_today_reads_dated_public_segments(self) -> None:
+        source = Source(
+            1,
+            "kb-securities-research-today",
+            "KB证券官方研究晨会（韩国）",
+            "kb_research_today",
+            "https://rc.kbsec.com/today/index.able",
+            4,
+            ["全球财经", "亚洲市场", "投行观点"],
+            {"max_entries": 30, "title_link_only": True},
+        )
+        entries = parse_kb_research_today(source, KB_RESEARCH_TODAY_SAMPLE)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0].published_at, "2026-09-06T15:00:00+00:00")
+        self.assertEqual(entries[1].title, "KB证券晨会：반도체 - 내년 사상 초유의 공급 부족（07:24）")
+        self.assertEqual(entries[1].url, "https://www.youtube.com/watch?v=sample&t=444s")
+        self.assertEqual(entries[1].summary, "")
+
+    def test_stockplus_breaking_keeps_only_public_title_date_and_link(self) -> None:
+        source = Source(
+            1,
+            "stockplus-korea-newsroom",
+            "Stockplus Newsroom 韩国快讯发现",
+            "stockplus_breaking_json",
+            "https://spn.stockplus.com/news/api/v2/breaking-news?limit=20&includeCrix=false",
+            2,
+            ["全球财经", "亚洲市场"],
+            {"max_entries": 20, "title_link_only": True},
+        )
+        entries = parse_stockplus_breaking(source, STOCKPLUS_BREAKING_SAMPLE)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].source_item_id, "stockplus-breaking-34125")
+        self.assertEqual(entries[0].title, "코스피, 0.72% 상승 출발..7,000선 회복")
+        self.assertEqual(entries[0].url, "https://newsroom.stockplus.com/breaking-news/34125")
+        self.assertEqual(entries[0].published_at, "2026-09-08T00:26:11+00:00")
+        self.assertEqual(entries[0].summary, "")
+
+    def test_bing_korean_feed_unwraps_and_enforces_publisher_domain(self) -> None:
+        source = Source(
+            1,
+            "hankyung-korea-finance",
+            "韩国经济日报财经新闻发现",
+            "bing_news_rss",
+            "https://www.bing.com/news/search?q=site%3Ahankyung.com&format=rss&setlang=ko-kr",
+            3,
+            ["全球财经", "亚洲市场"],
+            {
+                "max_entries": 70,
+                "allowed_domains": ["hankyung.com"],
+                "required_title_keywords": ["반도체"],
+                "title_link_only": True,
+            },
+        )
+        entries = parse_bing_news_feed(source, BING_KOREAN_NEWS_SAMPLE)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].url, "https://www.hankyung.com/article/202609078162H")
+        self.assertEqual(entries[0].summary, "")
+
 
 class DatabaseTests(unittest.TestCase):
     def test_cls_sources_are_scoped_to_china_and_title_metadata(self) -> None:
@@ -182,6 +298,31 @@ class DatabaseTests(unittest.TestCase):
         self.assertTrue(wechat["config"]["title_link_only"])
         self.assertEqual(wechat["config"]["wechat_id"], "cailianpress")
         self.assertLess(wechat["trust_level"], website["trust_level"])
+
+    def test_korean_sources_keep_research_and_media_roles_separate(self) -> None:
+        sources = {source["key"]: source for source in DEFAULT_SOURCES}
+        kb = sources["kb-securities-research-today"]
+        hankyung = sources["hankyung-korea-finance"]
+        sedaily = sources["seoul-economic-daily-korea"]
+        stockplus = sources["stockplus-korea-newsroom"]
+        self.assertEqual(kb["kind"], "kb_research_today")
+        self.assertEqual(kb["config"]["evidence_role"], "broker_research_primary")
+        self.assertTrue(kb["config"]["not_company_disclosure"])
+        self.assertEqual(kb["trust_level"], 4)
+        self.assertEqual(hankyung["trust_level"], 3)
+        self.assertEqual(sedaily["trust_level"], 3)
+        self.assertEqual(stockplus["trust_level"], 2)
+        self.assertEqual(stockplus["kind"], "stockplus_breaking_json")
+        self.assertEqual(stockplus["config"]["evidence_role"], "early_discovery_only")
+        for source in (hankyung, sedaily):
+            self.assertEqual(source["kind"], "bing_news_rss")
+            self.assertIn("format=rss&setlang=ko-kr", source["url"])
+            self.assertEqual(source["config"]["index_provider"], "Bing News")
+            self.assertTrue(source["config"]["title_link_only"])
+            self.assertTrue(source["config"]["discovery_only"])
+        self.assertEqual(stockplus["config"]["rights_scope"], "title_date_link_only")
+        self.assertTrue(stockplus["config"]["title_link_only"])
+        self.assertTrue(stockplus["config"]["discovery_only"])
 
     def test_schema_and_source_seed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -609,7 +750,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.21.1", worker)
+        self.assertIn("instant-ai-shell-v0.21.2", worker)
 
 
 if __name__ == "__main__":

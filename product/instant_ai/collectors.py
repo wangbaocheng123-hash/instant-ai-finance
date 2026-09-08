@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 from .database import utc_now
 from .date_hints import infer_embedded_published_at
@@ -56,9 +56,14 @@ class FetchResult:
 
 
 def fetch(source: Source, timeout: int = 30) -> FetchResult:
+    accept = (
+        "application/json"
+        if source.kind == "stockplus_breaking_json"
+        else "application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.9, */*;q=0.5"
+    )
     headers = {
         "User-Agent": USER_AGENT,
-        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, text/html;q=0.9, */*;q=0.5",
+        "Accept": accept,
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7",
     }
     if source.etag:
@@ -85,7 +90,12 @@ def fetch(source: Source, timeout: int = 30) -> FetchResult:
 def store_raw(source: Source, result: FetchResult) -> tuple[str, str]:
     digest = hashlib.sha256(result.body).hexdigest()
     date_part = datetime.now(UTC).strftime("%Y-%m-%d")
-    suffix = ".xml" if "xml" in result.content_type or source.kind == "rss" else ".html"
+    if "json" in result.content_type or source.kind.endswith("_json"):
+        suffix = ".json"
+    elif "xml" in result.content_type or source.kind in {"rss", "bing_news_rss"}:
+        suffix = ".xml"
+    else:
+        suffix = ".html"
     target = RAW_ROOT / source.key / date_part / f"{digest}{suffix}"
     target.parent.mkdir(parents=True, exist_ok=True)
     if not target.exists():
@@ -408,6 +418,201 @@ def parse_wechat_public_index(
     return entries
 
 
+class KBResearchTodayParser(HTMLParser):
+    """Read dated segment titles from KB Securities' public morning page."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.date_text: list[str] = []
+        self.segments: list[tuple[str, str, str]] = []
+        self._date_depth = 0
+        self._content_depth = 0
+        self._anchor_href: str | None = None
+        self._anchor_text: list[str] = []
+        self._pending_anchor: tuple[str, str] | None = None
+        self._pending_title: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        lowered = tag.lower()
+        values = dict(attrs)
+        if lowered == "div":
+            classes = set((values.get("class") or "").split())
+            if self._date_depth:
+                self._date_depth += 1
+            elif "ytb-tit" in classes:
+                self._date_depth = 1
+            if self._content_depth:
+                self._content_depth += 1
+            elif values.get("id") == "ytb-cont":
+                self._content_depth = 1
+        elif lowered == "a" and self._content_depth:
+            self._finish_pending()
+            self._anchor_href = values.get("href") or ""
+            self._anchor_text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._date_depth:
+            self.date_text.append(data)
+        if not self._content_depth:
+            return
+        if self._anchor_href is not None:
+            self._anchor_text.append(data)
+        elif self._pending_anchor is not None:
+            self._pending_title.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        lowered = tag.lower()
+        if lowered == "a" and self._content_depth and self._anchor_href is not None:
+            self._pending_anchor = (self._anchor_href, clean_text(" ".join(self._anchor_text)))
+            self._anchor_href = None
+            self._anchor_text = []
+        if lowered != "div":
+            return
+        if self._content_depth:
+            self._content_depth -= 1
+            if not self._content_depth:
+                self._finish_pending()
+        if self._date_depth:
+            self._date_depth -= 1
+
+    def close(self) -> None:
+        super().close()
+        self._finish_pending()
+
+    def _finish_pending(self) -> None:
+        if self._pending_anchor is None:
+            return
+        href, marker = self._pending_anchor
+        self.segments.append((href, marker, clean_text(" ".join(self._pending_title))))
+        self._pending_anchor = None
+        self._pending_title = []
+
+
+_KB_RESEARCH_DATE = re.compile(
+    r"(?P<year>20\d{2})\s*년\s*(?P<month>\d{1,2})\s*월\s*(?P<day>\d{1,2})\s*일"
+)
+_KOREA_TIMEZONE = timezone(timedelta(hours=9))
+
+
+def parse_kb_research_today(source: Source, body: bytes) -> list[Entry]:
+    """Parse KB's own dated morning-video agenda without copying report prose."""
+
+    parser = KBResearchTodayParser()
+    parser.feed(_decode_html(body))
+    parser.close()
+    match = _KB_RESEARCH_DATE.search(clean_text(" ".join(parser.date_text)))
+    if not match:
+        raise ValueError("KB research page returned no dated morning agenda")
+    published = datetime(
+        int(match.group("year")),
+        int(match.group("month")),
+        int(match.group("day")),
+        tzinfo=_KOREA_TIMEZONE,
+    ).astimezone(UTC).isoformat()
+
+    max_entries = int(source.config.get("max_entries", 30))
+    seen: set[str] = set()
+    entries: list[Entry] = []
+    for href, marker, raw_title in parser.segments:
+        parsed = urlsplit(href)
+        if parsed.hostname not in {"youtube.com", "www.youtube.com", "youtu.be"}:
+            continue
+        title = re.sub(r"^\[\s*|\s*\]$", "", raw_title).strip()
+        link = normalized_url(href)
+        if not title or not link or link in seen:
+            continue
+        seen.add(link)
+        identifier = hashlib.sha256(f"{published}|{link}|{title}".encode("utf-8")).hexdigest()
+        display_title = f"KB证券晨会：{title}"
+        if marker:
+            display_title += f"（{marker}）"
+        entries.append(Entry(identifier, display_title[:500], link, "", published))
+        if len(entries) >= max_entries:
+            break
+    if not entries:
+        raise ValueError("KB research page returned no public morning segments")
+    return entries
+
+
+def parse_stockplus_breaking(source: Source, body: bytes) -> list[Entry]:
+    """Read the public Stockplus breaking-news index without retaining summaries."""
+
+    payload = json.loads(body.decode("utf-8"))
+    data = payload.get("data") if isinstance(payload, dict) else None
+    items = data.get("breakingNews") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise ValueError("Stockplus breaking-news response has no item list")
+
+    max_entries = int(source.config.get("max_entries", 70))
+    entries: list[Entry] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_id = item.get("id")
+        title = clean_text(str(item.get("title") or ""))
+        published_ms = item.get("publishedAt")
+        if (
+            not isinstance(item_id, int)
+            or item_id <= 0
+            or not title
+            or not isinstance(published_ms, (int, float))
+            or published_ms <= 0
+        ):
+            continue
+        try:
+            published = datetime.fromtimestamp(published_ms / 1000, UTC).replace(microsecond=0).isoformat()
+        except (OSError, OverflowError, ValueError):
+            continue
+        link = f"https://newsroom.stockplus.com/breaking-news/{item_id}"
+        entries.append(Entry(f"stockplus-breaking-{item_id}", title[:500], link, "", published))
+        if len(entries) >= max_entries:
+            break
+    if not entries:
+        raise ValueError("Stockplus breaking-news response returned no usable public titles")
+    return entries
+
+
+def parse_bing_news_feed(source: Source, body: bytes) -> list[Entry]:
+    """Unwrap Bing News discovery links and enforce the configured publisher domains."""
+
+    allowed_domains = {
+        str(domain).lower().lstrip(".")
+        for domain in source.config.get("allowed_domains", [])
+        if str(domain).strip()
+    }
+    if not allowed_domains:
+        raise ValueError("Bing News source has no allowed publisher domain")
+    required_keywords = [
+        str(keyword).casefold()
+        for keyword in source.config.get("required_title_keywords", [])
+        if str(keyword).strip()
+    ]
+
+    entries: list[Entry] = []
+    for entry in parse_feed(body, int(source.config.get("max_entries", 70))):
+        title_folded = entry.title.casefold()
+        if required_keywords and not any(keyword in title_folded for keyword in required_keywords):
+            continue
+        parsed = urlsplit(entry.url)
+        candidate = entry.url
+        if parsed.hostname and (parsed.hostname == "bing.com" or parsed.hostname.endswith(".bing.com")):
+            candidate = (parse_qs(parsed.query).get("url") or [""])[0]
+        direct = urlsplit(candidate)
+        hostname = (direct.hostname or "").lower()
+        if direct.scheme != "https" or not any(
+            hostname == domain or hostname.endswith(f".{domain}") for domain in allowed_domains
+        ):
+            continue
+        link = normalized_url(candidate)
+        identifier = hashlib.sha256(
+            f"{entry.published_at or ''}|{link}|{entry.title}".encode("utf-8")
+        ).hexdigest()
+        entries.append(Entry(identifier, entry.title, link, "", entry.published_at))
+    if not entries:
+        raise ValueError("Bing News response returned no links from the configured publisher domains")
+    return entries
+
+
 def collect_source(source: Source) -> tuple[FetchResult, list[Entry], str, str]:
     result = fetch(source)
     if result.status == 304:
@@ -415,10 +620,16 @@ def collect_source(source: Source) -> tuple[FetchResult, list[Entry], str, str]:
     digest, raw_path = store_raw(source, result)
     if source.kind == "rss":
         entries = parse_feed(result.body, int(source.config.get("max_entries", 50)))
+    elif source.kind == "bing_news_rss":
+        entries = parse_bing_news_feed(source, result.body)
     elif source.kind == "html_links":
         entries = parse_html_links(source, result.body)
     elif source.kind == "wechat_public_index":
         entries = parse_wechat_public_index(source, result.body)
+    elif source.kind == "kb_research_today":
+        entries = parse_kb_research_today(source, result.body)
+    elif source.kind == "stockplus_breaking_json":
+        entries = parse_stockplus_breaking(source, result.body)
     else:
         raise ValueError(f"Unsupported source kind: {source.kind}")
     if source.config.get("title_link_only"):

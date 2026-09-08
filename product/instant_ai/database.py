@@ -28,6 +28,19 @@ def _google_news(query: str, *, chinese: bool = False) -> str:
     locale = "hl=zh-CN&gl=CN&ceid=CN:zh-Hans" if chinese else "hl=en-US&gl=US&ceid=US:en"
     return f"https://news.google.com/rss/search?q={quote_plus(query)}&{locale}"
 
+
+def _bing_news_korean(query: str) -> str:
+    return f"https://www.bing.com/news/search?q={quote_plus(query)}&format=rss&setlang=ko-kr"
+
+
+KOREAN_FINANCE_TITLE_KEYWORDS = [
+    "경제", "금융", "증권", "주식", "코스피", "코스닥", "시장", "산업", "기업",
+    "반도체", "삼성", "하이닉스", "현대", "환율", "금리", "물가", "수출", "수입",
+    "투자", "매출", "이익", "실적", "채권", "원자재", "금값", "구리", "원유", "석유",
+    "인공지능", "관세", "GDP", "PMI", "고용", "Samsung", "SK Hynix", "AI",
+]
+
+
 DEFAULT_SOURCES = (
     {
         "key": "zijin-news",
@@ -191,6 +204,82 @@ DEFAULT_SOURCES = (
             "wechat_id": "cailianpress",
             "wechat_biz": "Mzg5MzEyNzEwNQ==",
             "index_provider": "瓦斯阅读",
+            "rights_scope": "title_date_link_only",
+        },
+    },
+    {
+        "key": "kb-securities-research-today",
+        "name": "KB证券官方研究晨会（韩国）",
+        "kind": "kb_research_today",
+        "url": "https://rc.kbsec.com/today/index.able",
+        "trust_level": 4,
+        "topic_hints": ["全球财经", "亚洲市场", "投行观点"],
+        "config": {
+            "max_entries": 30,
+            "discovery_only": True,
+            "title_link_only": True,
+            "publisher": "KB증권 리서치",
+            "language": "ko",
+            "evidence_role": "broker_research_primary",
+            "not_company_disclosure": True,
+            "rights_scope": "title_date_link_only",
+        },
+    },
+    {
+        "key": "hankyung-korea-finance",
+        "name": "韩国经济日报财经新闻发现",
+        "kind": "bing_news_rss",
+        "url": _bing_news_korean("site:hankyung.com"),
+        "trust_level": 3,
+        "topic_hints": ["全球财经", "亚洲市场"],
+        "config": {
+            "max_entries": 70,
+            "discovery_only": True,
+            "title_link_only": True,
+            "publisher": "한국경제",
+            "language": "ko",
+            "allowed_domains": ["hankyung.com"],
+            "required_title_keywords": KOREAN_FINANCE_TITLE_KEYWORDS,
+            "index_provider": "Bing News",
+            "evidence_role": "mainstream_media_verification",
+            "rights_scope": "title_date_link_only",
+        },
+    },
+    {
+        "key": "seoul-economic-daily-korea",
+        "name": "首尔经济日报财经新闻发现",
+        "kind": "bing_news_rss",
+        "url": _bing_news_korean("site:sedaily.com"),
+        "trust_level": 3,
+        "topic_hints": ["全球财经", "亚洲市场"],
+        "config": {
+            "max_entries": 70,
+            "discovery_only": True,
+            "title_link_only": True,
+            "publisher": "서울경제",
+            "language": "ko",
+            "allowed_domains": ["sedaily.com"],
+            "required_title_keywords": KOREAN_FINANCE_TITLE_KEYWORDS,
+            "index_provider": "Bing News",
+            "evidence_role": "mainstream_media_verification",
+            "rights_scope": "title_date_link_only",
+        },
+    },
+    {
+        "key": "stockplus-korea-newsroom",
+        "name": "Stockplus Newsroom 韩国快讯发现",
+        "kind": "stockplus_breaking_json",
+        "url": "https://spn.stockplus.com/news/api/v2/breaking-news?limit=20&includeCrix=false",
+        "trust_level": 2,
+        "topic_hints": ["全球财经", "亚洲市场"],
+        "config": {
+            "max_entries": 20,
+            "discovery_only": True,
+            "title_link_only": True,
+            "publisher": "증권플러스 뉴스룸",
+            "language": "ko",
+            "evidence_role": "early_discovery_only",
+            "public_page": "https://newsroom.stockplus.com/breaking-news",
             "rights_scope": "title_date_link_only",
         },
     },
