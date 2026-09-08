@@ -24,6 +24,7 @@ from .model_mr_metadata import KEYWORD_CATEGORIES, clean_keyword_info, clean_lin
 DEFAULT_ORIGIN = "http://127.0.0.1:8787"
 SNAPSHOT_VERSION = 2
 SUPPORTED_SNAPSHOT_VERSIONS = {1, SNAPSHOT_VERSION}
+BEIJING_COMMENT_PROJECTION_VERSION = 2
 _DETAIL_LOCK = threading.RLock()
 
 
@@ -564,10 +565,103 @@ class ModelMrClient:
                 "source_revision": revision,
                 "imported_title": incoming_title,
                 "media_sha256": digest,
+                "comment_projection_version": BEIJING_COMMENT_PROJECTION_VERSION,
             }
             self._write_json(self.snapshot_path, snapshot)
             self._write_json(self.transfer_map_path, mapping)
             return {"ok": True, "work_id": work_id, "status": "imported"}
+
+    def pending_beijing_comment_projection_sources(self) -> list[str]:
+        """Return transferred works whose saved comment threads use the old projection."""
+
+        with _DETAIL_LOCK:
+            mapping = self._read_transfer_map()
+        pending: list[str] = []
+        for source_id, value in mapping.items():
+            if not isinstance(value, dict):
+                continue
+            if int(value.get("comment_projection_version") or 0) >= BEIJING_COMMENT_PROJECTION_VERSION:
+                continue
+            if (
+                re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", str(source_id))
+                and int(value.get("work_id") or 0) > 0
+                and int(value.get("source_revision") or 0) > 0
+            ):
+                pending.append(str(source_id))
+        return sorted(pending)
+
+    def repair_beijing_comment_projection(
+        self,
+        *,
+        source_work_id: str,
+        source_revision: int,
+        comments: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Rebuild only comment grouping from an already verified transfer.
+
+        The repair never touches media, owner text, keywords, interpretations or
+        processing queues.  Missing/old transfer revisions remain retryable.
+        """
+
+        source_id = str(source_work_id or "").strip()
+        revision = int(source_revision)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", source_id) or revision <= 0:
+            raise ValueError("来源作品版本无效。")
+        with _DETAIL_LOCK:
+            mapping = self._read_transfer_map()
+            entry = mapping.get(source_id) if isinstance(mapping.get(source_id), dict) else None
+            if entry is None:
+                return {"ok": True, "status": "missing_mapping"}
+            if int(entry.get("comment_projection_version") or 0) >= BEIJING_COMMENT_PROJECTION_VERSION:
+                return {"ok": True, "status": "up_to_date"}
+            if int(entry.get("source_revision") or 0) != revision:
+                return {"ok": True, "status": "revision_mismatch"}
+
+            work_id = self._safe_work_id(entry.get("work_id"))
+            detail = self.processing_detail(work_id)
+            snapshot = self._require_snapshot()
+            indexed = next(
+                (
+                    item
+                    for item in snapshot.get("works", [])
+                    if isinstance(item, dict) and int(item.get("id") or 0) == work_id
+                ),
+                None,
+            )
+            if indexed is None:
+                raise ModelMrUnavailable("模型先生作品索引缺失，评论关系未修复。")
+
+            clean_comments = [
+                self._clean_comment(item, index)
+                for index, item in enumerate(comments, start=1)
+                if isinstance(item, dict)
+            ]
+            detail["comments"] = clean_comments
+            detail["comment_total"] = len(clean_comments)
+            detail.setdefault("work", {})["comment_count"] = len(clean_comments)
+            indexed["comment_count"] = len(clean_comments)
+            counts = snapshot.get("counts") if isinstance(snapshot.get("counts"), dict) else {}
+            counts["comments"] = sum(
+                max(0, int(item.get("comment_count") or 0))
+                for item in snapshot.get("works", [])
+                if isinstance(item, dict)
+            )
+            snapshot["counts"] = counts
+            entry["comment_projection_version"] = BEIJING_COMMENT_PROJECTION_VERSION
+            mapping[source_id] = entry
+
+            self._write_json(
+                self._detail_path(work_id),
+                self._clean_snapshot_detail(detail, work_id),
+            )
+            self._write_json(self.snapshot_path, snapshot)
+            self._write_json(self.transfer_map_path, mapping)
+            return {
+                "ok": True,
+                "status": "repaired",
+                "work_id": work_id,
+                "comment_count": len(clean_comments),
+            }
 
     def _read_transfer_map(self) -> dict[str, Any]:
         try:
@@ -1114,12 +1208,40 @@ class ModelMrClient:
     def _clean_comment(item: dict[str, Any], index: int) -> dict[str, Any]:
         raw = item.get("raw_json") if isinstance(item.get("raw_json"), dict) else {}
         kind = str(item.get("kind") or raw.get("kind") or "user_comment")
-        reply_depth = max(0, min(int(item.get("reply_depth") or raw.get("reply_depth") or 0), 8))
+        source_comment_id = str(
+            item.get("source_comment_id") or raw.get("source_comment_id") or ""
+        ).strip()
+        parent_source_comment_id = str(
+            item.get("parent_source_comment_id")
+            or raw.get("parent_source_comment_id")
+            or ""
+        ).strip()
+        root_source_comment_id = str(
+            item.get("root_source_comment_id")
+            or raw.get("root_source_comment_id")
+            or raw.get("thread_root_source_comment_id")
+            or ""
+        ).strip()
+        reply_to_comment_id = str(
+            item.get("reply_to_comment_id") or raw.get("reply_to_comment_id") or ""
+        ).strip()
+        declared_depth = int(item.get("reply_depth") or raw.get("reply_depth") or 0)
+        reply_depth = max(
+            0,
+            min(max(declared_depth, int(bool(parent_source_comment_id))), 8),
+        )
         preserved_thread_key = str(item.get("thread_key") or "").strip().lower()
         if re.fullmatch(r"[a-f0-9]{12}", preserved_thread_key):
             thread_key = preserved_thread_key
         else:
-            thread_source = str(raw.get("thread_id") or raw.get("root_source_comment_id") or index)
+            thread_source = str(
+                root_source_comment_id
+                or parent_source_comment_id
+                or raw.get("thread_id")
+                or reply_to_comment_id
+                or source_comment_id
+                or index
+            )
             thread_key = hashlib.sha256(thread_source.encode("utf-8", errors="ignore")).hexdigest()[:12]
         return {
             "id": index,

@@ -1200,6 +1200,11 @@ def run_server(collect_on_start: bool = True) -> None:
     if os.name == "posix":
         threading.Thread(target=MODEL_MR_PROCESSOR.run, name="model-mr-processing", daemon=True).start()
         threading.Thread(target=BLOGGER_PROCESSOR.run, name="blogger-processing", daemon=True).start()
+        threading.Thread(
+            target=MODEL_MR_TRANSFER_PROJECTOR.repair_pending_comment_threads,
+            name="model-mr-comment-thread-repair",
+            daemon=True,
+        ).start()
     threading.Thread(target=_scheduler_loop, name="instant-ai-scheduler", daemon=True).start()
     if collect_on_start:
         threading.Thread(target=_collect_in_background, name="instant-ai-initial-collector", daemon=True).start()

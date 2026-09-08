@@ -88,6 +88,68 @@ class ModelMrTransferProjector:
             ModelMrProcessor(self.model_mr).enqueue_arrival(
                 int(imported["work_id"]), str(video_descriptor.get("sha256") or ""))
 
+    def repair_pending_comment_threads(self) -> dict[str, int]:
+        """Reproject old comment relationships from retained verified bundles.
+
+        This startup repair changes only sanitized comment grouping.  It never
+        copies media or enqueues ASR/keyword/model processing.
+        """
+
+        totals = {"pending": 0, "repaired": 0, "skipped": 0, "errors": 0}
+        try:
+            source_ids = self.model_mr.pending_beijing_comment_projection_sources()
+            store = BloggerIngestStore(self.blogger_root)
+        except (OSError, ValueError, ModelMrUnavailable):
+            totals["errors"] = 1
+            return totals
+        totals["pending"] = len(source_ids)
+        for source_id in source_ids:
+            try:
+                transfer = store.get_current(
+                    work_platform="douyin",
+                    creator_id=MODEL_MR_TRANSFER_CREATOR_ID,
+                    source_work_id=source_id,
+                )
+                if (
+                    not transfer
+                    or not transfer.get("is_current")
+                    or str(transfer.get("transport_status") or "") != "transport_completed"
+                ):
+                    totals["skipped"] += 1
+                    continue
+                manifest = transfer.get("manifest") if isinstance(transfer.get("manifest"), dict) else {}
+                work = manifest.get("work") if isinstance(manifest.get("work"), dict) else {}
+                snapshot = (
+                    manifest.get("comment_snapshot")
+                    if isinstance(manifest.get("comment_snapshot"), dict)
+                    else {}
+                )
+                descriptor = snapshot.get("bundle") if isinstance(snapshot.get("bundle"), dict) else {}
+                artifacts = {
+                    str(item.get("artifact_id") or ""): item
+                    for item in transfer.get("artifacts", [])
+                    if isinstance(item, dict)
+                }
+                comment_artifact = artifacts.get(str(descriptor.get("bundle_id") or ""))
+                if not comment_artifact:
+                    totals["skipped"] += 1
+                    continue
+                result = self.model_mr.repair_beijing_comment_projection(
+                    source_work_id=source_id,
+                    source_revision=int(work.get("revision") or 0),
+                    comments=self._comments(
+                        self._artifact_path(comment_artifact),
+                        descriptor,
+                    ),
+                )
+                if result.get("status") == "repaired":
+                    totals["repaired"] += 1
+                else:
+                    totals["skipped"] += 1
+            except (OSError, ValueError, ModelMrUnavailable):
+                totals["errors"] += 1
+        return totals
+
     def _artifact_path(self, artifact: Mapping[str, Any]) -> Path:
         relative = str(artifact.get("stored_relative_path") or "").replace("\\", "/")
         parts = [part for part in relative.split("/") if part]

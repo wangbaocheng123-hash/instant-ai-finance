@@ -9,11 +9,14 @@ import http.client
 import threading
 from pathlib import Path
 from http.server import ThreadingHTTPServer
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.error import URLError
 
 from instant_ai.auth import OwnerAuth
 from instant_ai.model_mr import ModelMrClient
+from instant_ai.model_mr_mcp import ModelMrMcpLibrary
+from instant_ai.model_mr_transfer import ModelMrTransferProjector
+from instant_ai.blogger_library import MODEL_MR_TRANSFER_CREATOR_ID
 from instant_ai.server import InstantAIHandler
 
 
@@ -71,6 +74,200 @@ class ModelMrGatewayTests(unittest.TestCase):
                 self.assertTrue(detail["work"]["keyword_info"]["edited_by_owner"])
                 self.assertEqual(detail["comments"][0]["text"], "更新评论")
                 self.assertIsNotNone(client.video_path(first["work_id"]))
+
+    def test_beijing_wire_comment_relationships_survive_sanitized_import(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "public-snapshot.json"
+            snapshot.write_text(
+                json.dumps({"version": 2, "works": [], "thoughts": [], "counts": {}}),
+                encoding="utf-8",
+            )
+            media = root / "incoming.mp4"
+            media.write_bytes(b"verified-video")
+            digest = hashlib.sha256(media.read_bytes()).hexdigest()
+            client = ModelMrClient("http://127.0.0.1:8787", snapshot, root / "media")
+            comments = [
+                {
+                    "source_comment_id": "fan-question-1",
+                    "parent_source_comment_id": "",
+                    "root_source_comment_id": "fan-question-1",
+                    "reply_to_comment_id": "",
+                    "author": "粉丝甲",
+                    "text": "先生判断底部，外围市场是参考因素吗？",
+                    "kind": "user_comment",
+                    "like_count": 3,
+                },
+                {
+                    "source_comment_id": "author-reply-1",
+                    "parent_source_comment_id": "fan-question-1",
+                    "root_source_comment_id": "fan-question-1",
+                    "reply_to_comment_id": "fan-question-1",
+                    "author": "模型先生",
+                    "text": "不考虑外部原因。",
+                    "kind": "author_reply",
+                    "like_count": 18,
+                },
+            ]
+
+            imported = client.import_beijing_work(
+                source_work_id="778900",
+                source_revision=1,
+                title="评论关系测试",
+                description="",
+                source_url="https://www.douyin.com/video/778900",
+                published_at="2026-09-08T19:00:00+08:00",
+                comments=comments,
+                media_path=media,
+                media_sha256=digest,
+            )
+
+            with patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")):
+                detail = client.work_detail(imported["work_id"])
+            self.assertEqual(len(detail["comments"]), 2)
+            self.assertEqual(detail["comments"][0]["thread_key"], detail["comments"][1]["thread_key"])
+            self.assertEqual(detail["comments"][0]["reply_depth"], 0)
+            self.assertEqual(detail["comments"][1]["reply_depth"], 1)
+            self.assertNotIn("source_comment_id", detail["comments"][0])
+            self.assertNotIn("parent_source_comment_id", detail["comments"][1])
+            mcp = ModelMrMcpLibrary(snapshot).get_author_replies_for_mcp(
+                f"model-mr-work:{imported['work_id']}",
+                10,
+                0,
+            )
+            self.assertEqual(mcp["items"][0]["question"]["text"], comments[0]["text"])
+            self.assertEqual(mcp["items"][0]["author_messages"][0]["text"], comments[1]["text"])
+
+    def test_old_beijing_projection_repairs_threads_without_overwriting_owner_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "public-snapshot.json"
+            snapshot.write_text(
+                json.dumps({"version": 2, "works": [], "thoughts": [], "counts": {}}),
+                encoding="utf-8",
+            )
+            media = root / "incoming.mp4"
+            media.write_bytes(b"verified-video")
+            digest = hashlib.sha256(media.read_bytes()).hexdigest()
+            client = ModelMrClient("http://127.0.0.1:8787", snapshot, root / "media")
+            comments = [
+                {
+                    "source_comment_id": "fan-question-2",
+                    "parent_source_comment_id": "",
+                    "root_source_comment_id": "fan-question-2",
+                    "reply_to_comment_id": "",
+                    "author": "粉丝乙",
+                    "text": "双创指数还要磨底吗？",
+                    "kind": "user_comment",
+                },
+                {
+                    "source_comment_id": "author-reply-2",
+                    "parent_source_comment_id": "fan-question-2",
+                    "root_source_comment_id": "fan-question-2",
+                    "reply_to_comment_id": "fan-question-2",
+                    "author": "模型先生",
+                    "text": "这个底不是共振底，估计要磨一下。",
+                    "kind": "author_reply",
+                },
+            ]
+            imported = client.import_beijing_work(
+                source_work_id="778901",
+                source_revision=3,
+                title="旧评论关系测试",
+                description="",
+                source_url="https://www.douyin.com/video/778901",
+                published_at="2026-09-08T19:00:00+08:00",
+                comments=comments,
+                media_path=media,
+                media_sha256=digest,
+            )
+            client.save_title(imported["work_id"], "主人保留标题")
+            client.save_video_text(imported["work_id"], "主人确认的视频原文")
+
+            mapping = json.loads(client.transfer_map_path.read_text(encoding="utf-8"))
+            mapping["778901"].pop("comment_projection_version")
+            client.transfer_map_path.write_text(json.dumps(mapping), encoding="utf-8")
+            detail_path = client.details_root / f"{imported['work_id']}.json"
+            detail = json.loads(detail_path.read_text(encoding="utf-8"))
+            detail["comments"][0].update(thread_key="111111111111", reply_depth=0)
+            detail["comments"][1].update(thread_key="222222222222", reply_depth=0)
+            detail_path.write_text(json.dumps(detail, ensure_ascii=False), encoding="utf-8")
+
+            repaired = client.repair_beijing_comment_projection(
+                source_work_id="778901",
+                source_revision=3,
+                comments=comments,
+            )
+
+            with patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")):
+                fixed = client.work_detail(imported["work_id"])
+            self.assertEqual(repaired["status"], "repaired")
+            self.assertEqual(fixed["work"]["title"], "主人保留标题")
+            self.assertEqual(fixed["video_text"]["text"], "主人确认的视频原文")
+            self.assertEqual(fixed["comments"][0]["thread_key"], fixed["comments"][1]["thread_key"])
+            self.assertEqual(fixed["comments"][1]["reply_depth"], 1)
+            self.assertEqual(
+                json.loads(client.transfer_map_path.read_text(encoding="utf-8"))["778901"][
+                    "comment_projection_version"
+                ],
+                2,
+            )
+
+    def test_startup_thread_repair_uses_retained_bundle_without_enqueuing_processing(self) -> None:
+        model_mr = Mock()
+        model_mr.pending_beijing_comment_projection_sources.return_value = ["778902"]
+        model_mr.repair_beijing_comment_projection.return_value = {
+            "ok": True,
+            "status": "repaired",
+        }
+        projector = ModelMrTransferProjector(
+            blogger_root=Path("/not-used"),
+            model_mr=model_mr,
+        )
+        transfer = {
+            "is_current": True,
+            "transport_status": "transport_completed",
+            "manifest": {
+                "creator": {"creator_id": MODEL_MR_TRANSFER_CREATOR_ID},
+                "work": {"source_work_id": "778902", "revision": 4},
+                "comment_snapshot": {
+                    "bundle": {
+                        "bundle_id": "bundle-1",
+                        "item_count": 2,
+                        "uncompressed_size_bytes": 10,
+                    }
+                },
+            },
+            "artifacts": [
+                {
+                    "artifact_id": "bundle-1",
+                    "stored_relative_path": "artifacts/comments.gz",
+                }
+            ],
+        }
+        store = Mock()
+        store.get_current.return_value = transfer
+        comments = [{"source_comment_id": "fan-1"}, {"source_comment_id": "reply-1"}]
+
+        with (
+            patch("instant_ai.model_mr_transfer.BloggerIngestStore", return_value=store),
+            patch.object(projector, "_artifact_path", return_value=Path("comments.gz")),
+            patch.object(projector, "_comments", return_value=comments),
+        ):
+            result = projector.repair_pending_comment_threads()
+
+        self.assertEqual(result, {"pending": 1, "repaired": 1, "skipped": 0, "errors": 0})
+        store.get_current.assert_called_once_with(
+            work_platform="douyin",
+            creator_id=MODEL_MR_TRANSFER_CREATOR_ID,
+            source_work_id="778902",
+        )
+        model_mr.repair_beijing_comment_projection.assert_called_once_with(
+            source_work_id="778902",
+            source_revision=4,
+            comments=comments,
+        )
+
     def test_work_summary_removes_local_paths_raw_payload_and_admin_fields(self) -> None:
         cleaned = ModelMrClient._clean_work(
             {
