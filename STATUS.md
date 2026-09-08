@@ -1,9 +1,10 @@
 # 项目状态
 
 - 最后更新：2026-09-08
-- 即时 AI 0.21.3 模型先生评论线程修复已完成代码候选，尚未正式上线。核对证明北京模型下载器和 `blogger-transfer/v1` 已完整发送粉丝原问题、模型先生回复及父级/根级关系；新加坡模型先生投影忽略顶层关系字段，才把问答拆成独立评论。清洗层现生成共同脱敏线程键，手机作者互动和 MCP 作者回复可共同恢复原问题上下文。
+- 即时 AI 0.21.3 模型先生评论线程修复已正式上线。核对证明北京模型下载器和 `blogger-transfer/v1` 已完整发送粉丝原问题、模型先生回复及父级/根级关系；新加坡模型先生投影忽略顶层关系字段，才把问答拆成独立评论。清洗层现生成共同脱敏线程键，手机作者互动和 MCP 作者回复可共同恢复原问题上下文。
 - 新作品会直接保存评论投影版本 2；旧映射在服务启动后只读新加坡已验证且版本精确匹配的保留评论包，无付费重建脱敏评论关系。主人标题、正式原文、转写、解读、关键词、评股与视频保持不变；不重新传输北京数据、不创建处理任务、不调用 ASR、豆包或 AI。
 - 0.21.3 开发验收通过：即时 AI 183 项、北京采集/传输 218 项、前端 7 项页面契约和 6 项评论线程逻辑全部通过；Python 编译、TypeScript/Vite 生产构建及 npm 高危阈值审计通过。测试只使用合成资料和临时隔离依赖，真实付费调用 0 次。
+- 所有者已明确要求发布 0.21.3；受限发布器把生产从 `e0ad0af` 安全快进到 `1bc3baa`，服务器 183 项回归通过。公网健康、Service Worker 和 MCP `initialize` 均实测为 0.21.3；正式服务已启动历史评论线程后台修复，未重新传北京数据或触发付费处理。
 - 即时 AI 0.21.2 韩国采源与真实发布方已正式上线。默认来源由 22 个增至 26 个：KB 证券官方研究晨会作为券商原始研究，韩国经济日报与首尔经济日报作为主流媒体核验，Stockplus Newsroom 作为较低级别的快讯线索；四个来源各自隔离、可单独审计。
 - 新闻显示已从采集通道中解耦：schema 11 在每条财经证据上独立保存发布方名称/网址，按 Feed `<source>`、已核验配置、原站域名和聚合标题后缀确定来源。列表、详情与财经 AI 证据包现在显示财联社、路透社、穆迪或具体原站；无法证明时显示“原站待识别”，不再把“中国财经资讯发现”“全球财经媒体发现”“华尔街即时资讯发现”或事件类型冒充媒体。旧短周期证据启动时只回填空字段，不重建数据库。
 - KB 专用解析器只读公开日期、视频分段标题/时间和 YouTube 链接；两家媒体经 Bing News 韩文标题索引后强制解开并核验原站域名、应用财经标题过滤；Stockplus 读取公开快讯索引但明确丢弃摘要。所有来源只保存标题、时间与链接，不抓正文、不登录、不绕过访问控制；KB 券商估算带 `not_company_disclosure`，不得误写成企业公告。
@@ -33,7 +34,7 @@
 - 评论资料验收补充：本地/云端一条 595 赞作者主评论缺少作者 kind，依据主人截图仅在新 Git 外 `model-comments-20260904-v3` 副本确认这一条；其他 409 文件哈希不变。生产与本地源数据未写入，正式发布时应从最新状态精确合并这条确认，不用昵称批量推断。
 - 模型先生评论阅读增强代码已随 0.20.0 上线：补齐红色作者标识、作者赞过标记与原问题上下文；粉丝评论分为正点赞前十和其余有效长回复优先，同楼回复和评股正文按展开分批渲染。发布未改生产评论资料或调用 AI，详见 ADR-0035。
 - 模型先生关键词/投资思路手机交互代码已随 0.20.0 上线：手机一级/二级分类可进入关联作品，支持 24 条分页、搜索、共用播放器、已有 AI 分类关键词完整查看/手动整理及已有解读感悟。Git 外隔离预览未合并到生产，后续如需补齐元数据必须基于最新生产状态重新合并，不能用旧预览覆盖，详见 ADR-0034。
-- 当前阶段：`P2/P3 — 即时 AI 0.21.3 评论线程修复候选；0.21.2 与北京采集器 1.0.8 正式生产`
+- 当前阶段：`P2/P3 — 即时 AI 0.21.3 与北京采集器 1.0.8 正式生产；等待主人手机抽查历史作者互动`
 - 0.20.0 已按所有者明确“正式发布上线”口令完成：本机 151 项、服务器 151 项 Python 回归通过；正式与应急健康接口、Service Worker、新 PNG 图标、页面资源及统一 MCP `initialize` 全部验收为 0.20.0，即时 AI 与 Caddy active。
 - 0.19.2 已按所有者明确“发布”口令正式上线：生产资料核实为 406 部作品、406 份详情，覆盖 2023-10-29 至 2026-09-03；392 条媒体引用全部存在，评论 39,023 条。客户端首屏 24 条、下滑接近底部每次再取 24 条，详情/评论/视频继续点击后按需读取。服务器完整 106 项 Python 回归、正式健康、Service Worker 和生产分页验收通过；即时 AI、Caddy active。
 - 0.19.1 已按所有者明确授权正式发布：新加坡受限发布器把生产仓库安全快进至 `c905683`，服务器 104 项 Python 回归全部通过，正式健康接口、Service Worker 与 MCP `initialize` 均返回 0.19.1，五个只读工具保持正常。随后北京按需更新到 `1b4e018` / collector 1.0.5，安装 systemd 补充组并确认无轮询定时器；只读桥首轮把模型下载器作品 `7679663804129553913` 的 MP4 与 247 条评论送达新加坡模型先生记录 `model-mr-work:1000000`。视频、评论、页面资料和现有 MCP 索引均可见；未触发采集、ASR、豆包或 AI，时变罗盘未修改。
@@ -42,7 +43,7 @@
 - 0.18.2 已正式上线并消除 OAuth 授权页的账号歧义：页面直接从当前 Git 外单主人配置带入并锁定账号，主人只输入密码；错误凭据在原页醒目显示。授权成功后保存 30 天安全主人 Cookie，不再丢弃刚创建的网页登录会话；MCP access token 与网页 Cookie 继续严格隔离。受限发布器安全快进至 `8bd242f`，服务器 93 项回归、公网 OAuth/MCP 协议及真实授权页结构均通过；未读取或重置生产账号密码。
 - 0.18.1 已修复 ADP 官方结果送达后被永久跳过的状态机缺口：已认证官方片段可作为一手证据，搜索索引滞后进入五分钟重试而不是 `skip`，最多三次并持久化原因；即时 AI schema 10 显示罗盘/Codex 回填状态并临时置顶最近变化。即时 AI 一侧已正式上线；时变罗盘三态重试仍是独立待发布候选，须另行取得正式发布授权。
 - 所有者已明确要求把主人密码最低长度调整为 9 个字符，并把 OAuth 主人账号改为指定用户名。代码只调整长度策略；真实密码仍必须在隐藏终端提示中输入，不进入 Git、聊天、命令参数或普通日志。
-- 阶段状态：`INSTANT_AI_0_21_3_MODEL_MR_THREAD_REPAIR_READY / INSTANT_AI_0_21_2_LIVE / REAL_PUBLISHER_ATTRIBUTION_LIVE / KOREAN_SOURCES_LIVE / BLOGGER_AUTOMATIC_RECONCILIATION_LIVE / MODEL_MR_AUTHOR_REPLY_MCP_LIVE / BLOGGER_PARITY_LIVE / UNIFIED_INSTANT_AI_MCP_SIX_TOOLS_LIVE / INSTANT_AI_0_20_1_CONFIGURATION_RESUME_LIVE / BEIJING_COLLECTOR_CODEX_GIT_UPDATE_LIVE / BEIJING_NORTH_POLE_ICON_1_0_8_LIVE / INSTANT_AI_BRAND_0_20_0_LIVE / COMPACT_MOBILE_HEADER_LIVE / MODEL_MR_READING_UI_0_20_0_LIVE / MODEL_MR_TEXT_KEYWORDS_LIVE / MODEL_MR_AUTOMATION_DEFAULT_OFF / MODEL_MR_LAZY_PAGING_LIVE / MODEL_MR_BEIJING_TRANSFER_LIVE / MODEL_MR_CLOUD_MCP_LIVE / GRANDPAAMU_0_21_2_LIVE / BLOGGER_CALLBACK_LINK_LIVE / BLOGGER_CLOUD_MCP_REAL_CALL_VERIFIED / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
+- 阶段状态：`INSTANT_AI_0_21_3_MODEL_MR_THREAD_REPAIR_LIVE / REAL_PUBLISHER_ATTRIBUTION_LIVE / KOREAN_SOURCES_LIVE / BLOGGER_AUTOMATIC_RECONCILIATION_LIVE / MODEL_MR_AUTHOR_REPLY_MCP_LIVE / BLOGGER_PARITY_LIVE / UNIFIED_INSTANT_AI_MCP_SIX_TOOLS_LIVE / INSTANT_AI_0_20_1_CONFIGURATION_RESUME_LIVE / BEIJING_COLLECTOR_CODEX_GIT_UPDATE_LIVE / BEIJING_NORTH_POLE_ICON_1_0_8_LIVE / INSTANT_AI_BRAND_0_20_0_LIVE / COMPACT_MOBILE_HEADER_LIVE / MODEL_MR_READING_UI_0_20_0_LIVE / MODEL_MR_TEXT_KEYWORDS_LIVE / MODEL_MR_AUTOMATION_DEFAULT_OFF / MODEL_MR_LAZY_PAGING_LIVE / MODEL_MR_BEIJING_TRANSFER_LIVE / MODEL_MR_CLOUD_MCP_LIVE / GRANDPAAMU_0_21_3_LIVE / BLOGGER_CALLBACK_LINK_LIVE / BLOGGER_CLOUD_MCP_REAL_CALL_VERIFIED / BLOGGER_LEGACY_WINDOWS_BRIDGE_READY / BEIJING_SUITE_ROOT_LIVE / BLOGGER_REAL_TRANSFER_ACTIVE / BLOGGER_OWNER_WORKSPACE_LIVE / CLS_WEBSITE_LIVE_SAMPLE_OK / TITLE_LINK_ONLY_ACTIVE / MEDIA_CSP_SELF_ACTIVE / IPHONE_VIDEO_HEAD_ACTIVE / MODEL_MR_INTERACTIONS_ACTIVE / OWNER_AUTH_ACTIVE / FFMPEG_ACTIVE / DOUBAO_CREDENTIALS_SECURED / CODEX_CLOUD_PUBLISH_READY`
 - 产品名称：`即时 AI`
 - 目标形态：Windows 桌面客户端 + 本人使用的手机云端入口
 - 本机运行文件库：`H:\即时AI文件库`；短周期财经新闻按 ADR-0010 淘汰，模型先生独立资料按 ADR-0022 隔离；新加坡博主接收数据生产根固定为 `/var/lib/instant-ai/blogger-agent`，生命周期待后续决定
@@ -110,7 +111,7 @@
 
 ## 当前阻塞
 
-- 0.21.3 代码实现无已知功能阻塞，尚未正式发布。旧评论关系修复依赖新加坡仍保留对应作品的当前已验证评论包；缺少或版本不匹配的记录会安全跳过并在下次启动重试，不根据昵称或正文猜测关系。
+- 0.21.3 代码、正式发布与公网协议验收无已知功能阻塞。旧评论关系修复依赖新加坡仍保留对应作品的当前已验证评论包；缺少或版本不匹配的记录会安全跳过并在下次启动重试，不根据昵称或正文猜测关系。真实评论受主人登录保护，截图对应三组互动仍待主人手机刷新抽查。
 - 0.21.2 韩国采源、真实发布方、正式发布与公网版本验收无功能阻塞。Google/Bing News 索引限流或结构变化只会让对应单源显式异常；不会用内部频道名填充来源，KB 官方页、Stockplus 快讯索引及其他来源继续独立采集。
 - 0.21.1 代码、正式发布与公网版本验收无功能阻塞。云端开发机浏览器缺少 `libatk`，因此没有执行隔离截图脚本；该系统依赖未擅自安装，不影响已通过的开发/服务器回归、前端契约与生产构建结果。
 - 0.21.0 代码、正式发布与公网六工具验收无阻塞。普通博主历史作品若没有采集端基于本地证券名称表生成的确定性评股报告，正式页面只显示明确缺失状态；系统不使用 AI 猜测或伪造历史评股结果。
@@ -129,7 +130,7 @@
 
 ## 需要用户批准的事项
 
-- 0.21.3 正式上线仍需所有者新的明确“正式发布”口令。发布会在后台修复旧映射的脱敏评论线程，但不重新传视频、不启动北京采集，也不调用 ASR、豆包或 AI。
+- 0.21.3 已按所有者明确口令正式上线，不需要再次批准。发布已启动旧映射的脱敏评论线程后台修复，没有重新传视频、启动北京采集或调用 ASR、豆包、AI。
 - 0.21.2 已按所有者本轮明确口令正式上线，不需要再次批准。发布完成 schema 11 启动迁移并加载真实来源静态逻辑，没有读取或导出新闻正文、触发模型调用或修改时变罗盘；剩余手机抽查只需刷新现有页面。
 - 0.21.1 已按所有者本轮明确口令正式上线，不需要再次批准。发布没有自动开启豆包或处理历史；“贵族之路”当前旧漏项仍由主人在具体作品点一次“一键补做”并确认费用，新的自动链路则在主人手动开启后只接收随后完成传输的视频。
 - 0.21.0 已按所有者本轮口令正式上线，不需要再次批准。发布没有开启普通博主自动处理、批量扫描历史、生成/回填评股、调用 ASR/豆包/AI 或修改时变罗盘；已有 ChatGPT 连接只需 Refresh。
@@ -150,4 +151,4 @@
 
 ## 下一项唯一建议任务
 
-`等待所有者决定是否正式发布 0.21.3`：GitHub `main` 已完成开发验收；在收到新的明确“正式发布”口令前保持生产 0.21.2。上线后抽查截图对应作品的 3 组作者互动与 MCP 原问题上下文，评论总数必须保持不变。
+`手机抽查 0.21.3 历史作者互动`：完全关闭并重新打开即时 AI，进入截图对应模型先生作品的“作者互动”；3 组互动应各自先显示粉丝原问题、再显示模型先生红色作者回复，评论总数仍为 515。若保留评论包缺失或版本不匹配，记录会安全跳过而不猜测关系。
