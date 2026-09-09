@@ -5,6 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -133,6 +134,59 @@ class ModelDownloaderBridgeTests(unittest.TestCase):
             )
             self.assertEqual(wire_comment["author"], "读者 甲")
             self.assertEqual(wire_comment["text"], "测试 评论 结束")
+            self.assertIs(wire_comment["author_liked"], True)
+
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE comments SET collected_at=? WHERE video_id=?",
+                    ("2026-09-03T09:05:30+08:00", "778899"),
+                )
+                connection.execute(
+                    """
+                    UPDATE videos
+                    SET comments_collected_at=?, updated_at=?
+                    WHERE video_id=?
+                    """,
+                    (
+                        "2026-09-03T09:05:30+08:00",
+                        "2026-09-03T09:05:30+08:00",
+                        "778899",
+                    ),
+                )
+                connection.commit()
+
+            heartbeat_only = bridge.scan_once()
+            self.assertEqual(heartbeat_only["unchanged"], 1)
+            self.assertEqual(len(outbox.list_recent(limit=10)), 1)
+
+            # Douyin can add/remove the creator-like marker without changing
+            # the comment count or the parent video row. The bridge must still
+            # emit a new revision so Instant AI does not retain stale state.
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE comments SET is_author_digged=? WHERE video_id=?",
+                    (0, "778899"),
+                )
+                connection.commit()
+
+            author_like_changed = bridge.scan_once()
+            author_like_revisions = outbox.list_recent(limit=10)
+            author_like_latest = outbox.get(author_like_revisions[0]["transfer_id"])
+            author_like_artifact = next(
+                item
+                for item in outbox.artifacts_for(author_like_revisions[0]["transfer_id"])
+                if item["artifact_kind"] == "comment_bundle"
+            )
+            author_like_wire_comment = json.loads(
+                gzip.decompress(Path(author_like_artifact["local_path"]).read_bytes())
+                .decode("utf-8")
+                .splitlines()[0]
+            )
+
+            self.assertEqual(author_like_changed["enqueued"], 1)
+            self.assertEqual(len(author_like_revisions), 2)
+            self.assertEqual(author_like_latest["manifest"]["work"]["revision"], 2)
+            self.assertIs(author_like_wire_comment["author_liked"], False)
 
             with sqlite3.connect(database) as connection:
                 connection.execute(
@@ -158,8 +212,66 @@ class ModelDownloaderBridgeTests(unittest.TestCase):
             revisions = outbox.list_recent(limit=10)
             latest = outbox.get(revisions[0]["transfer_id"])
             self.assertEqual(changed["enqueued"], 1)
-            self.assertEqual(len(revisions), 2)
-            self.assertEqual(latest["manifest"]["work"]["revision"], 2)
+            self.assertEqual(len(revisions), 3)
+            self.assertEqual(latest["manifest"]["work"]["revision"], 3)
+
+            # A first start after the fingerprint upgrade must not resend the
+            # complete historical library merely because the algorithm
+            # changed. Migrate a proven-current v1 state in place.
+            with bridge._connect() as connection:
+                legacy_row = dict(
+                    connection.execute(
+                        """
+                        SELECT video_id, creator, title, source_url, published_at,
+                               discovered_at, downloaded_at, file_path, file_size,
+                               duration_seconds, download_status,
+                               comments_collected_at, comment_count, updated_at
+                        FROM videos WHERE video_id=?
+                        """,
+                        ("778899",),
+                    ).fetchone()
+                )
+            migration_state = root / "migration-state.json"
+            migration_state.write_text(
+                json.dumps(
+                    {
+                        "778899": {
+                            "signature": bridge._legacy_signature(legacy_row),
+                            "transfer_id": "old-transfer",
+                            "queued_at": "2026-09-03T10:00:00+08:00",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            migration_bridge = ModelDownloaderBridge(
+                outbox=outbox,
+                artifact_dir=artifact_root,
+                collector_node_id="beijing-1",
+                collector_key_id="key-1",
+                collector_version="test",
+                database_path=database,
+                media_root=media_root,
+                state_path=migration_state,
+            )
+
+            migrated = migration_bridge.scan_once()
+            migrated_state = json.loads(migration_state.read_text(encoding="utf-8"))
+            self.assertEqual(migrated["unchanged"], 1)
+            self.assertEqual(len(outbox.list_recent(limit=10)), 3)
+            self.assertEqual(migrated_state["778899"]["signature_version"], 2)
+            self.assertTrue(
+                bridge._requires_signature_upgrade_transfer(
+                    legacy_row,
+                    now=datetime(2026, 9, 3, 2, 0, tzinfo=UTC),
+                )
+            )
+            self.assertFalse(
+                bridge._requires_signature_upgrade_transfer(
+                    legacy_row,
+                    now=datetime(2026, 9, 6, 2, 0, tzinfo=UTC),
+                )
+            )
 
 
 if __name__ == "__main__":

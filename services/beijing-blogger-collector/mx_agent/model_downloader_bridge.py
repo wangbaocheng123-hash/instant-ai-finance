@@ -9,7 +9,7 @@ import sqlite3
 import tempfile
 import threading
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -21,6 +21,8 @@ MODEL_MR_TRANSFER_CREATOR_ID = "732ceafb-2bb3-5042-b303-967bdcf4312d"
 DEFAULT_DATABASE = Path("/var/lib/model-downloader/library.sqlite3")
 DEFAULT_MEDIA_ROOT = Path("/srv/model-downloader/videos")
 WIRE_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]+")
+COMMENT_SIGNATURE_VERSION = 2
+COMMENT_SIGNATURE_REBASE_HOURS = 48
 
 
 def _enabled(value: str | None, default: bool) -> bool:
@@ -155,6 +157,7 @@ class ModelDownloaderBridge:
             if not self.database_path.is_file():
                 raise FileNotFoundError("model_downloader_database_missing")
             enqueued = unchanged = skipped = 0
+            state_dirty = False
             with closing(self._connect()) as connection:
                 rows = connection.execute(
                     """
@@ -172,26 +175,64 @@ class ModelDownloaderBridge:
                     row = dict(raw)
                     source_id = str(row.get("video_id") or "").strip()
                     try:
-                        signature = self._signature(row)
-                    except (OSError, ValueError):
+                        captured_at = next(
+                            (
+                                value
+                                for value in (
+                                    _iso(row.get("comments_collected_at")),
+                                    _iso(row.get("updated_at")),
+                                    _iso(row.get("downloaded_at")),
+                                    _iso(row.get("published_at")),
+                                )
+                                if value
+                            ),
+                            "1970-01-01T00:00:00+00:00",
+                        )
+                        comments = self._comments(connection, source_id, captured_at)
+                        signature = self._signature(row, comments)
+                    except (OSError, ValueError, sqlite3.Error):
                         skipped += 1
                         continue
                     previous = self._state.get(source_id)
                     if isinstance(previous, dict) and previous.get("signature") == signature:
                         unchanged += 1
                         continue
+                    if (
+                        isinstance(previous, dict)
+                        and int(previous.get("signature_version") or 1) < COMMENT_SIGNATURE_VERSION
+                        and previous.get("signature") == self._legacy_signature(row)
+                        and not self._requires_signature_upgrade_transfer(row)
+                        and not self._comments_newer_than_state(
+                            comments,
+                            str(previous.get("queued_at") or ""),
+                        )
+                    ):
+                        # Upgrade existing bridge state without treating the
+                        # signature algorithm change as hundreds of new work
+                        # revisions. A comment snapshot newer than queued_at is
+                        # deliberately not migrated here; it must be sent.
+                        previous["signature"] = signature
+                        previous["signature_version"] = COMMENT_SIGNATURE_VERSION
+                        self._state[source_id] = previous
+                        state_dirty = True
+                        unchanged += 1
+                        continue
                     try:
-                        queued = self._enqueue(connection, row)
+                        queued = self._enqueue(row, comments, captured_at=captured_at)
                     except (OSError, ValueError, sqlite3.Error):
                         skipped += 1
                         continue
                     self._state[source_id] = {
                         "signature": signature,
+                        "signature_version": COMMENT_SIGNATURE_VERSION,
                         "transfer_id": str(queued.get("transfer_id") or ""),
                         "queued_at": datetime.now(UTC).isoformat(),
                     }
                     self._save_state()
+                    state_dirty = False
                     enqueued += int(queued.get("action") in {"inserted", "duplicate"})
+            if state_dirty:
+                self._save_state()
             self._last_run_at = datetime.now(UTC).isoformat()
             self._last_error_code = ""
             self._last_enqueued = enqueued
@@ -215,7 +256,47 @@ class ModelDownloaderBridge:
             raise ValueError("model_downloader_media_missing")
         return target
 
-    def _signature(self, row: Mapping[str, Any]) -> str:
+    def _signature(
+        self,
+        row: Mapping[str, Any],
+        comments: list[dict[str, Any]],
+    ) -> str:
+        path = self._safe_media_path(row.get("file_path"))
+        stat = path.stat()
+        value = {
+            "video": [
+                row.get("video_id"),
+                row.get("title"),
+                row.get("source_url"),
+                row.get("published_at"),
+                stat.st_size,
+                stat.st_mtime_ns,
+                row.get("comment_count"),
+            ],
+            # Comment fields are part of the revision identity. In particular,
+            # an author-like can appear or disappear without the downloader
+            # updating videos.updated_at or comment_count. Hashing the frozen
+            # wire representation guarantees that this metadata-only change is
+            # transmitted to Singapore as a new revision.
+            # A successful refresh that finds exactly the same public state
+            # may update collected_at. That heartbeat alone must not create a
+            # new business revision or retransmit the media.
+            "comments": [
+                {key: item[key] for key in item if key != "captured_at"}
+                for item in comments
+            ],
+        }
+        payload = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    def _legacy_signature(self, row: Mapping[str, Any]) -> str:
+        """Return the v1 signature used before comment-field fingerprints."""
+
         path = self._safe_media_path(row.get("file_path"))
         stat = path.stat()
         value = "\n".join(
@@ -234,12 +315,63 @@ class ModelDownloaderBridge:
         )
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
-    def _enqueue(self, connection: sqlite3.Connection, row: Mapping[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _comments_newer_than_state(
+        comments: list[dict[str, Any]],
+        queued_at: str,
+    ) -> bool:
+        try:
+            queued = datetime.fromisoformat(queued_at.replace("Z", "+00:00"))
+            if queued.tzinfo is None:
+                queued = queued.replace(tzinfo=UTC)
+            queued = queued.astimezone(UTC)
+        except (AttributeError, TypeError, ValueError):
+            return True
+        for item in comments:
+            try:
+                captured = datetime.fromisoformat(
+                    str(item.get("captured_at") or "").replace("Z", "+00:00")
+                )
+                if captured.tzinfo is None:
+                    captured = captured.replace(tzinfo=UTC)
+            except (TypeError, ValueError):
+                continue
+            if captured.astimezone(UTC) > queued:
+                return True
+        return False
+
+    @staticmethod
+    def _requires_signature_upgrade_transfer(
+        row: Mapping[str, Any],
+        *,
+        now: datetime | None = None,
+    ) -> bool:
+        """Rebaseline recent works once so pre-v2 comment-only changes are not hidden."""
+
+        try:
+            published = datetime.fromisoformat(
+                _iso(row.get("published_at")).replace("Z", "+00:00")
+            )
+            current = now or datetime.now(UTC)
+            if current.tzinfo is None:
+                current = current.replace(tzinfo=UTC)
+            age = current.astimezone(UTC) - published.astimezone(UTC)
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return -timedelta(minutes=5) <= age <= timedelta(
+            hours=COMMENT_SIGNATURE_REBASE_HOURS
+        )
+
+    def _enqueue(
+        self,
+        row: Mapping[str, Any],
+        comments: list[dict[str, Any]],
+        *,
+        captured_at: str,
+    ) -> dict[str, Any]:
         source_id = str(row.get("video_id") or "").strip()
         if not source_id:
             raise ValueError("model_downloader_work_id_missing")
-        captured_at = _iso(row.get("updated_at"), fallback=datetime.now(UTC).isoformat())
-        comments = self._comments(connection, source_id, captured_at)
         bundle_bytes, bundle = build_comment_bundle(comments)
         comment_path = self.artifact_dir / "model-mr" / f"comments-{bundle['sha256']}.ndjson.gz"
         self._atomic_bytes(comment_path, bundle_bytes)

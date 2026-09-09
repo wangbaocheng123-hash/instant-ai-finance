@@ -44,7 +44,14 @@ class ModelMrGatewayTests(unittest.TestCase):
                 description="",
                 source_url="https://www.douyin.com/video/778899",
                 published_at="2026-09-03T09:00:00+08:00",
-                comments=[{"author": "读者", "text": "测试评论", "like_count": 2}],
+                comments=[
+                    {
+                        "author": "读者",
+                        "text": "测试评论",
+                        "like_count": 2,
+                        "author_liked": True,
+                    }
+                ],
                 media_path=media,
                 media_sha256=digest,
             )
@@ -74,7 +81,14 @@ class ModelMrGatewayTests(unittest.TestCase):
                 description="",
                 source_url="https://www.douyin.com/video/778899",
                 published_at="2026-09-03T09:00:00+08:00",
-                comments=[{"author": "读者", "text": "更新评论", "like_count": 3}],
+                comments=[
+                    {
+                        "author": "读者",
+                        "text": "更新评论",
+                        "like_count": 3,
+                        "author_liked": False,
+                    }
+                ],
                 media_path=media,
                 media_sha256=digest,
             )
@@ -88,7 +102,21 @@ class ModelMrGatewayTests(unittest.TestCase):
                 self.assertEqual(detail["work"]["keyword_info"]["categories"]["行业与板块"], ["主人关键词"])
                 self.assertTrue(detail["work"]["keyword_info"]["edited_by_owner"])
                 self.assertEqual(detail["comments"][0]["text"], "更新评论")
+                self.assertIs(detail["comments"][0]["author_liked"], False)
                 self.assertIsNotNone(client.video_path(first["work_id"]))
+
+    def test_explicit_author_unlike_overrides_legacy_raw_like_marker(self) -> None:
+        cleaned = ModelMrClient._clean_comment(
+            {
+                "author": "读者",
+                "text": "作者曾经赞过",
+                "author_liked": False,
+                "raw_json": {"author_liked": True},
+            },
+            1,
+        )
+
+        self.assertIs(cleaned["author_liked"], False)
 
     def test_beijing_wire_comment_relationships_survive_sanitized_import(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

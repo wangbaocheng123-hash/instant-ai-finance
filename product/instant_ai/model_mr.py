@@ -1257,6 +1257,11 @@ class ModelMrClient:
     @staticmethod
     def _clean_comment(item: dict[str, Any], index: int) -> dict[str, Any]:
         raw = item.get("raw_json") if isinstance(item.get("raw_json"), dict) else {}
+        author_liked = (
+            item.get("author_liked") is True
+            if "author_liked" in item
+            else raw.get("author_liked") is True
+        )
         kind = str(item.get("kind") or raw.get("kind") or "user_comment")
         source_comment_id = str(
             item.get("source_comment_id") or raw.get("source_comment_id") or ""
@@ -1303,7 +1308,10 @@ class ModelMrClient:
             "kind": kind,
             "reply_depth": reply_depth,
             "thread_key": thread_key,
-            "author_liked": bool(item.get("author_liked") or raw.get("author_liked")),
+            # An explicit False is meaningful: the creator-like marker may
+            # have been removed in a newer Beijing comment snapshot. Only use
+            # the legacy raw_json value when the normalized field is absent.
+            "author_liked": author_liked,
         }
 
     @staticmethod

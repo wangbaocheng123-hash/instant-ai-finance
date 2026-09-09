@@ -44,6 +44,12 @@ logs/
 *.tar
 *.gz
 
+# 北京采集器的真实运行配置与状态（仓库只保存 example 模板）
+services/beijing-blogger-collector/config/settings.json
+services/beijing-blogger-collector/config/creators.json
+services/beijing-blogger-collector/runtime/
+services/beijing-blogger-collector/creator-data/
+
 # 密钥和登录信息
 .env
 .env.*
