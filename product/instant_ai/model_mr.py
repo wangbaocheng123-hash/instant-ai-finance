@@ -407,6 +407,56 @@ class ModelMrClient:
     def transfer_map_path(self) -> Path:
         return self.snapshot_path.parent / "beijing-transfer-map.json"
 
+    def beijing_processing_candidate(
+        self,
+        *,
+        source_work_id: str,
+        source_revision: int,
+        media_hash: str,
+    ) -> dict[str, Any] | None:
+        """Resolve one exact projected Beijing revision for auto processing."""
+
+        source_id = str(source_work_id or "").strip()
+        digest = str(media_hash or "").strip().lower()
+        try:
+            revision = int(source_revision)
+        except (TypeError, ValueError):
+            return None
+        if (
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", source_id)
+            or revision <= 0
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            return None
+        with _DETAIL_LOCK:
+            entry = self._read_transfer_map().get(source_id)
+            if not isinstance(entry, dict):
+                return None
+            try:
+                entry_revision = int(entry.get("source_revision") or 0)
+                work_id = int(entry.get("work_id") or 0)
+            except (TypeError, ValueError):
+                return None
+            if (
+                entry_revision != revision
+                or str(entry.get("media_sha256") or "").lower() != digest
+            ):
+                return None
+            try:
+                detail = self.processing_detail(work_id)
+            except (ModelMrUnavailable, ValueError):
+                return None
+            media_file = str(detail.get("work", {}).get("media_file") or "").strip()
+            root = self.media_root.resolve()
+            target = (root / media_file).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                return None
+            if not media_file or not target.is_file():
+                return None
+            return {"work_id": work_id, "media_hash": digest}
+
     def import_beijing_work(
         self,
         *,

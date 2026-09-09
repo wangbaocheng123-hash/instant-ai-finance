@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'instant-ai-shell-v0.21.3';
+const SHELL_CACHE = 'instant-ai-shell-v0.21.4';
 const SHELL_ASSETS = [
   '/', '/app.js', '/styles.css', '/manifest.webmanifest',
   '/app-icon-192.png', '/app-icon-512.png', '/apple-touch-icon.png',

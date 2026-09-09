@@ -13,9 +13,11 @@ async function main() {
       const page = await browser.newPage({ viewport: { width, height: 844 }, isMobile: width === 390, hasTouch: width === 390 });
       const errors = [];
       page.on('pageerror', e => errors.push(e.message));
-      let accepts = false, writes = 0, keywordRequests = 0;
+      let accepts = false, writes = 0, keywordRequests = 0, processingReads = 0;
       page.on('dialog', d => accepts ? d.accept() : d.dismiss());
-      const processing = { enabled: false, failures: 0, daily_call_limit: 20, max_video_minutes: 20,
+      const processing = { enabled: true, failures: 0, enabled_since: 1, last_reconciled: 2,
+        worker_running: true, worker_last_seen: Math.floor(Date.now() / 1000), initial_recovery_hours: 48,
+        daily_call_limit: 20, max_video_minutes: 20,
         speech_configured: true, keywords_configured: false, items: [] };
       const work = { id: 1, title: '模拟新视频', description: '', published_at: '2026-09-04',
         media_available: false, has_video_text: true, keywords: [], keyword_revision: 'r1',
@@ -33,7 +35,7 @@ async function main() {
           if (route.request().method() === 'POST') {
             const body = route.request().postDataJSON();
             assert.equal(body.confirm_billing, true); processing.enabled = body.enabled; writes++;
-          }
+          } else processingReads++;
           return json(processing);
         }
         if (p.endsWith('/extract-keywords')) {
@@ -47,15 +49,19 @@ async function main() {
       });
       await page.goto('http://127.0.0.1:19849/');
       await page.waitForFunction(() => window.ready);
-      await page.locator('[data-model-action="processing"]').click();
-      await page.locator('[data-model-action="toggle-processing"]').waitFor();
+      await page.getByRole('button', { name: '紧急暂停自动处理' }).waitFor();
+      assert.ok(processingReads >= 1, 'processing state must load automatically with the panel');
+      assert.match(await page.locator('.model-processing').innerText(), /无需逐条点击/);
       assert.match(await page.locator('.model-processing').innerText(), /关键词模型：未配置/);
       await page.locator('[data-model-action="toggle-processing"]').click();
-      assert.equal(writes, 0, 'cancelled consent must not enable processing');
+      await page.getByRole('button', { name: '恢复新视频自动识别与提炼' }).waitFor();
+      assert.equal(writes, 1, 'emergency pause is persisted immediately');
+      await page.locator('[data-model-action="toggle-processing"]').click();
+      assert.equal(writes, 1, 'cancelled consent must not resume processing');
       accepts = true;
       await page.locator('[data-model-action="toggle-processing"]').click();
-      await page.getByRole('button', { name: '暂停自动处理' }).waitFor();
-      assert.equal(writes, 1);
+      await page.getByRole('button', { name: '紧急暂停自动处理' }).waitFor();
+      assert.equal(writes, 2);
       await page.locator('[data-model-action="open-detail"][data-detail-tab="text"]').click();
       await page.locator('#model-video-text-1').waitFor();
       assert.match(await page.locator('.model-text-source').innerText(), /尚未人工核对/);

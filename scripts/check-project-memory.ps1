@@ -59,6 +59,7 @@ $requiredFiles = @(
     'docs/decisions/ADR-0040-korean-research-and-media-sources.md',
     'docs/decisions/ADR-0041-publisher-and-collection-channel-separation.md',
     'docs/decisions/ADR-0042-model-mr-transferred-comment-thread-repair.md',
+    'docs/decisions/ADR-0043-model-mr-arrival-automatic-processing.md',
     'docs/BEIJING_COLLECTOR_GIT_RELEASE.md',
     'deploy/aliyun/check-publish-channel.sh',
     'deploy/aliyun/update-model-mr-owner-metadata.sh',

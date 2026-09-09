@@ -88,8 +88,9 @@ export class ModelMrPanel {
       this.renderUnavailable(status.message);
       return;
     }
-    const [works, thoughts, chatConfig] = await Promise.all([
+    const [works, thoughts, chatConfig, processing] = await Promise.all([
       instantApi.modelMrWorks(MODEL_MR_WORK_PAGE_SIZE, 0), instantApi.modelMrThoughts(), instantApi.modelMrChatConfig(),
+      instantApi.modelMrProcessing().catch(() => null),
     ]);
     if (this.works.length) {
       const newestIds = new Set(works.items.map((work) => work.id));
@@ -104,6 +105,7 @@ export class ModelMrPanel {
     this.worksLoadMessage = '';
     this.thoughts = thoughts.categories;
     this.chatConfig = chatConfig;
+    this.processing = processing;
     const media = status.counts?.media ?? 0;
     this.badge.textContent = media ? `${status.counts?.works ?? works.count} 部 · ${media} 视频` : `${status.counts?.works ?? works.count} 部`;
     this.renderActiveTab();
@@ -213,17 +215,18 @@ export class ModelMrPanel {
     title.textContent = '豆包自动处理';
     const button = document.createElement('button');
     button.type = 'button'; button.dataset.modelAction = 'processing';
-    button.textContent = this.processingBusy ? '读取中…' : this.processing ? '刷新处理状态' : '查看设置与处理状态';
+    button.textContent = this.processingBusy ? '读取中…' : '刷新处理状态';
     button.disabled = this.processingBusy;
     section.append(title, button);
     if (this.processingMessage) section.append(this.message(this.processingMessage));
     const status = this.processing;
     if (!status) return section;
-    section.append(this.message(`仅处理开启后新送达的模型先生视频，不扫描历史作品。每日最多 ${status.daily_call_limit} 次模型调用，每条视频最多 ${status.max_video_minutes} 分钟；已有原文和关键词不覆盖。`));
+    section.append(this.message(`新送达视频会自动完成“豆包识别原文 → AI关键词提炼 → 保存展示”，无需逐条点击。升级时仅补扫最近 ${status.initial_recovery_hours} 小时内漏排队的视频，不扫描完整历史库。每日最多 ${status.daily_call_limit} 次模型调用，每条视频最多 ${status.max_video_minutes} 分钟；已有原文和关键词不覆盖。`));
     section.append(this.message(`语音识别：${status.speech_configured ? '已配置' : '未配置'}；关键词模型：${status.keywords_configured ? '已配置' : '未配置'}`));
+    section.append(this.message(`后台执行器：${status.worker_running ? '运行中' : '等待服务启动'}${status.worker_last_seen ? `；最近检查 ${new Date(status.worker_last_seen * 1000).toLocaleTimeString('zh-CN', { hour12: false })}` : ''}`));
     const toggle = document.createElement('button');
     toggle.type = 'button'; toggle.dataset.modelAction = 'toggle-processing'; toggle.disabled = this.processingBusy;
-    toggle.textContent = status.enabled && status.failures < 3 ? '暂停自动处理' : status.failures >= 3 ? '已连续失败暂停，确认后恢复' : '开启新视频自动识别与提炼';
+    toggle.textContent = status.enabled && status.failures < 3 ? '紧急暂停自动处理' : status.failures >= 3 ? '已连续失败暂停，确认后恢复' : '恢复新视频自动识别与提炼';
     section.append(toggle);
     section.append(this.message('自动转写会直接保存原文，并标明尚未人工核对。暂停不取消已提交的任务。'));
     status.items.slice(0, 8).forEach((item) => {
@@ -242,7 +245,7 @@ export class ModelMrPanel {
   private async updateProcessing(action: string, jobId = 0): Promise<void> {
     if (this.processingBusy) return;
     const enable = !this.processing?.enabled || (this.processing?.failures || 0) >= 3;
-    if (action === 'toggle-processing' && enable && !window.confirm('开启后，新送达的模型先生视频将自动调用豆包识别并保存原文、提炼关键词，按音频时长及模型用量计费。每日最多20次调用，每条视频最多20分钟；不批处理历史作品。确认开启？')) return;
+    if (action === 'toggle-processing' && enable && !window.confirm('恢复后，新送达的模型先生视频将自动调用豆包识别并保存原文、提炼关键词，按音频时长及模型用量计费。每日最多20次调用，每条视频最多20分钟；不会扫描完整历史作品库。确认恢复？')) return;
     if (action === 'retry-processing' && !window.confirm('请先核对豆包调用记录；上次失败或中断可能已计费。仅重试所选任务，已缓存结果会复用。确认重试？')) return;
     this.processingBusy = true;
     try {

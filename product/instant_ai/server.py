@@ -1198,6 +1198,7 @@ def create_server() -> BoundedThreadingHTTPServer:
 def run_server(collect_on_start: bool = True) -> None:
     server = create_server()
     if os.name == "posix":
+        MODEL_MR_PROCESSOR.set_arrival_source(MODEL_MR_TRANSFER_PROJECTOR.processing_arrivals_since)
         threading.Thread(target=MODEL_MR_PROCESSOR.run, name="model-mr-processing", daemon=True).start()
         threading.Thread(target=BLOGGER_PROCESSOR.run, name="blogger-processing", daemon=True).start()
         threading.Thread(

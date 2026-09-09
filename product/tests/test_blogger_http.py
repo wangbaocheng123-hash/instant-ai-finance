@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import sqlite3
 import stat
 import tempfile
 import threading
@@ -408,6 +409,21 @@ class BloggerTransferHTTPTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status, 200, response.payload)
+        arrivals = self.application.store.completed_video_arrivals_since(
+            creator_id=MODEL_MR_TRANSFER_CREATOR_ID,
+            completed_since=0,
+        )
+        self.assertEqual(len(arrivals), 1)
+        self.assertEqual(arrivals[0]["source_work_id"], self.manifest["work"]["source_work_id"])
+        self.assertEqual(arrivals[0]["source_revision"], self.manifest["work"]["revision"])
+        self.assertEqual(arrivals[0]["media_hash"], self.manifest["media"][0]["sha256"])
+        self.assertEqual(
+            self.application.store.completed_video_arrivals_since(
+                creator_id=MODEL_MR_TRANSFER_CREATOR_ID,
+                completed_since=int(arrivals[0]["completed_at"]) + 1,
+            ),
+            [],
+        )
         repeated = self.call(
             "POST",
             complete_path,
@@ -415,6 +431,9 @@ class BloggerTransferHTTPTests(unittest.TestCase):
             content_type="application/json",
         )
         self.assertEqual(repeated.status, 200, repeated.payload)
+        with sqlite3.connect(model_root / "processing.sqlite3") as processing:
+            self.assertEqual(processing.execute("SELECT enabled FROM settings WHERE id=1").fetchone()[0], 1)
+            self.assertEqual(processing.execute("SELECT count(*) FROM jobs").fetchone()[0], 1)
         with patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")):
             imported = model_mr.works(limit=10)
             self.assertEqual(imported["count"], 1)

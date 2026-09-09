@@ -1565,6 +1565,61 @@ class BloggerIngestStore:
             ).fetchone()
         return self._row_payload(row)
 
+    def completed_video_arrivals_since(
+        self,
+        *,
+        creator_id: str,
+        completed_since: int,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Return a narrow, ordered view of current verified video arrivals.
+
+        Processing workers use this Git-external ledger projection to repair a
+        completion callback missed during restart or a short storage failure.
+        The caller owns the persisted time boundary; this method never widens
+        it or reads comment/media bodies.
+        """
+
+        canonical_creator = str(creator_id or "").strip()
+        if not canonical_creator:
+            return []
+        try:
+            boundary = max(0, int(completed_since))
+            safe_limit = max(1, min(int(limit), 500))
+        except (TypeError, ValueError):
+            return []
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT t.transfer_id, t.source_work_id, t.source_revision,
+                       t.completed_at, a.expected_sha256 AS media_hash
+                FROM transfers AS t
+                JOIN artifacts AS a ON a.transfer_id=t.transfer_id
+                WHERE t.creator_id=? AND t.work_platform='douyin'
+                  AND t.state='accepted' AND t.is_current=1
+                  AND t.transport_status='transport_completed'
+                  AND t.completed_at>=?
+                  AND a.artifact_kind='media' AND a.media_role='video'
+                  AND a.mime_type='video/mp4' AND a.state='verified'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM artifacts AS earlier
+                      WHERE earlier.transfer_id=a.transfer_id
+                        AND earlier.artifact_kind='media'
+                        AND earlier.media_role='video'
+                        AND earlier.mime_type='video/mp4'
+                        AND earlier.state='verified'
+                        AND (
+                            earlier.ordinal<a.ordinal
+                            OR (earlier.ordinal=a.ordinal AND earlier.artifact_id<a.artifact_id)
+                        )
+                  )
+                ORDER BY t.completed_at, t.transfer_id, a.ordinal, a.artifact_id
+                LIMIT ?
+                """,
+                (canonical_creator, boundary, safe_limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def _row_payload(self, row: sqlite3.Row | None) -> dict[str, Any] | None:
         if row is None:
             return None

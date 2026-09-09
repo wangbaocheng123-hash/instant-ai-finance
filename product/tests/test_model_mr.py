@@ -48,6 +48,21 @@ class ModelMrGatewayTests(unittest.TestCase):
                 media_path=media,
                 media_sha256=digest,
             )
+            self.assertEqual(
+                client.beijing_processing_candidate(
+                    source_work_id="778899",
+                    source_revision=1,
+                    media_hash=digest,
+                ),
+                {"work_id": first["work_id"], "media_hash": digest},
+            )
+            self.assertIsNone(
+                client.beijing_processing_candidate(
+                    source_work_id="778899",
+                    source_revision=2,
+                    media_hash=digest,
+                )
+            )
             client.save_title(first["work_id"], "主人标题")
             client.save_video_text(first["work_id"], "主人确认原文")
             from instant_ai.model_mr_metadata import keyword_revision
@@ -266,6 +281,47 @@ class ModelMrGatewayTests(unittest.TestCase):
             source_work_id="778902",
             source_revision=4,
             comments=comments,
+        )
+
+    def test_processing_reconciliation_keeps_unprojected_completion_visible(self) -> None:
+        model_mr = Mock()
+        model_mr.beijing_processing_candidate.side_effect = [
+            {"work_id": 1001, "media_hash": "a" * 64},
+            None,
+        ]
+        projector = ModelMrTransferProjector(
+            blogger_root=Path("/not-used"),
+            model_mr=model_mr,
+        )
+        store = Mock()
+        store.completed_video_arrivals_since.return_value = [
+            {
+                "source_work_id": "778903",
+                "source_revision": 1,
+                "media_hash": "a" * 64,
+                "completed_at": 101,
+            },
+            {
+                "source_work_id": "778904",
+                "source_revision": 2,
+                "media_hash": "b" * 64,
+                "completed_at": 102,
+            },
+        ]
+        with patch("instant_ai.model_mr_transfer.BloggerIngestStore", return_value=store):
+            arrivals = projector.processing_arrivals_since(100, 25)
+
+        self.assertEqual(arrivals[0], {
+            "work_id": 1001,
+            "media_hash": "a" * 64,
+            "ready": True,
+            "completed_at": 101,
+        })
+        self.assertEqual(arrivals[1], {"ready": False, "completed_at": 102})
+        store.completed_video_arrivals_since.assert_called_once_with(
+            creator_id=MODEL_MR_TRANSFER_CREATOR_ID,
+            completed_since=100,
+            limit=25,
         )
 
     def test_work_summary_removes_local_paths_raw_payload_and_admin_fields(self) -> None:

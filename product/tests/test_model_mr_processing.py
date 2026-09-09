@@ -4,8 +4,10 @@ import copy
 import http.client
 import json
 import os
+import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -57,14 +59,81 @@ class ProcessingTests(unittest.TestCase):
     def state(self):
         return self.processor.status()['items'][0]['state']
 
-    def test_default_off_and_read_status_has_no_side_effect(self):
-        self.assertFalse(self.processor.status()['enabled'])
+    def test_default_on_and_read_status_has_no_side_effect(self):
+        self.assertTrue(self.processor.status()['enabled'])
         self.assertFalse(self.processor.path.exists())
         self.processor.enqueue_arrival(1, 'a' * 64)
-        self.assertFalse(self.processor.path.exists())
-        self.processor.set_enabled(True)
-        self.assertFalse(self.processor.process_one())  # No historical library scan.
-        self.asr.assert_not_called()
+        self.assertTrue(self.processor.path.exists())
+        self.assertEqual(self.state(), 'queued')
+
+    def test_legacy_disabled_policy_is_migrated_once_and_owner_pause_persists(self):
+        with sqlite3.connect(self.processor.path) as connection:
+            connection.execute(
+                'CREATE TABLE settings(id INTEGER PRIMARY KEY,enabled INTEGER NOT NULL,failures INTEGER NOT NULL)'
+            )
+            connection.execute('INSERT INTO settings VALUES(1,0,2)')
+        with self.processor.db() as connection:
+            setting = connection.execute(
+                'SELECT enabled,failures,enabled_since,policy_version FROM settings WHERE id=1'
+            ).fetchone()
+        self.assertTrue(setting['enabled'])
+        self.assertEqual(setting['failures'], 0)
+        self.assertGreater(setting['enabled_since'], 0)
+        self.assertEqual(setting['policy_version'], 1)
+        self.processor.set_enabled(False)
+        restarted = ModelMrProcessor(self.client)
+        with restarted.db():
+            pass
+        self.assertFalse(restarted.status()['enabled'])
+
+    def test_policy_migration_never_releases_an_unbounded_old_queue(self):
+        now = int(time.time())
+        with self.processor.db() as connection:
+            connection.execute('UPDATE settings SET enabled=0,policy_version=0')
+            connection.executemany(
+                'INSERT INTO jobs(dedupe,work_id,kind,automatic,state,updated) VALUES(?,?,?,?,?,?)',
+                [
+                    ('old', 1, 'arrival', 1, 'queued', now - (72 * 60 * 60)),
+                    ('recent', 1, 'arrival', 1, 'queued', now - 60),
+                ],
+            )
+        migrated = ModelMrProcessor(self.client)
+        with migrated.db() as connection:
+            states = dict(connection.execute('SELECT dedupe,state FROM jobs'))
+        self.assertEqual(states, {'old': 'review', 'recent': 'queued'})
+
+    def test_reconciliation_queues_missed_recent_arrival_once(self):
+        completed = int(time.time())
+        seen = []
+
+        def arrivals(since, limit):
+            seen.append((since, limit))
+            return [{'ready': True, 'work_id': 1, 'media_hash': 'b' * 64, 'completed_at': completed}]
+
+        processor = ModelMrProcessor(self.client, arrivals)
+        self.assertEqual(processor.reconcile_new_arrivals(), 1)
+        self.assertEqual(processor.reconcile_new_arrivals(), 1)
+        with processor.db() as connection:
+            self.assertEqual(connection.execute('SELECT count(*) FROM jobs').fetchone()[0], 1)
+            self.assertGreaterEqual(
+                connection.execute('SELECT last_reconciled FROM settings WHERE id=1').fetchone()[0],
+                completed,
+            )
+        self.assertEqual(seen[0][1], 500)
+
+    def test_reconciliation_does_not_advance_past_unprojected_arrival(self):
+        completed = int(time.time())
+        processor = ModelMrProcessor(
+            self.client,
+            lambda since, limit: [{'ready': False, 'completed_at': completed}],
+        )
+        self.assertEqual(processor.reconcile_new_arrivals(), 0)
+        with processor.db() as connection:
+            boundary, cursor = connection.execute(
+                'SELECT enabled_since,last_reconciled FROM settings WHERE id=1'
+            ).fetchone()
+        self.assertGreaterEqual(cursor, boundary)
+        self.assertLess(cursor, completed)
 
     def test_arrival_pipeline_persists_original_keywords_and_deduplicates(self):
         self.enqueue()
@@ -245,6 +314,19 @@ class ProcessingTests(unittest.TestCase):
         self.assertFalse(self.processor.process_one())
         self.kw.assert_not_called()
 
+    def test_configuration_recovery_only_resumes_jobs_inside_current_policy_boundary(self):
+        self.enqueue()
+        with self.processor.db() as connection:
+            boundary = int(time.time())
+            connection.execute('UPDATE settings SET enabled_since=? WHERE id=1', (boundary,))
+            connection.execute("UPDATE jobs SET state='configuration',updated=?", (boundary - 1,))
+        self.assertEqual(self.processor.resume_configured_jobs(), 0)
+        self.assertEqual(self.state(), 'configuration')
+        with self.processor.db() as connection:
+            connection.execute('UPDATE jobs SET updated=?', (boundary,))
+        self.assertEqual(self.processor.resume_configured_jobs(), 1)
+        self.assertEqual(self.state(), 'queued')
+
     def test_quota_and_pause_are_checked_before_next_paid_stage(self):
         self.enqueue()
         with self.processor.db() as conn:
@@ -305,7 +387,9 @@ class ProcessingTests(unittest.TestCase):
                     conn.close()
                     return result
                 route = '/api/model-mr/processing'
-                self.assertEqual(request('GET', route)[0], 200)
+                status, value = request('GET', route)
+                self.assertEqual(status, 200)
+                self.assertTrue(value['enabled'])
                 self.assertFalse(self.processor.path.exists())
                 self.assertEqual(request('POST', route)[0], 403)
                 self.assertEqual(request('POST', route, {'enabled': True}, {'X-Instant-AI': '1'})[0], 400)

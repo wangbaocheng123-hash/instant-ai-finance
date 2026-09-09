@@ -4,6 +4,7 @@ import gzip
 import hashlib
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -27,9 +28,19 @@ class ModelMrTransferProjector:
     ) -> None:
         self.blogger_root = Path(blogger_root)
         self.model_mr = model_mr
+        self._store_instance: BloggerIngestStore | None = None
+        self._store_lock = threading.Lock()
+
+    def _store(self) -> BloggerIngestStore:
+        # Schema initialization is useful once, not on every three-second
+        # reconciliation pass.
+        with self._store_lock:
+            if self._store_instance is None:
+                self._store_instance = BloggerIngestStore(self.blogger_root)
+            return self._store_instance
 
     def project(self, transfer_id: str) -> None:
-        transfer = BloggerIngestStore(self.blogger_root).get_transfer(transfer_id)
+        transfer = self._store().get_transfer(transfer_id)
         if not transfer:
             raise ModelMrUnavailable("模型先生传输记录不存在。")
         manifest = transfer.get("manifest") if isinstance(transfer.get("manifest"), dict) else {}
@@ -88,6 +99,32 @@ class ModelMrTransferProjector:
             ModelMrProcessor(self.model_mr).enqueue_arrival(
                 int(imported["work_id"]), str(video_descriptor.get("sha256") or ""))
 
+    def processing_arrivals_since(self, completed_since: int, limit: int = 500) -> list[dict[str, Any]]:
+        """Resolve completed Model Mr transports into projected processing IDs.
+
+        A not-yet-projected row is returned as ``ready=False`` so the worker
+        keeps its reconciliation cursor before that completion and retries it.
+        """
+
+        arrivals = self._store().completed_video_arrivals_since(
+            creator_id=MODEL_MR_TRANSFER_CREATOR_ID,
+            completed_since=completed_since,
+            limit=limit,
+        )
+        result: list[dict[str, Any]] = []
+        for arrival in arrivals:
+            candidate = self.model_mr.beijing_processing_candidate(
+                source_work_id=str(arrival.get("source_work_id") or ""),
+                source_revision=int(arrival.get("source_revision") or 0),
+                media_hash=str(arrival.get("media_hash") or ""),
+            )
+            completed_at = int(arrival.get("completed_at") or 0)
+            if candidate is None:
+                result.append({"ready": False, "completed_at": completed_at})
+                continue
+            result.append({**candidate, "ready": True, "completed_at": completed_at})
+        return result
+
     def repair_pending_comment_threads(self) -> dict[str, int]:
         """Reproject old comment relationships from retained verified bundles.
 
@@ -98,7 +135,7 @@ class ModelMrTransferProjector:
         totals = {"pending": 0, "repaired": 0, "skipped": 0, "errors": 0}
         try:
             source_ids = self.model_mr.pending_beijing_comment_projection_sources()
-            store = BloggerIngestStore(self.blogger_root)
+            store = self._store()
         except (OSError, ValueError, ModelMrUnavailable):
             totals["errors"] = 1
             return totals

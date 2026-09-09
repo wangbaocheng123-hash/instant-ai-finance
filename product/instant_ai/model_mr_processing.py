@@ -1,7 +1,9 @@
-"""Durable, sequential, owner-controlled processing of new Model Mr arrivals.
+"""Durable, sequential automatic processing of new Model Mr arrivals.
 
-No history scan, no news database, no Codex session and no automatic paid retry.
-The process lock is held by the worker, not the request handling thread.
+New arrivals are on by policy.  A bounded one-time recovery window repairs
+videos missed under the former default-off policy, while a persisted cursor
+repairs later callback/restart gaps.  There is no unbounded history scan, news
+database access, Codex session or automatic retry of ambiguous paid calls.
 """
 from __future__ import annotations
 
@@ -12,7 +14,7 @@ import threading
 import time
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from . import doubao_asr, model_mr_keywords
 from .model_mr import MODEL_MR, ModelMrClient
@@ -21,6 +23,8 @@ from .model_mr_metadata import clean_keyword_info, keyword_revision
 PROVIDER_LOCK = threading.Lock()
 DAILY_CALL_LIMIT = 20  # Up to ten videos if both ASR and keywords are missing.
 MAX_VIDEO_SECONDS = 1200
+AUTO_POLICY_VERSION = 1
+INITIAL_RECOVERY_SECONDS = 48 * 60 * 60
 MESSAGES = {
     "queued": "等待串行处理", "running": "处理中", "done": "处理完成",
     "configuration": "缺少豆包配置；尚未发起本阶段付费调用",
@@ -31,9 +35,19 @@ MESSAGES = {
 
 
 class ModelMrProcessor:
-    def __init__(self, client: ModelMrClient = MODEL_MR):
+    def __init__(
+        self,
+        client: ModelMrClient = MODEL_MR,
+        arrival_source: Callable[[int, int], list[dict[str, Any]]] | None = None,
+    ):
         self.client = client
         self.path = client.snapshot_path.parent / "processing.sqlite3"
+        self.arrival_source = arrival_source
+        self._worker_active = False
+        self._worker_last_seen = 0
+
+    def set_arrival_source(self, source: Callable[[int, int], list[dict[str, Any]]]) -> None:
+        self.arrival_source = source
 
     @contextmanager
     def db(self):
@@ -45,8 +59,8 @@ class ModelMrProcessor:
         try:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL,
-                    failures INTEGER NOT NULL DEFAULT 0);
-                INSERT OR IGNORE INTO settings(id,enabled) VALUES(1,0);
+                    failures INTEGER NOT NULL DEFAULT 0, enabled_since INTEGER NOT NULL DEFAULT 0,
+                    last_reconciled INTEGER NOT NULL DEFAULT 0, policy_version INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY, dedupe TEXT UNIQUE NOT NULL,
                     work_id INTEGER NOT NULL, kind TEXT NOT NULL, automatic INTEGER NOT NULL,
                     state TEXT NOT NULL DEFAULT 'queued', phase TEXT NOT NULL DEFAULT 'asr',
@@ -54,6 +68,41 @@ class ModelMrProcessor:
                 CREATE TABLE IF NOT EXISTS calls (id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL,
                     phase TEXT NOT NULL, day TEXT NOT NULL);
             """)
+            setting_columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(settings)")
+            }
+            policy_missing = "policy_version" not in setting_columns
+            for column in ("enabled_since", "last_reconciled", "policy_version"):
+                if column not in setting_columns:
+                    conn.execute(
+                        f"ALTER TABLE settings ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"
+                    )
+            now = int(time.time())
+            setting = conn.execute("SELECT id,policy_version FROM settings WHERE id=1").fetchone()
+            if setting is None:
+                conn.execute(
+                    "INSERT INTO settings(id,enabled,failures,enabled_since,last_reconciled,policy_version) "
+                    "VALUES(1,1,0,?,0,?)",
+                    (now - INITIAL_RECOVERY_SECONDS, AUTO_POLICY_VERSION),
+                )
+            elif policy_missing or int(setting["policy_version"] or 0) < AUTO_POLICY_VERSION:
+                # This user-approved migration is intentionally bounded: it
+                # recovers the current missed arrival without creating a batch
+                # over the historical Model Mr library.
+                recovery_boundary = now - INITIAL_RECOVERY_SECONDS
+                conn.execute(
+                    "UPDATE settings SET enabled=1,failures=0,enabled_since=?,last_reconciled=0,policy_version=? "
+                    "WHERE id=1",
+                    (recovery_boundary, AUTO_POLICY_VERSION),
+                )
+                # A legacy queued/quota row could otherwise run merely because
+                # this migration re-enables the global switch. Keep anything
+                # older than the same bounded recovery window for owner review.
+                conn.execute(
+                    "UPDATE jobs SET state='review',updated=? WHERE automatic=1 "
+                    "AND state IN ('queued','quota') AND updated<?",
+                    (now, recovery_boundary),
+                )
             with conn:
                 yield conn
         finally:
@@ -62,15 +111,26 @@ class ModelMrProcessor:
     def status(self) -> dict[str, Any]:
         # A read endpoint must not create a database or change queue state.
         if not self.path.exists():
-            enabled, failures, items = False, 0, []
+            enabled, failures, enabled_since, last_reconciled, items = True, 0, 0, 0, []
         else:
             with closing(sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)) as conn:
                 conn.row_factory = sqlite3.Row
-                setting = conn.execute("SELECT enabled,failures FROM settings WHERE id=1").fetchone()
-                enabled, failures = bool(setting[0]), setting[1]
+                columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(settings)")}
+                fields = ["enabled", "failures"]
+                fields.extend(name for name in ("enabled_since", "last_reconciled", "policy_version") if name in columns)
+                setting = conn.execute(f"SELECT {','.join(fields)} FROM settings WHERE id=1").fetchone()
+                legacy = "policy_version" not in setting.keys() or int(setting["policy_version"] or 0) < AUTO_POLICY_VERSION
+                enabled = True if legacy else bool(setting["enabled"])
+                failures = 0 if legacy else int(setting["failures"])
+                enabled_since = int(setting["enabled_since"]) if "enabled_since" in setting.keys() else 0
+                last_reconciled = int(setting["last_reconciled"]) if "last_reconciled" in setting.keys() else 0
                 rows = conn.execute("SELECT id,work_id,state,phase,updated FROM jobs ORDER BY id DESC LIMIT 30").fetchall()
                 items = [{**dict(row), "message": MESSAGES[row["state"]]} for row in rows]
-        return {"enabled": enabled, "failures": failures, "daily_call_limit": DAILY_CALL_LIMIT,
+        return {"enabled": enabled, "failures": failures, "enabled_since": enabled_since,
+                "last_reconciled": last_reconciled, "worker_running": self._worker_active,
+                "worker_last_seen": self._worker_last_seen,
+                "initial_recovery_hours": INITIAL_RECOVERY_SECONDS // 3600,
+                "daily_call_limit": DAILY_CALL_LIMIT,
                 "max_video_minutes": MAX_VIDEO_SECONDS // 60,
                 "speech_configured": doubao_asr.is_configured(),
                 "keywords_configured": model_mr_keywords.is_configured(), "items": items}
@@ -79,14 +139,68 @@ class ModelMrProcessor:
         if not isinstance(enabled, bool):
             raise ValueError("自动处理开关必须为布尔值。")
         with self.db() as conn:
-            conn.execute("UPDATE settings SET enabled=?,failures=0 WHERE id=1", (int(enabled),))
+            current = bool(conn.execute("SELECT enabled FROM settings WHERE id=1").fetchone()[0])
+            if enabled and not current:
+                conn.execute(
+                    "UPDATE settings SET enabled=1,failures=0,enabled_since=?,last_reconciled=0 WHERE id=1",
+                    (int(time.time()),),
+                )
+            else:
+                conn.execute("UPDATE settings SET enabled=?,failures=0 WHERE id=1", (int(enabled),))
         return self.status()
 
     def enqueue_arrival(self, work_id: int, media_hash: str) -> None:
-        # Enabling later does not retroactively process old arrivals.
-        if not self.status()["enabled"]:
-            return
+        # A real arrival initializes/migrates policy state; a status GET does not.
+        with self.db() as conn:
+            if not bool(conn.execute("SELECT enabled FROM settings WHERE id=1").fetchone()[0]):
+                return
         self._enqueue(work_id, f"arrival:{work_id}:{media_hash}", "arrival", True, "")
+
+    def reconcile_new_arrivals(self) -> int:
+        """Idempotently repair missed callbacks inside the automatic boundary."""
+
+        if self.arrival_source is None:
+            return 0
+        with self.db() as conn:
+            setting = conn.execute(
+                "SELECT enabled,enabled_since,last_reconciled FROM settings WHERE id=1"
+            ).fetchone()
+            if setting is None or not bool(setting["enabled"]) or int(setting["enabled_since"]) <= 0:
+                return 0
+            enabled_since = int(setting["enabled_since"])
+            scan_since = max(enabled_since, int(setting["last_reconciled"]) - 1)
+        arrivals = self.arrival_source(scan_since, 500)
+        queued = 0
+        watermark = int(time.time()) if not arrivals else scan_since
+        for arrival in arrivals:
+            completed_at = max(0, int(arrival.get("completed_at") or 0))
+            if not bool(arrival.get("ready")):
+                watermark = max(scan_since, completed_at - 1)
+                break
+            work_id = int(arrival.get("work_id") or 0)
+            media_hash = str(arrival.get("media_hash") or "")
+            self._enqueue(work_id, f"arrival:{work_id}:{media_hash}", "arrival", True, "")
+            queued += 1
+            watermark = max(watermark, completed_at)
+        with self.db() as conn:
+            conn.execute("UPDATE settings SET last_reconciled=? WHERE id=1", (watermark,))
+        return queued
+
+    def resume_configured_jobs(self) -> int:
+        """Resume only known pre-call stops after both providers are configured."""
+
+        if not (doubao_asr.is_configured() and model_mr_keywords.is_configured()):
+            return 0
+        with self.db() as conn:
+            enabled = bool(conn.execute("SELECT enabled FROM settings WHERE id=1").fetchone()[0])
+            if not enabled:
+                return 0
+            cursor = conn.execute(
+                "UPDATE jobs SET state='queued',updated=? WHERE automatic=1 AND state='configuration' "
+                "AND updated>=(SELECT enabled_since FROM settings WHERE id=1)",
+                (int(time.time()),),
+            )
+            return max(0, int(cursor.rowcount))
 
     def request_keywords(self, work_id: int, revision: str) -> dict[str, Any]:
         detail = self.client.processing_detail(work_id)
@@ -281,15 +395,22 @@ class ModelMrProcessor:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return
-            with self.db() as conn:
-                # Never assume an interrupted remote paid call did not happen.
-                conn.execute("UPDATE jobs SET state='review' WHERE state='running'")
-            while not stop.is_set():
-                try:
-                    self.process_one()
-                except Exception:
-                    pass  # Storage failure is fail-closed, not a service-wide crash.
-                stop.wait(3)
+            self._worker_active = True
+            try:
+                with self.db() as conn:
+                    # Never assume an interrupted remote paid call did not happen.
+                    conn.execute("UPDATE jobs SET state='review' WHERE state='running'")
+                while not stop.is_set():
+                    self._worker_last_seen = int(time.time())
+                    try:
+                        self.reconcile_new_arrivals()
+                        self.resume_configured_jobs()
+                        self.process_one()
+                    except Exception:
+                        pass  # Storage failure is fail-closed, not a service-wide crash.
+                    stop.wait(3)
+            finally:
+                self._worker_active = False
 
 
 MODEL_MR_PROCESSOR = ModelMrProcessor()

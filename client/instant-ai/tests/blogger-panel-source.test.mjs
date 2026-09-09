@@ -74,3 +74,14 @@ test('main shell exposes an eighth independent mobile entry', async () => {
   assert.ok(app.indexOf('grid.append(this.modelMrPanel.element)') < app.indexOf('grid.append(this.bloggerPanel.element)'));
   assert.match(styles, /repeat\(8, minmax\(44px, 1fr\)\)/u);
 });
+
+test('Model Mr loads automatic processing state on entry and describes the two-step pipeline', async () => {
+  const panel = await readSource('src/instant-ai/ModelMrPanel.ts');
+  assert.match(panel, /instantApi\.modelMrProcessing\(\)\.catch\(\(\) => null\)/u);
+  assert.match(panel, /豆包识别原文 → AI关键词提炼 → 保存展示/u);
+  assert.match(panel, /无需逐条点击/u);
+  assert.match(panel, /最近 \$\{status\.initial_recovery_hours\} 小时/u);
+  assert.match(panel, /后台执行器/u);
+  assert.match(panel, /紧急暂停自动处理/u);
+  assert.doesNotMatch(panel, /查看设置与处理状态/u);
+});

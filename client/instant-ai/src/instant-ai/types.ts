@@ -344,6 +344,11 @@ export interface ModelMrWorkDetail {
 export interface ModelMrProcessing {
   enabled: boolean;
   failures: number;
+  enabled_since: number;
+  last_reconciled: number;
+  worker_running: boolean;
+  worker_last_seen: number;
+  initial_recovery_hours: number;
   daily_call_limit: number;
   max_video_minutes: number;
   speech_configured: boolean;
