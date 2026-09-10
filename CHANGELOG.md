@@ -1,5 +1,13 @@
 # 变更记录
 
+## 2026-09-10 — 新加坡 Codex 全面接管北京采集套件
+
+- 北京新增 `singaporecodex` 密钥登录账号并授予完整免交互 sudo；新加坡安装 `~/bin/beijing-admin`。从新加坡实测普通登录、root 权限、root 范围读写和 model/blogger 服务管理全部通过。旧三命令账号保留为回退，不再限制云端日常能力。
+- 从北京当前运行的 `0.8.1+login30d.05287e9f6c06` 受控导入原模型下载器真实源码、依赖和服务模板；排除环境文件、Cookie、密码、密钥、数据库、视频、评论原始 JSON、浏览器 profile、日志、缓存和备份。
+- 模型下载器升级为 `0.9.0+git.unified`，按真实发布时间实现未满24小时每15分钟、达到24小时后每60分钟抓评。成功后才更新游标，失败保持原成功时间，同一进程串行使用 Chromium。
+- 新增模型下载器独立 Git 发布器和统一 `/usr/local/sbin/beijing-suite-publish`；两组件共用 `beijing-production`，但保持独立服务、数据、发布判断和回滚。北京生产已发布并核验 `254d3d1a8c5654cc79d224f105ff63251ec6f87f`；model、model-web、blogger 全部 active，Git发布 timer inactive/disabled。
+- 验证通过：新加坡4项模型调度测试、31项控制契约、北京采集器220项完整回归；北京发布器再次运行4项隔离测试。未把任何凭据或业务数据加入 Git。
+
 ## 2026-09-10 — 新加坡受限SSH完成北京正式发布
 
 - 17:45新加坡客户端返回BEIJING_SSH_PUBLISH_VERIFIED，随后独立verify再次通过。accepted/deployed/current/live均为d60f75fd98bc5f09aca6e1e70d6827a85db97c2e，tree=d6568c7a3f9662dd8456c7ddaaf21378b3890dea；GitHub beijing-production与正式运行精确一致。

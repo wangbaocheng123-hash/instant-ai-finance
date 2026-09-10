@@ -1,6 +1,9 @@
 # 项目状态
 
-- 最后更新：2026-09-10
+- 最后更新：2026-09-10 18:43（北京时间）
+- 最新结果：`SINGAPORE_TO_BEIJING_FULL_RELEASE_VERIFIED`。新加坡云端已安装 `~/bin/beijing-admin`，真实登录北京 `singaporecodex` 后 `sudo -n id -u` 返回 0；可管理北京全部文件、服务和程序，不再受三命令白名单限制。旧 `beijingcodex` 入口只作为兼容回退。
+- 北京原模型下载器真实源码、三份 systemd 单元和依赖已排除凭据/数据库/媒体后导入 `services/beijing-model-downloader/`；中央清单已改为 `managed`，统一发布入口为 `/usr/local/sbin/beijing-suite-publish`。北京生产已发布并独立核验提交 `254d3d1a8c5654cc79d224f105ff63251ec6f87f`，模型下载器版本 `0.9.0+git.unified`，model/model-web/blogger 三服务均 active，发布 timer 仍 inactive/disabled。
+- ADR-0044 的抓评调度已在真实模型下载器实现：实际发布时间未满24小时每15分钟，达到24小时后每60分钟；按上次成功保存时间推进，失败不推进，Chromium仍由单进程串行。新加坡4项边界测试、31项控制测试、北京采集器220项完整回归和北京发布时4项隔离测试全部通过。
 - 最新结果（17:48北京时间）：`BEIJING_SSH_PUBLISH_VERIFIED`。新加坡compassdev通过现有受限SSH客户端完成北京正式发布，accepted/deployed/current/live全部为 `d60f75fd98bc5f09aca6e1e70d6827a85db97c2e`，组件tree为 `d6568c7a3f9662dd8456c7ddaaf21378b3890dea`。北京220项隔离测试通过；publisher inactive/success、collector active/PID1089415，failed_revision为空；timer disabled/inactive。独立verify再次返回成功，模型下载器原PID959090保持active、路径未变。
 - 失败已查明并恢复：北京17:30首次fetch因30秒低于1024 bytes/sec退出128，未切换生产。本人恢复北京可信登录后读取有限脱敏日志、同账户ls-remote成功；核对d60f75f与ff4f42e仅结果文档不同后，从新加坡只受控重试一次，17:45完成验收。没有修改服务器发布器、代理、Git网络配置、DNS、Caddy、安全组或timer。
 - 公网核验分层记录：北京本机经正式HTTPS域名和回环18797均返回status ok / 1.0.8及精确d60f75f；新加坡到北京HTTPS三次只读请求被reset，DNS仍解析正确47.93.214.76，具体跨区HTTPS原因未查明；不能将北京自测冒充新加坡HTTP成功。该路径不被SSH发布客户端使用，真实SSH发布/回执已通过；未更改原签名HTTPS视频传输或采集开关。
