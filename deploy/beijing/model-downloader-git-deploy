@@ -127,7 +127,9 @@ wait_for_services() {
 }
 
 run_release_tests() {
-  local source_dir="$1" output_file="${source_dir}/.test-output" count
+  local source_dir="$1"
+  local output_file="${source_dir}/.test-output"
+  local count
   chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${source_dir}"
   if ! runuser -u "${SERVICE_USER}" -- env \
       PYTHONDONTWRITEBYTECODE=1 \
