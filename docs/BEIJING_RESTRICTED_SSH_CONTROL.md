@@ -1,16 +1,43 @@
 # 北京受限 SSH 控制：首次启用与手机使用
 
-状态：开发实现，**尚未服务器安装或端到端验证**。不要把本文当作已接通凭证。
-架构见 ADR-0046；本次不推进 `beijing-production`，不发布业务，不修改 timer。
+状态：**北京受限SSH已安装，新加坡跨区只读与权限边界已实测通过**。
+标记：`BEIJING_SSH_READONLY_LIVE_VERIFIED`。这不是已完成业务发布或手机关机电脑验收的凭证。
+架构见 ADR-0046。下述16:58节为只读启用历史；所有者随后明确授权完成main整合、独立验证并直接发布北京博主采集器。当前任务不修改timer、服务器发布器、新加坡即时AI生产或模型下载器；完成情况以最新状态/真实回执为准。
+
+## 2026-09-10 16:58 当前已验收状态
+
+- 北京官方Git refs恢复200（约0.65秒），固定提交 `ecbbdfe129c539a3b1ec5361499e7c2d5ebc08a5` 已完整下载，root持有且干净；无代理/VPN/DNS/镜像或永久Git配置变更。此前超时保留为跨区波动证据，不保证未来每次Git下载都成功。
+- 北京已执行默认预检与获准的 `--apply`，只安装专用账号和七个控制文件，输出 `BEIJING_READONLY_CLOUD_CONTROL_READY user=beijingcodex`。安装器校验后仅reload现有SSH；再次默认只读预检通过，未覆盖其他账号/文件或重启业务。
+- 专用账号uid990/gid989、无附加组，sudo仅两条无参数固定包装器。现场非白名单sudo返回1；新加坡空shell、任意命令、附加参数、通用sudo拒绝64，PTY与TCP转发拒绝255。SFTP初始化拒绝64且协议响应0字节，没有文件访问会话。第一轮要求SFTP文本提示的断言不适用，复核依据是初始化退出及无协议响应，不修改服务权限。
+- 新加坡真实compassdev调用inspect/status成功，并再次读取状态核验：accepted/deployed/current/live均为 `7da442128f8aef619c593766a4b62736fb19a4de`；collector active，publisher inactive/result success，timer inactive/disabled。模型下载器仍active。没有真实publish、生产分支推进、业务重启或数据改动。
+- 两端固定源码目录、新加坡既有专用密钥和可信主机固定继续复用，禁止重新生成。北京七个控制文件包括 `/usr/local/libexec/beijing-codex-dispatch`、`/usr/local/lib/beijing-codex-control/status.py`、两个sbin包装器、`/etc/beijing-codex-control/authorized_keys`、SSH Match drop-in、专用sudoers；内容/模式由同一安装器精确复核。
+- 新加坡 `/home/compassdev/BEIJING-CONTROL-STATUS.md` 已把当前已验收状态放到开头，旧网络阻塞记录保留为历史。手机新任务先读此文件，再执行下面绝对路径的inspect/status即可，不需要本地电脑代发命令。
+- 未完成：电脑关闭后手机新任务独立验收；控制分支经审查整合进实际开发main；明确授权后的首次生产publish/回滚验收。原模型下载器真实源码仍未导入。当前独立detached控制目录不能直接发布另一个仓库目录的提交。
+
+## 2026-09-10 16:44 历史检查点（已被上方验收替代）
+
+- 本次所有者明确批准使用已登录内置浏览器 Workbench；这是针对此次两台目标的例外，不是未来任意云资源操作许可。两端 admin 既有 sudo 已核实。
+- 北京为 cn-beijing SWAS `e905b859a6c24c529ef5c2ea21658462`，公网 `47.93.214.76`，AccountId `1051070265710978`。新加坡为 ap-southeast-1 SWAS `c9e012a3ed944b588d696e71c0e24aea`，公网 `47.236.175.118`；不是把 hostname 中的旧 i-t4nik 名称当成 ECS InstanceId。
+- 已按单独明确确认，仅新增北京 TCP22 来源 `47.236.175.118/32` 的规则，原六条保持不变。新加坡 compassdev（uid1001）直连北京收到 SSH banner，205ms；不能拿此结果代替真实登录验收。
+- 新加坡 `/home/compassdev/.config/instant-ai-beijing-control/` 已创建为0700；`ssh_identity` 与 `known_hosts` 为0600、归 compassdev。专用 Ed25519 私钥只在新加坡生成和保留，没有显示、导出或写入 Git。**恢复工作必须复用，禁止重新生成或覆盖。**
+- 北京公开 SSH 主机密钥来自北京现有可信终端；已核对公开指纹后固定在新加坡。没有通过不可信扫描自动接受主机，也没有关闭验证。
+- 新加坡独立控制源码目录 `/home/compassdev/beijing-collector-control` 已取得干净的固定提交 `ecbbdfe129c539a3b1ec5361499e7c2d5ebc08a5`（detached HEAD）。首次默认 Git 拉取未完成；单次命令使用 HTTP/1.1 / Git protocol v0 后成功，未修改持久代理或 Git 网络配置。
+- 原开发仓库是 `/home/compassdev/Documents/Codex/2026-08-26/instant-ai-finance`，检查时 main 为 `20c70e056f17785f40cfe44ed17c82790a292e88` 且干净；`/opt/instant-ai/repository` 和罗盘 workspace 不动。控制分支尚未合并到 main，不能声称原 main 已有新控制命令。
+- 北京 `/opt/beijing-codex-bootstrap/repository` 只新建了隔离 Git 目录，首次固定提交 fetch 报低速超时；后续官方 Git 直连兼容查询和现有 bloggergit 只读 ls-remote 也超时。GitHub 首页直连200并不能证明 Git 拉取可用；未配置 VPN、镜像或新代理。
+- 北京专用 beijingcodex、七个授权文件尚未安装，安装器预检/应用、SSH 生效验证、越权拒绝与手机脱离电脑验收均未完成。不要运行 publish 代替连通测试。
+- 2026-09-10T08:44:15Z 最终复核：beijingcodex 不存在，生产 ref/current 链接仍为 `7da442128f8aef619c593766a4b62736fb19a4de`；collector active，publisher inactive/result success，timer inactive/disabled。Git endpoint 后续 TCP443 连接也超时，不能把某次首页200当成持续可用。
+- 新加坡 Linux22项控制隔离测试全部通过，不是SSH现场验收。另已在新加坡 Git外新建 `/home/compassdev/BEIJING-CONTROL-STATUS.md`（0600），手机新任务可读取恢复；本地文档不作为唯一进度来源。
+
+恢复顺序：先诊断北京官方 Git 下载路径，取得并验证同一个固定 SHA 的 root 持有干净源码，再传入新加坡既有 `.pub` 公钥，运行预检和获准的 `--apply`，最后由 compassdev 使用下列固定客户端读取与拒绝越权验证。任何新代理、镜像、中转服务或额外防火墙变更都不在本轮许可内。
 
 ## 一次性启用闸门
 
 1. 在可信 Alibaba Cloud Client 确认北京轻量实例
    `e905b859a6c24c529ef5c2ea21658462 / 47.93.214.76` 及所属账号。
-   另确认新加坡 ECS `i-t4nikvwazxwfaghfb7ez`。账号未核实时不能代填。
+   另确认新加坡 SWAS `c9e012a3ed944b588d696e71c0e24aea`。账号未核实时不能代填。
 2. 由**新加坡 Codex**只读确认真实 Git 根/远程/工作区、当前用户、出口与到北京 22 端口的
    连接；由北京既有 root 终端确认 sshd 与固定发布器。Windows 的成功或失败不作跨区证据。
-   不需要 RAM 角色，不读取云客户端配置、令牌或 .env，不打开网页控制台。
+   不需要 RAM 角色，不读取云客户端配置、令牌或 .env。默认使用客户端；本次内置浏览器例外及精确来源规则另见上方现场授权记录。
 3. 只在新加坡、以实际 Codex 运行用户生成专用 Ed25519 密钥（不能在 Windows 生成再复制）：
 
    ```sh
@@ -45,17 +72,19 @@
 
 ## 云端 Codex 的固定命令
 
-在真实即时 AI Git 工作区（不是罗盘工作区）执行：
+当前只读控制源码已固定在独立目录且已通过现场验收，由新加坡 compassdev 执行（不是 Windows，也不是罗盘工作区）：
 
 ```sh
-python3 deploy/beijing/ssh-control/client.py inspect
-python3 deploy/beijing/ssh-control/client.py status
+python3 /home/compassdev/beijing-collector-control/deploy/beijing/ssh-control/client.py inspect
+python3 /home/compassdev/beijing-collector-control/deploy/beijing/ssh-control/client.py status
 ```
 
 `inspect` 输出服务与 Git 元数据；`status` 输出版本/状态白名单，不读取日志、Cookie、
 环境变量配置或业务正文。新加坡专用密钥/主机公钥不存在或权限不安全时直接停止。
 
-收到主人**明确发布指令**、完成需求/测试/审查并提交到 main 后才运行：
+控制源码仍在独立开发分支；正式使用发布客户端前须把经审查的控制代码整合到实际开发工作区的 main，并保持客户端所在 Git 根 HEAD 与 origin/main 一致。不能拿当前 detached 控制目录直接发布其他目录里的提交。
+
+收到主人**明确发布指令**、完成需求/测试/审查并提交到 main 后，才在该真实开发工作区运行：
 
 ```sh
 python3 deploy/beijing/ssh-control/client.py publish <完整40位SHA>
@@ -91,7 +120,7 @@ python3 deploy/beijing/ssh-control/client.py verify <相同完整SHA>
 - 现有 Beijing→Singapore 签名 HTTPS 视频/评论传输不改；与 SSH 管理通道各自认证。
 - 现有 root Git 发布器、隔离构建、健康失败恢复和 Cloud CLI 不卸载不重装。
 - 目前只纳管博主采集器；原模型下载器真实源码还没有核实导入，不能直接承诺修改它。
-- 当前未做：服务器首次安装、真实主机/权限/跨区验证、电脑关机手机验收、真实发布与回滚演练。
+- 已完成专用密钥、可信主机固定、北京授权安装、新加坡真实SSH只读及越权拒绝检查；未做电脑关机手机验收、真实发布与回滚演练。控制分支尚未整合到 main。
 
 本地验证命令（只用合成数据）：
 

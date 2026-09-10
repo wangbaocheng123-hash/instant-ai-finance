@@ -1,6 +1,30 @@
 # 变更记录
 
+## 2026-09-10 — 受限通道主线整合与首次发布预检
+
+- 所有者追加批准完成主线整合、独立验证和北京博主采集器正式发布，不扩展到新加坡即时AI、时变罗盘、原模型下载器或任何timer。
+- 审查发现20c70e0新增的7项根级部署契约放在采集器tests中，而现有生产发布器仅解包采集器子目录，必然缺少仓库根deploy文件。将原7项测试原样移到deploy/beijing/tests，并新增“无仓库根目录时9项组件部署契约可独立执行”的回归；不跳过测试、不降低203项发布下限、不修改服务器root发布器。
+- 本条是预检记录，不表示已推送main或已上线；最终结果另行追加。
+
 本文件只记录已经发生的项目变更。研究结论和架构理由分别写入 `research/` 与 `docs/decisions/`。
+
+## 2026-09-10 — 北京受限SSH首次启用与跨区只读验收（未发布业务）
+
+- 北京官方Git端点恢复：TCP/TLS/Git refs实测200、约0.65秒，随后单次HTTP/1.1/protocol v0获取固定ecbbdfe成功。未更改DNS、代理、VPN、镜像、永久Git网络配置或新增防火墙规则；此前超时仍作为网络波动事实保留，不声称永久消除。
+- 北京root持有干净固定源码；只把新加坡既有Ed25519公钥送入Git外bootstrap目录。先预检通过，再安装专用beijingcodex及七个控制文件，输出BEIJING_READONLY_CLOUD_CONTROL_READY。sshd语法/生效Match、root及其他用户配置不变、sudo精确白名单、只读包装器均经安装器验证后才reload现有SSH；安装后默认只读预检再次通过。
+- 新加坡compassdev真实运行inspect/status成功，accepted/deployed/current/live revision均为7da4421。空shell、whoami、附加参数、任意sudo退出64；PTY/stdio TCP转发退出255；SFTP初始化退出64、协议输出0字节。第一轮SFTP断言要求文本，但实际无文本拒绝，复核协议拒绝后确认通过，没有放宽服务配置。一次测试粘贴换行导致Python语法错误，改为干净单行输入后执行；该错误未执行远程业务动作。
+- 北京uid990/gid989无附加组，sudo-l仅两个无参数包装器，非白名单sudo退出1。collector/model-downloader仍active，publisher inactive/result success，timer inactive/disabled；没有推进beijing-production、业务发布、生产数据更改、采集开关变更或模型源码导入。
+- 新加坡恢复记录已更新并保留历史，便于手机新任务继续。原开发main仍20c70e0，控制代码尚在独立分支；电脑关机手机验收、控制代码main整合和真实发布/回滚未做，不将首次启用冒充全部日常发布链路验收。
+- 本轮 `git diff --check` 通过，变更仅五份任务/运行说明。项目记忆脚本重跑仍报既有 STATUS 缺少旧 `GRANDPAAMU_0_21_1_LIVE` 标记，未修改无关基线以伪造全绿。最终新加坡跨区状态再次成功时间为2026-09-10T08:58:47Z。
+
+## 2026-09-10 — 受限 SSH 现场检查点（北京 Git 网络阻塞，未发布）
+
+- 使用所有者明确批准的已登录内置浏览器 Workbench 核实北京、新加坡均为 SWAS；确认两端 admin 现有 sudo 和新加坡真正运行用户 compassdev。未读取客户端配置、密码、Cookie、私钥或 .env。
+- 按所有者本轮明确确认，仅在北京增加 TCP22 来源 47.236.175.118/32；原六条规则完整保留。新加坡 uid1001 实测直连 SSH banner 205ms，Windows/VPN 未作为跨区连通证据。
+- 在新加坡生成专用 Ed25519 身份，私钥只留新加坡且 0600；北京 SSH 主机公钥由北京可信终端核对后固定在新加坡 known_hosts。未创建北京专用账号或七个授权文件，尚未运行安装器。
+- 创建两端独立控制源码目录，不动原开发/生产 checkout。新加坡用单次 HTTP/1.1/protocol v0 参数取得固定 ecbbdfe，22项控制单测在新加坡 Linux 全部通过；原开发 main20c70e0 干净未改。北京首次 GitHub fetch 低速超时；尽管首页一次200，Git兼容查询/既有bloggergit只读查询均超时，后续官方Git端点连接443也超时。未配置代理/VPN/镜像，安装停在可信源码闸门之前，不能写成已接通。
+- 2026-09-10T08:44:15Z 最终只读确认北京 beijingcodex 不存在，production ref/current 链接仍为7da4421，collector active，publisher inactive/result success，timer inactive/disabled。未推进 beijing-production、触发发布、reload SSH、修改生产资料、业务服务、DNS、Caddy、采集开关或timer。七个北京控制授权文件尚未安装。
+- 详细恢复检查点写入本地 STATUS/TASKS/运行手册，并在新加坡 Git 外新建 /home/compassdev/BEIJING-CONTROL-STATUS.md，供手机新任务直接恢复。控制分支尚未整合 main，真实 SSH/越权/电脑关机手机验收未做；没有为过关而修改基线记忆标记或执行真实发布。
 
 ## 2026-09-10 — 北京受限 SSH 控制入口（开发实现，尚未启用）
 
