@@ -11,6 +11,7 @@ WorkingDirectory=/opt/model-downloader/current
 EnvironmentFile=-/etc/model-downloader.env
 Environment=PYTHONUNBUFFERED=1
 Environment=TZ=Asia/Shanghai
+UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 ExecStart=/opt/model-downloader/venv/bin/python /opt/model-downloader/current/model_downloader_daemon.py
 Restart=always
 RestartSec=15

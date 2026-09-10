@@ -82,7 +82,25 @@ class CloudControlContractTests(unittest.TestCase):
         self.assertIn("model-downloader-git-deploy", suite)
         self.assertIn("services/beijing-model-downloader", model)
         self.assertIn("model-downloader-web.service", model)
+        self.assertIn("fresh_video_scan_succeeded", model)
+        self.assertIn("wait_for_release_health", model)
+        self.assertIn("id > ? AND success = 1", model)
         self.assertNotIn(".env", json.dumps({"suite": suite}))
+
+    def test_model_services_cannot_inherit_temporary_proxy_state(self) -> None:
+        component = REPOSITORY_ROOT / "services/beijing-model-downloader"
+        required = (
+            "UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY "
+            "http_proxy https_proxy all_proxy"
+        )
+        for filename in (
+            "model-downloader.service",
+            "model-downloader-web.service",
+        ):
+            unit = (
+                component / "deploy/beijing" / filename
+            ).read_text(encoding="utf-8")
+            self.assertIn(required, unit)
 
     def test_cloud_assistant_policy_is_instance_and_username_scoped(self) -> None:
         policy = json.loads(

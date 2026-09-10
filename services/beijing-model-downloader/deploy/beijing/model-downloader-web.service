@@ -13,6 +13,7 @@ EnvironmentFile=-/etc/model-downloader.env
 EnvironmentFile=-/etc/model-downloader-web.env
 Environment=PYTHONUNBUFFERED=1
 Environment=TZ=Asia/Shanghai
+UnsetEnvironment=HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 ExecStart=/opt/model-downloader/venv/bin/python /opt/model-downloader/current/web_admin.py
 Restart=always
 RestartSec=5

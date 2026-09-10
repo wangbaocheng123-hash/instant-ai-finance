@@ -21,6 +21,7 @@ readonly SERVICE_GROUP="modeldownloader"
 readonly SERVICE_NAME="model-downloader.service"
 readonly WEB_SERVICE_NAME="model-downloader-web.service"
 readonly PYTHON="/opt/model-downloader/venv/bin/python"
+readonly DATABASE_FILE="/var/lib/model-downloader/library.sqlite3"
 
 target_commit=""
 stage_dir=""
@@ -121,6 +122,30 @@ wait_for_services() {
   local attempt
   for attempt in $(seq 1 20); do
     services_healthy && return 0
+    sleep 2
+  done
+  return 1
+}
+
+latest_scan_id() {
+  runuser -u "${SERVICE_USER}" -- "${PYTHON}" -I -c \
+    'import sqlite3,sys; connection=sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True); row=connection.execute("SELECT COALESCE(MAX(id), 0) FROM scan_runs").fetchone(); print(int(row[0]))' \
+    "${DATABASE_FILE}"
+}
+
+fresh_video_scan_succeeded() {
+  local marker="$1"
+  runuser -u "${SERVICE_USER}" -- "${PYTHON}" -I -c \
+    'import sqlite3,sys; connection=sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True); row=connection.execute("SELECT 1 FROM scan_runs WHERE id > ? AND success = 1 AND finished_at IS NOT NULL LIMIT 1", (int(sys.argv[2]),)).fetchone(); raise SystemExit(0 if row else 1)' \
+    "${DATABASE_FILE}" "${marker}"
+}
+
+wait_for_release_health() {
+  local marker="$1" attempt
+  for attempt in $(seq 1 50); do
+    if services_healthy && fresh_video_scan_succeeded "${marker}"; then
+      return 0
+    fi
     sleep 2
   done
   return 1
@@ -228,8 +253,10 @@ install -o root -g root -m 0644 \
   /etc/systemd/system/model-downloader-web.service
 systemctl daemon-reload
 switch_current "${release_dir}"
+scan_marker="$(latest_scan_id)"
+[[ "${scan_marker}" =~ ^[0-9]+$ ]] || fail "invalid video scan marker"
 systemctl restart "${SERVICE_NAME}" "${WEB_SERVICE_NAME}"
-if wait_for_services; then
+if wait_for_release_health "${scan_marker}"; then
   printf '%s\n' "${target_commit}" >"${ACCEPTED_FILE}"
   printf '%s\n' "${target_commit}" >"${DEPLOYED_FILE}"
   printf '%s\n' "${target_tree}" >"${TREE_FILE}"
@@ -240,7 +267,7 @@ if wait_for_services; then
   exit 0
 fi
 
-log "new release failed; restoring previous release" >&2
+log "new release failed video-priority health check; restoring previous release" >&2
 if [[ -n "${previous_release}" && -d "${previous_release}" ]]; then
   switch_current "${previous_release}"
   systemctl restart "${SERVICE_NAME}" "${WEB_SERVICE_NAME}"

@@ -26,7 +26,10 @@ from profile_monitor import ProfileScanError, ProfileScanner, ProfileVideo
 
 APP_NAME = "模型下载器云端版"
 TIMEZONE = ZoneInfo("Asia/Shanghai")
-VIDEO_CHECK_INTERVAL_MINUTES = 3
+VIDEO_CHECK_INTERVAL_MINUTES = 1
+VIDEO_DEADLINE_GUARD_SECONDS = 8
+MAINTENANCE_MINIMUM_SECONDS = 20
+COMMENT_SLICE_MAX_SECONDS = 35
 DEFAULT_PROFILE_URL = (
     "https://www.douyin.com/user/"
     "MS4wLjABAAAAK713M9d8PGNb_WiMYf7yKhOI5y60H4uELJK2guDjJT0"
@@ -109,8 +112,20 @@ def comment_refresh_interval_minutes(
     return COMMENT_MATURE_REFRESH_MINUTES
 
 
-def next_scheduled_check(moment: datetime) -> datetime:
-    return moment + timedelta(minutes=INTERVAL_MINUTES)
+def next_scheduled_check(
+    scan_started_at: datetime,
+    completed_at: datetime | None = None,
+) -> datetime:
+    """Keep the next video scan anchored to the previous scan start.
+
+    A slow profile scan or a new-video download must never add another full
+    interval of sleep.  If video work already overran the deadline, the next
+    scan is due immediately after that work finishes.
+    """
+    deadline = scan_started_at + timedelta(minutes=INTERVAL_MINUTES)
+    if completed_at is not None and completed_at > deadline:
+        return completed_at
+    return deadline
 
 
 def load_state() -> set[str]:
@@ -168,8 +183,10 @@ class CloudMonitor:
         self.logger = logger
         self.stop_event = threading.Event()
         self.cancel_event = threading.Event()
+        self.maintenance_cancel_event = threading.Event()
         self.downloaded_ids = load_state()
         self.library = LibraryStore(DATABASE_FILE, COMMENTS_ROOT)
+        self.consecutive_scan_failures = 0
 
     def log(self, message: str, *args: object) -> None:
         self.logger.info(message, *args)
@@ -177,6 +194,7 @@ class CloudMonitor:
     def stop(self, *_args) -> None:
         self.log("收到停止信号，正在安全结束当前任务。")
         self.cancel_event.set()
+        self.maintenance_cancel_event.set()
         self.stop_event.set()
 
     @staticmethod
@@ -212,7 +230,11 @@ class CloudMonitor:
         *,
         force: bool = False,
         known_file: Path | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> Path:
+        active_cancel_event = (
+            cancel_event if cancel_event is not None else self.cancel_event
+        )
         existing = self.existing_file(destination, video.video_id)
         if known_file and known_file.is_file():
             existing = known_file
@@ -245,7 +267,11 @@ class CloudMonitor:
             existing.replace(backup)
 
         try:
-            output = self._download_fresh(video, destination)
+            output = self._download_fresh(
+                video,
+                destination,
+                cancel_event=active_cancel_event,
+            )
         except Exception:
             if backup and backup.exists():
                 existing.parent.mkdir(parents=True, exist_ok=True)
@@ -257,12 +283,16 @@ class CloudMonitor:
             return output
 
     def _download_fresh(
-        self, video: ProfileVideo, destination: Path
+        self,
+        video: ProfileVideo,
+        destination: Path,
+        *,
+        cancel_event: threading.Event,
     ) -> Path:
         self.log(f"发现作品 {video.video_id}，开始解析并下载。")
         resolver = DouyinResolver(
             log=self.log,
-            cancel_event=self.cancel_event,
+            cancel_event=cancel_event,
             profile_dir=BROWSER_PROFILE,
         )
         try:
@@ -278,7 +308,7 @@ class CloudMonitor:
         output = download_video(
             result,
             destination,
-            cancel_event=self.cancel_event,
+            cancel_event=cancel_event,
             custom_filename=custom_name,
         )
         inspection = inspect_mp4(output)
@@ -310,9 +340,20 @@ class CloudMonitor:
         )
         return output
 
-    def collect_comments(self, video: ProfileVideo) -> None:
+    def collect_comments(
+        self,
+        video: ProfileVideo,
+        *,
+        timeout: float = 180,
+        cancel_event: threading.Event | None = None,
+    ) -> None:
         if not COMMENTS_ENABLED:
             return
+        active_cancel_event = (
+            cancel_event
+            if cancel_event is not None
+            else self.cancel_event
+        )
         collected_at = now_china()
         refresh_minutes = comment_refresh_interval_minutes(
             video.created_at,
@@ -327,12 +368,12 @@ class CloudMonitor:
         collector = CommentCollector(
             BROWSER_PROFILE,
             log=self.log,
-            cancel_event=self.cancel_event,
+            cancel_event=active_cancel_event,
         )
         try:
             comments = collector.collect(
                 video.url,
-                timeout=180,
+                timeout=timeout,
                 limit=COMMENT_LIMIT,
                 creator_uid=CREATOR_UID,
             )
@@ -377,54 +418,124 @@ class CloudMonitor:
             created_at=published,
         )
 
-    def refresh_tracked_comments(self) -> None:
-        if not COMMENTS_ENABLED:
-            return
+    def _comment_candidates(self):
         candidates = self.library.comment_refresh_candidates(
             now=now_china(),
             young_window_hours=COMMENT_YOUNG_WINDOW_HOURS,
             young_refresh_minutes=COMMENT_YOUNG_REFRESH_MINUTES,
             mature_refresh_minutes=COMMENT_MATURE_REFRESH_MINUTES,
         )
-        for row in candidates:
-            if self.stop_event.is_set():
-                raise DownloadCancelled("服务正在停止。")
-            video = self._stored_video(row)
-            try:
-                self.collect_comments(video)
-            except CommentCollectError:
-                self.logger.exception(
-                    "作品 %s 评论采集失败，稍后自动重试。",
-                    video.video_id,
-                )
-            except Exception:
-                self.logger.exception(
-                    "作品 %s 评论数据保存失败。",
-                    video.video_id,
-                )
+        # Manual requests are explicitly user-triggered maintenance and keep
+        # priority over routine refreshes, while all maintenance remains below
+        # the next-video deadline.
+        return sorted(
+            candidates,
+            key=lambda row: not bool(row["comment_refresh_requested"]),
+        )
 
-    def process_repair_requests(self) -> None:
-        for row in self.library.repair_requests():
+    def _maintenance_budget(self, deadline: datetime) -> float:
+        return max(0.0, (deadline - now_china()).total_seconds())
+
+    def _arm_maintenance_deadline(
+        self,
+        deadline: datetime,
+    ) -> threading.Timer:
+        self.maintenance_cancel_event.clear()
+        delay = max(
+            0.01,
+            self._maintenance_budget(deadline)
+            - VIDEO_DEADLINE_GUARD_SECONDS,
+        )
+        timer = threading.Timer(delay, self.maintenance_cancel_event.set)
+        timer.daemon = True
+        timer.start()
+        return timer
+
+    def _repair_one(self, row, deadline: datetime) -> None:
+        video = self._stored_video(row)
+        destination = DOWNLOAD_ROOT / video.created_at.date().isoformat()
+        destination.mkdir(parents=True, exist_ok=True)
+        raw_path = str(row["file_path"] or "")
+        known_file = Path(raw_path) if raw_path else None
+        timer = self._arm_maintenance_deadline(deadline)
+        try:
+            self.download_one(
+                video,
+                destination,
+                force=True,
+                known_file=known_file,
+                cancel_event=self.maintenance_cancel_event,
+            )
+        except DownloadCancelled:
             if self.stop_event.is_set():
-                raise DownloadCancelled("服务正在停止。")
-            video = self._stored_video(row)
-            destination = DOWNLOAD_ROOT / video.created_at.date().isoformat()
-            destination.mkdir(parents=True, exist_ok=True)
-            raw_path = str(row["file_path"] or "")
-            known_file = Path(raw_path) if raw_path else None
-            try:
-                self.download_one(
-                    video,
-                    destination,
-                    force=True,
-                    known_file=known_file,
-                )
-            except Exception:
-                self.library.mark_repair_failed(video.video_id, now_china())
-                self.logger.exception(
-                    "作品 %s 的音视频修复失败，可在管理页面再次重试。",
-                    video.video_id,
-                )
+                raise
+            self.log(
+                "作品 %s 的修复任务已暂停，为下一次新视频检查让路。",
+                video.video_id,
+            )
+        except Exception:
+            self.library.mark_repair_failed(video.video_id, now_china())
+            self.logger.exception(
+                "作品 %s 的音视频修复失败，可在管理页面再次重试。",
+                video.video_id,
+            )
+        finally:
+            timer.cancel()
+            self.maintenance_cancel_event.clear()
+
+    def _refresh_one_comment(self, row, deadline: datetime) -> None:
+        video = self._stored_video(row)
+        remaining = self._maintenance_budget(deadline)
+        timeout = min(
+            COMMENT_SLICE_MAX_SECONDS,
+            max(
+                1.0,
+                remaining - VIDEO_DEADLINE_GUARD_SECONDS - 5,
+            ),
+        )
+        timer = self._arm_maintenance_deadline(deadline)
+        try:
+            self.collect_comments(
+                video,
+                timeout=timeout,
+                cancel_event=self.maintenance_cancel_event,
+            )
+        except DownloadCancelled:
+            if self.stop_event.is_set():
+                raise
+            self.log(
+                "作品 %s 的评论任务已暂停，为下一次新视频检查让路。",
+                video.video_id,
+            )
+        except CommentCollectError:
+            self.logger.exception(
+                "作品 %s 评论采集失败，稍后自动重试。",
+                video.video_id,
+            )
+        except Exception:
+            self.logger.exception(
+                "作品 %s 评论数据保存失败。",
+                video.video_id,
+            )
+        finally:
+            timer.cancel()
+            self.maintenance_cancel_event.clear()
+
+    def run_one_maintenance_task(self, deadline: datetime) -> bool:
+        """Use one idle slice, but never delay the next video scan."""
+        if self._maintenance_budget(deadline) < MAINTENANCE_MINIMUM_SECONDS:
+            return False
+        repairs = self.library.repair_requests()
+        if repairs:
+            self._repair_one(repairs[0], deadline)
+            return True
+        if not COMMENTS_ENABLED:
+            return False
+        candidates = self._comment_candidates()
+        if not candidates:
+            return False
+        self._refresh_one_comment(candidates[0], deadline)
+        return True
 
     def check_once(self) -> None:
         self.cancel_event.clear()
@@ -516,9 +627,6 @@ class CloudMonitor:
 
             save_state(self.downloaded_ids)
 
-            self.refresh_tracked_comments()
-            self.process_repair_requests()
-
             message = (
                 f"本次检查完成：今日发现 {len(rows)} 个，"
                 f"新下载 {downloaded} 个。"
@@ -548,8 +656,10 @@ class CloudMonitor:
     def run(self, once: bool = False) -> int:
         self.log(
             "%s 已启动；全天 24 小时持续检查新视频；"
-            "作品检查间隔 %d 分钟；评论刷新按发布时间分级："
-            "前 %d 小时每 %d 分钟，之后每 %d 分钟。",
+            "新视频硬优先、从每轮开始起固定间隔 %d 分钟；"
+            "评论和修复仅使用检查空档并到点让路；"
+            "评论刷新按发布时间分级：前 %d 小时每 %d 分钟，"
+            "之后每 %d 分钟。",
             APP_NAME,
             INTERVAL_MINUTES,
             COMMENT_YOUNG_WINDOW_HOURS,
@@ -565,23 +675,49 @@ class CloudMonitor:
                 return 1
 
         while not self.stop_event.is_set():
+            scan_started_at = now_china()
+            scan_succeeded = False
             try:
                 self.check_once()
+                scan_succeeded = True
+                self.consecutive_scan_failures = 0
             except DownloadCancelled:
                 if self.stop_event.is_set():
                     break
             except (OSError, ParseError, ProfileScanError):
+                self.consecutive_scan_failures += 1
                 self.logger.exception("本次检查失败，下个周期自动重试。")
             except Exception:
+                self.consecutive_scan_failures += 1
                 self.logger.exception("未预期错误，下个周期自动重试。")
 
-            next_check = next_scheduled_check(now_china())
-            self.log(
-                "下次检查时间：%s。",
-                next_check.strftime("%m-%d %H:%M"),
+            if self.consecutive_scan_failures >= 3:
+                self.logger.critical(
+                    "新视频主页已连续检查失败 %d 次；评论和修复继续停让，"
+                    "下一周期仍优先重试视频。",
+                    self.consecutive_scan_failures,
+                )
+
+            next_check = next_scheduled_check(
+                scan_started_at,
+                now_china(),
             )
+            self.log(
+                "下次新视频检查时间：%s。",
+                next_check.strftime("%m-%d %H:%M:%S"),
+            )
+            if scan_succeeded and not self.stop_event.is_set():
+                try:
+                    self.run_one_maintenance_task(next_check)
+                except DownloadCancelled:
+                    if self.stop_event.is_set():
+                        break
+                except Exception:
+                    self.logger.exception(
+                        "低优先级维护任务失败；不影响下一次新视频检查。"
+                    )
             self.stop_event.wait(
-                max(1.0, (next_check - now_china()).total_seconds())
+                max(0.0, (next_check - now_china()).total_seconds())
             )
         self.log("模型下载器云端服务已停止。")
         return 0
