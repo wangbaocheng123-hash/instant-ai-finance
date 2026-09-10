@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 027
+
+readonly PUBLIC_REPOSITORY="https://github.com/wangbaocheng123-hash/instant-ai-finance.git"
+readonly PRODUCTION_REF="refs/remotes/origin/beijing-production"
+readonly SUBTREE="services/beijing-model-downloader"
+readonly BARE_REPOSITORY="/opt/blogger-agent/production-source.git"
+readonly RELEASES_DIR="/opt/model-downloader/git-releases"
+readonly CURRENT_LINK="/opt/model-downloader/current"
+readonly STATE_DIR="/var/lib/model-downloader/git-deploy"
+readonly ACCEPTED_FILE="${STATE_DIR}/accepted-revision"
+readonly DEPLOYED_FILE="${STATE_DIR}/deployed-revision"
+readonly TREE_FILE="${STATE_DIR}/deployed-tree"
+readonly FAILED_FILE="${STATE_DIR}/failed-revision"
+readonly LOCK_FILE="/run/lock/model-downloader-git-deploy.lock"
+readonly GIT_USER="bloggergit"
+readonly SERVICE_USER="modeldownloader"
+readonly SERVICE_GROUP="modeldownloader"
+readonly SERVICE_NAME="model-downloader.service"
+readonly WEB_SERVICE_NAME="model-downloader-web.service"
+readonly PYTHON="/opt/model-downloader/venv/bin/python"
+
+target_commit=""
+stage_dir=""
+archive_dir=""
+mark_target_failed=false
+
+log() { printf 'model-downloader-git-deploy: %s\n' "$*"; }
+fail() { log "ERROR $*" >&2; exit 1; }
+validate_revision() { [[ "$1" =~ ^[0-9a-f]{40}$ ]] || fail "invalid Git revision"; }
+
+cleanup() {
+  local path
+  for path in "${stage_dir}" "${archive_dir}"; do
+    [[ -n "${path}" && -d "${path}" ]] || continue
+    case "${path}" in
+      "${RELEASES_DIR}"/.*.tmp.*) rm -rf -- "${path}" ;;
+      *) log "refusing to remove unexpected temporary path" >&2 ;;
+    esac
+  done
+}
+
+on_exit() {
+  local status=$?
+  if [[ ${status} -ne 0 && "${mark_target_failed}" == true && -n "${target_commit}" ]]; then
+    printf '%s\n' "${target_commit}" >"${FAILED_FILE}"
+    chmod 0644 "${FAILED_FILE}"
+  fi
+  cleanup
+  exit "${status}"
+}
+trap on_exit EXIT
+
+read_revision_file() {
+  local path="$1" value=""
+  if [[ -f "${path}" ]]; then
+    value="$(<"${path}")"
+    validate_revision "${value}"
+  fi
+  printf '%s' "${value}"
+}
+
+git_read() { runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" "$@"; }
+
+validate_release_path() {
+  local path="$1" revision
+  case "$(dirname -- "${path}")" in
+    "${RELEASES_DIR}"|/opt/model-downloader/releases) ;;
+    *) fail "release path escaped managed directories" ;;
+  esac
+  revision="$(basename -- "${path}")"
+  if [[ "$(dirname -- "${path}")" == "${RELEASES_DIR}" ]]; then
+    validate_revision "${revision}"
+  fi
+}
+
+switch_current() {
+  local release_path="$1"
+  local temporary_link="/opt/model-downloader/.current.$$.tmp"
+  validate_release_path "${release_path}"
+  [[ -d "${release_path}" ]] || fail "release directory is missing"
+  rm -f -- "${temporary_link}"
+  ln -s "${release_path}" "${temporary_link}"
+  mv -Tf -- "${temporary_link}" "${CURRENT_LINK}"
+}
+
+validate_tree() {
+  local listing="$1" entry metadata path mode object_type relative lower count=0
+  while IFS= read -r -d '' entry; do
+    metadata="${entry%%$'\t'*}"
+    path="${entry#*$'\t'}"
+    mode="${metadata%% *}"
+    metadata="${metadata#* }"
+    object_type="${metadata%% *}"
+    [[ "${object_type}" == "blob" ]] || fail "non-file Git object rejected"
+    [[ "${mode}" == "100644" || "${mode}" == "100755" ]] || fail "special file rejected"
+    [[ "${path}" == "${SUBTREE}/"* ]] || fail "Git path escaped component"
+    relative="${path#"${SUBTREE}/"}"
+    [[ -n "${relative}" && "${relative}" =~ ^[A-Za-z0-9._/@+-]+$ ]] || fail "unsafe Git path"
+    lower="${relative,,}"
+    case "/${lower}" in
+      */.env|*/.env.*|*/data/*|*/media/*|*/comments/*|*/logs/*|*/cache/*|*/backups/*|*/browser-profile/*|*.sqlite|*.sqlite3|*.db|*.pem|*.key)
+        fail "runtime or credential path rejected"
+        ;;
+    esac
+    count=$((count + 1))
+  done <"${listing}"
+  (( count > 0 )) || fail "component subtree is empty"
+}
+
+services_healthy() {
+  systemctl is-active --quiet "${SERVICE_NAME}" &&
+    systemctl is-active --quiet "${WEB_SERVICE_NAME}" &&
+    [[ "$(systemctl show "${SERVICE_NAME}" -p MainPID --value)" =~ ^[1-9][0-9]*$ ]] &&
+    [[ "$(systemctl show "${WEB_SERVICE_NAME}" -p MainPID --value)" =~ ^[1-9][0-9]*$ ]]
+}
+
+wait_for_services() {
+  local attempt
+  for attempt in $(seq 1 20); do
+    services_healthy && return 0
+    sleep 2
+  done
+  return 1
+}
+
+run_release_tests() {
+  local source_dir="$1" output_file="${source_dir}/.test-output" count
+  chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "${source_dir}"
+  if ! runuser -u "${SERVICE_USER}" -- env \
+      PYTHONDONTWRITEBYTECODE=1 \
+      "${PYTHON}" -B -m compileall -q "${source_dir}" >"${output_file}" 2>&1; then
+    tail -n 30 "${output_file}" >&2 || true
+    fail "Python compile failed"
+  fi
+  if ! runuser -u "${SERVICE_USER}" -- env \
+      PYTHONDONTWRITEBYTECODE=1 \
+      "${PYTHON}" -B -m unittest discover -s "${source_dir}/tests" -p 'test_*.py' \
+      >"${output_file}" 2>&1; then
+    tail -n 30 "${output_file}" >&2 || true
+    fail "isolated model downloader tests failed"
+  fi
+  count="$(sed -nE 's/^Ran ([0-9]+) tests?.*/\1/p' "${output_file}" | tail -n 1)"
+  [[ "${count}" =~ ^[0-9]+$ && "${count}" -ge 4 ]] || fail "model downloader test count below floor"
+  log "isolated tests passed count=${count}"
+  rm -f -- "${output_file}"
+}
+
+[[ "$(id -u)" -eq 0 ]] || fail "publisher must run as root"
+for command in chmod chown cp date dirname flock git install ln mktemp mv python3 readlink rm runuser sed seq sleep stat systemctl tail tar; do
+  command -v "${command}" >/dev/null 2>&1 || fail "missing command: ${command}"
+done
+[[ -x "${PYTHON}" ]] || fail "model downloader Python is missing"
+id "${GIT_USER}" >/dev/null 2>&1 || fail "Git reader user is missing"
+id "${SERVICE_USER}" >/dev/null 2>&1 || fail "service user is missing"
+[[ -d "${BARE_REPOSITORY}" ]] || fail "bare production source is missing"
+[[ ! -e "${CURRENT_LINK}" || -L "${CURRENT_LINK}" ]] || fail "current runtime is not a symlink"
+install -d -o root -g root -m 0755 "${RELEASES_DIR}"
+install -d -o root -g root -m 0755 "${STATE_DIR}"
+
+exec 9>"${LOCK_FILE}"
+flock -n 9 || fail "another model downloader deployment is running"
+[[ "$(git_read remote get-url origin)" == "${PUBLIC_REPOSITORY}" ]] || fail "unexpected Git origin"
+git_read fetch --filter=blob:none --no-tags --prune origin "+refs/heads/beijing-production:${PRODUCTION_REF}"
+target_commit="$(git_read rev-parse "${PRODUCTION_REF}^{commit}")"
+validate_revision "${target_commit}"
+target_tree="$(git_read rev-parse "${target_commit}:${SUBTREE}")"
+validate_revision "${target_tree}"
+
+failed_commit="$(read_revision_file "${FAILED_FILE}")"
+[[ "${failed_commit}" != "${target_commit}" ]] || fail "known failed revision"
+accepted_commit="$(read_revision_file "${ACCEPTED_FILE}")"
+if [[ -n "${accepted_commit}" ]]; then
+  git_read merge-base --is-ancestor "${accepted_commit}" "${target_commit}" || fail "production is not fast-forward"
+fi
+deployed_tree="$(read_revision_file "${TREE_FILE}")"
+if [[ -n "${deployed_tree}" && "${deployed_tree}" == "${target_tree}" ]]; then
+  services_healthy || fail "unchanged component is unhealthy"
+  printf '%s\n' "${target_commit}" >"${ACCEPTED_FILE}"
+  chmod 0644 "${ACCEPTED_FILE}"
+  log "branch advanced with unchanged model downloader tree"
+  exit 0
+fi
+
+mark_target_failed=true
+listing="$(mktemp "${STATE_DIR}/tree.XXXXXX")"
+git_read ls-tree -r -z "${target_commit}" -- "${SUBTREE}" >"${listing}"
+validate_tree "${listing}"
+rm -f -- "${listing}"
+for required in VERSION requirements.txt model_downloader_daemon.py web_admin.py library_store.py tests/test_comment_schedule.py deploy/beijing/model-downloader.service deploy/beijing/model-downloader-web.service; do
+  git_read cat-file -e "${target_commit}:${SUBTREE}/${required}" || fail "missing release file: ${required}"
+done
+
+previous_release=""
+if [[ -L "${CURRENT_LINK}" ]]; then
+  previous_release="$(readlink -f "${CURRENT_LINK}")"
+  validate_release_path "${previous_release}"
+fi
+release_dir="${RELEASES_DIR}/${target_commit}"
+validate_release_path "${release_dir}"
+
+if [[ ! -e "${release_dir}" ]]; then
+  archive_dir="$(mktemp -d "${RELEASES_DIR}/.${target_commit}.tmp.archive.XXXXXX")"
+  stage_dir="$(mktemp -d "${RELEASES_DIR}/.${target_commit}.tmp.release.XXXXXX")"
+  git_read archive "${target_commit}" "${SUBTREE}" | tar --extract --directory "${archive_dir}" --no-same-owner --no-same-permissions
+  cp -a "${archive_dir}/${SUBTREE}/." "${stage_dir}/"
+  rm -rf -- "${archive_dir}"
+  archive_dir=""
+  run_release_tests "${stage_dir}"
+  printf '{"repository_revision":"%s","deployed_time":"%s"}\n' \
+    "${target_commit}" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >"${stage_dir}/DEPLOYMENT.json"
+  printf '%s\n' "${target_commit}" >"${stage_dir}/.model-downloader-release"
+  chown -R root:root "${stage_dir}"
+  chmod -R u=rwX,go=rX "${stage_dir}"
+  mv -- "${stage_dir}" "${release_dir}"
+  stage_dir=""
+fi
+
+install -o root -g root -m 0644 \
+  "${release_dir}/deploy/beijing/model-downloader.service" \
+  /etc/systemd/system/model-downloader.service
+install -o root -g root -m 0644 \
+  "${release_dir}/deploy/beijing/model-downloader-web.service" \
+  /etc/systemd/system/model-downloader-web.service
+systemctl daemon-reload
+switch_current "${release_dir}"
+systemctl restart "${SERVICE_NAME}" "${WEB_SERVICE_NAME}"
+if wait_for_services; then
+  printf '%s\n' "${target_commit}" >"${ACCEPTED_FILE}"
+  printf '%s\n' "${target_commit}" >"${DEPLOYED_FILE}"
+  printf '%s\n' "${target_tree}" >"${TREE_FILE}"
+  chmod 0644 "${ACCEPTED_FILE}" "${DEPLOYED_FILE}" "${TREE_FILE}"
+  rm -f -- "${FAILED_FILE}"
+  mark_target_failed=false
+  log "deployed revision=${target_commit} tree=${target_tree}"
+  exit 0
+fi
+
+log "new release failed; restoring previous release" >&2
+if [[ -n "${previous_release}" && -d "${previous_release}" ]]; then
+  switch_current "${previous_release}"
+  systemctl restart "${SERVICE_NAME}" "${WEB_SERVICE_NAME}"
+  wait_for_services || fail "rollback did not recover services"
+  fail "new revision failed and previous release was restored"
+fi
+fail "first managed release failed with no previous release"

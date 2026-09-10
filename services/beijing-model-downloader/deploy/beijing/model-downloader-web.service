@@ -1,0 +1,28 @@
+[Unit]
+Description=Model Downloader Chinese Web Management
+After=network-online.target model-downloader.service
+Wants=network-online.target
+PartOf=model-downloader.service
+
+[Service]
+Type=simple
+User=modeldownloader
+Group=modeldownloader
+WorkingDirectory=/opt/model-downloader/current
+EnvironmentFile=-/etc/model-downloader.env
+EnvironmentFile=-/etc/model-downloader-web.env
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Asia/Shanghai
+ExecStart=/opt/model-downloader/venv/bin/python /opt/model-downloader/current/web_admin.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/model-downloader /srv/model-downloader
+
+[Install]
+WantedBy=multi-user.target

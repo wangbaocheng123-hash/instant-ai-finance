@@ -4,10 +4,11 @@
   "repository": "wangbaocheng123-hash/instant-ai-finance",
   "production_branch": "beijing-production",
   "deployment": {
-    "mode": "transition",
+    "mode": "unified_manual",
     "poll_seconds_target": 90,
     "timer_enabled": false,
-    "reason": "model-downloader source and runtime unit are not yet imported and verified"
+    "publisher": "/usr/local/sbin/beijing-suite-publish",
+    "reason": "both Beijing components are Git managed; Singapore Codex triggers reviewed releases explicitly"
   },
   "components": [
     {
@@ -23,7 +24,7 @@
       "component_id": "model-downloader",
       "source_path": "services/beijing-model-downloader",
       "service_unit": "model-downloader.service",
-      "source_state": "pending_verified_import",
+      "source_state": "managed",
       "data_roots": [
         "/var/lib/model-downloader",
         "/srv/model-downloader/videos"

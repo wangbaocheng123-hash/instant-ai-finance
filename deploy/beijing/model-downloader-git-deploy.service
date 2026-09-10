@@ -1,0 +1,17 @@
+[Unit]
+Description=Deploy Beijing model downloader from the verified Git production branch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/sbin/model-downloader-git-deploy
+TimeoutStartSec=1200
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target

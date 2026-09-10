@@ -1,0 +1,7 @@
+[Unit]
+Description=Install a model downloader package uploaded from the web manager
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/model-downloader-process-update
+TimeoutStartSec=600

@@ -1,0 +1,25 @@
+[Unit]
+Description=Model Douyin Video Downloader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=modeldownloader
+Group=modeldownloader
+WorkingDirectory=/opt/model-downloader/current
+EnvironmentFile=-/etc/model-downloader.env
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=Asia/Shanghai
+ExecStart=/opt/model-downloader/venv/bin/python /opt/model-downloader/current/model_downloader_daemon.py
+Restart=always
+RestartSec=15
+TimeoutStopSec=20
+KillMode=mixed
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/model-downloader /srv/model-downloader
+
+[Install]
+WantedBy=multi-user.target

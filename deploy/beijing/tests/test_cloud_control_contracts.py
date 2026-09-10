@@ -42,14 +42,18 @@ class CloudControlContractTests(unittest.TestCase):
             publish_script,
         )
 
-    def test_collection_suite_manifest_keeps_transition_fail_closed(self) -> None:
+    def test_collection_suite_manifest_is_unified_and_manual(self) -> None:
         manifest = json.loads(
             (ROOT_DEPLOY / "collection-suite.json").read_text(encoding="utf-8")
         )
         self.assertEqual(manifest["schema_version"], 1)
         self.assertEqual(manifest["production_branch"], "beijing-production")
-        self.assertEqual(manifest["deployment"]["mode"], "transition")
+        self.assertEqual(manifest["deployment"]["mode"], "unified_manual")
         self.assertFalse(manifest["deployment"]["timer_enabled"])
+        self.assertEqual(
+            manifest["deployment"]["publisher"],
+            "/usr/local/sbin/beijing-suite-publish",
+        )
         components = {
             item["component_id"]: item for item in manifest["components"]
         }
@@ -57,11 +61,28 @@ class CloudControlContractTests(unittest.TestCase):
             components["blogger-collector"]["source_state"], "managed"
         )
         self.assertEqual(
-            components["model-downloader"]["source_state"],
-            "pending_verified_import",
+            components["model-downloader"]["source_state"], "managed"
         )
         self.assertFalse(manifest["integration"]["shared_process"])
         self.assertFalse(manifest["integration"]["shared_database"])
+
+    def test_full_admin_and_suite_publishers_are_explicit(self) -> None:
+        installer = (ROOT_DEPLOY / "install-full-admin-control.sh").read_text(
+            encoding="utf-8"
+        )
+        suite = (ROOT_DEPLOY / "beijing-suite-publish").read_text(
+            encoding="utf-8"
+        )
+        model = (ROOT_DEPLOY / "model-downloader-git-deploy").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("singaporecodex", installer)
+        self.assertIn("NOPASSWD: ALL", installer)
+        self.assertIn("blogger-collector-git-deploy.service", suite)
+        self.assertIn("model-downloader-git-deploy", suite)
+        self.assertIn("services/beijing-model-downloader", model)
+        self.assertIn("model-downloader-web.service", model)
+        self.assertNotIn(".env", json.dumps({"suite": suite}))
 
     def test_cloud_assistant_policy_is_instance_and_username_scoped(self) -> None:
         policy = json.loads(

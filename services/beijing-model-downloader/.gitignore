@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+.test-runtime/
+*.sqlite*
+*.db
+.env*
+logs/
+cache/
+backups/
+browser-profile/
+comments/
+videos/
