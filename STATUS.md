@@ -1,14 +1,16 @@
 # 项目状态
 
-- 最后更新：2026-09-10 22:29（北京时间）
-- 最新结果：`MODEL_DOWNLOADER_24X7_3M_RELEASE_VERIFIED`。功能提交与北京生产均为 `654453060814990796b59eeb8580d041142c5dbf`，模型下载器实际版本 `0.9.1+git.always-on`、tree `7983b0a4be4a1d0ce3ec8a594261f2c6bdb49e9b`。统一发布器在北京隔离执行7项模型测试并返回 `BEIJING_COLLECTION_SUITE_PUBLISH_VERIFIED`；model/model-web/blogger 三服务均 active，模型 accepted/deployed/current 精确一致，failed revision为空，timer保持inactive/disabled。22:26启动日志明确显示全天24小时、作品检查间隔3分钟、评论前24小时15分钟/之后60分钟；22:27安排22:30，22:30真实完成下一轮并安排22:33，连续运行已验证。首次发布在切换前因北京直连GitHub 30秒低速超时退出，旧服务全程健康；只读确认官方Git端点经现有新加坡SSH临时隧道HTTP 200后受控重试一次成功，隧道与四个临时代理环境已清除，未改DNS、防火墙、Git永久配置或业务数据。
+- 最后更新：2026-09-11 07:48（北京时间）
+- 最新检查点：`MODEL_DOWNLOADER_VIDEO_PRIORITY_MAIN_READY / PRODUCTION_VIDEO_ONLY_STOPGAP`。ADR-0049 与功能提交 `8bfd2da1d9c6a0bc960abaa4d914a9933978db15` 已把模型下载器改为全天固定 1 分钟、从主页检查开始时间起算；主页扫描及新视频下载为硬优先级，评论/修复只用空档、每次最多一项并预留 8 秒到点取消。模型下载器14项、北京发布/控制32项、北京博主采集器220项、即时AI 190项全部通过；候选版本为 `0.9.2+git.video-priority`，尚未推进 `beijing-production`。
+- 生产故障与止血：复核确认 0.9.1 进程继承了前次一次性取码隧道的四个 proxy 变量，隧道关闭后从 09-10 22:27 至 09-11 07:30 的主页检查全部失败；重启清除进程残留变量后主页恢复，但 07:31 起评论再次连续占用视频循环。07:36 已通过 systemd manager 临时设 `MODEL_DOWNLOADER_COMMENTS_ENABLED=0` 并重启，当前生产仍为 0.9.1 的 3 分钟纯视频止血模式；07:36、07:39、07:43、07:46 连续扫描成功，07:39 发现一条 07:37 发布的新视频并于 07:40 完成有声下载。正式发布 0.9.2 时必须清除此临时变量，恢复新调度器受控评论空档。
+- 历史发布记录已纠偏：`654453060814990796b59eeb8580d041142c5dbf` 的 Git 发布、隔离测试和进程 active 回执确实成功，但当时验收没有要求“新进程真实成功完成一次主页扫描”，因此旧 `MODEL_DOWNLOADER_24X7_3M_RELEASE_VERIFIED` 不能再作为连续采集健康证明。0.9.2 发布器已增加晚于重启标记的成功扫描门禁，并在两个 model systemd 单元清除大小写 HTTP/HTTPS/ALL proxy，100 秒未成功扫描即回滚。
 - 最新结果：`SINGAPORE_TO_BEIJING_FULL_RELEASE_VERIFIED`。新加坡云端已安装 `~/bin/beijing-admin`，真实登录北京 `singaporecodex` 后 `sudo -n id -u` 返回 0；可管理北京全部文件、服务和程序，不再受三命令白名单限制。旧 `beijingcodex` 入口只作为兼容回退。
-- 北京原模型下载器真实源码、三份 systemd 单元和依赖已排除凭据/数据库/媒体后导入 `services/beijing-model-downloader/`；中央清单已改为 `managed`，统一发布入口为 `/usr/local/sbin/beijing-suite-publish`。北京生产现为 `654453060814990796b59eeb8580d041142c5dbf`，模型下载器版本 `0.9.1+git.always-on`，model/model-web/blogger 三服务均 active，发布 timer 仍 inactive/disabled。
-- ADR-0044 的抓评调度已在真实模型下载器实现：实际发布时间未满24小时每15分钟，达到24小时后每60分钟；按上次成功保存时间推进，失败不推进，Chromium仍由单进程串行。新加坡7项模型调度测试、31项控制测试、北京采集器220项完整回归和北京发布时7项模型隔离测试全部通过。
+- 北京原模型下载器真实源码、三份 systemd 单元和依赖已排除凭据/数据库/媒体后导入 `services/beijing-model-downloader/`；中央清单已改为 `managed`，统一发布入口为 `/usr/local/sbin/beijing-suite-publish`。北京 Git 生产仍为 `654453060814990796b59eeb8580d041142c5dbf`，模型下载器版本 `0.9.1+git.always-on`，model/model-web/blogger 三服务均 active，发布 timer 仍 inactive/disabled。
+- ADR-0044 的抓评到期规则已在真实模型下载器实现：实际发布时间未满24小时每15分钟，达到24小时后每60分钟；按上次成功保存时间推进，失败不推进。为保护视频抓取，生产止血期间评论暂时停用；0.9.2 将以短时增量空档恢复，不再让评论延迟主页检查。
 - 最新结果（17:48北京时间）：`BEIJING_SSH_PUBLISH_VERIFIED`。新加坡compassdev通过现有受限SSH客户端完成北京正式发布，accepted/deployed/current/live全部为 `d60f75fd98bc5f09aca6e1e70d6827a85db97c2e`，组件tree为 `d6568c7a3f9662dd8456c7ddaaf21378b3890dea`。北京220项隔离测试通过；publisher inactive/success、collector active/PID1089415，failed_revision为空；timer disabled/inactive。独立verify再次返回成功，模型下载器原PID959090保持active、路径未变。
 - 失败已查明并恢复：北京17:30首次fetch因30秒低于1024 bytes/sec退出128，未切换生产。本人恢复北京可信登录后读取有限脱敏日志、同账户ls-remote成功；核对d60f75f与ff4f42e仅结果文档不同后，从新加坡只受控重试一次，17:45完成验收。没有修改服务器发布器、代理、Git网络配置、DNS、Caddy、安全组或timer。
 - 公网核验分层记录：北京本机经正式HTTPS域名和回环18797均返回status ok / 1.0.8及精确d60f75f；新加坡到北京HTTPS三次只读请求被reset，DNS仍解析正确47.93.214.76，具体跨区HTTPS原因未查明；不能将北京自测冒充新加坡HTTP成功。该路径不被SSH发布客户端使用，真实SSH发布/回执已通过；未更改原签名HTTPS视频传输或采集开关。
-- main整合、真实新加坡Codex CLI新任务和首个SSH发布已完成；物理手机发起/Windows关机与回滚演练仍未做，原模型下载器仍pending_verified_import。下列17:32及更早阻塞均是历史，不应据此重建密钥或重复部署。本次结果文档提交不会再推进beijing-production。
+- main整合、真实新加坡Codex CLI新任务、原模型下载器源码导入和首个SSH发布均已完成；物理手机发起/Windows关机与回滚演练仍未做。下列17:32及更早阻塞均是历史，不应据此重建密钥或重复部署。
 - 历史结果（17:32北京时间）：`BEIJING_MAIN_AND_SG_CODEX_VERIFIED_RELEASE_BLOCKED`。受限控制代码及发布包测试兼容修复已由新加坡compassdev快进并推送main至 `ff4f42eace3f77470395d184ed1c4d33271973be`。在服务器新建的真实Codex CLI任务返回 `SG_CODEX_NEW_TASK_READONLY_OK`；这不是手机实机/电脑关机测试。
 - 本轮真实发布已经从新加坡只触发一次：远端beijing-production也已为ff4f42e，但北京发布服务为failed/result exit-code；accepted/deployed/current/live仍为 `7da442128f8aef619c593766a4b62736fb19a4de`，failed_revision为空，collector active且PID958413未变、模型下载器active且PID959090未变，timer disabled/inactive。没有BEIJING_SSH_PUBLISH_VERIFIED，不得宣称上线或再次盲目触发。具体错误原因尚未读取到，不能直接归因网络。
 - 验证：新加坡30项根级控制契约通过；按真实Git archive只解包组件、以compassdev在无外网网络命名空间运行220项完整测试通过。专用测试venv位于Git外 /home/compassdev/beijing-release-validation-venv，仅安装已有requirements四类Python依赖，没有安装Chromium/系统包。默认系统Python缺PIL/websocket的首次测试失败已在该隔离venv复测解决。原项目记忆检查此前因旧GRANDPAAMU_0_21_1_LIVE标记缺失报错；17:51形式检查返回通过，但检查器仅做文本包含，历史问题说明本身包含该字符串，不能据此证明旧状态问题或业务验收已修复。检查器代码未改，实际结果以本轮测试和现场回执为准。
@@ -20,10 +22,10 @@
 - 新加坡继续使用原专用身份和可信 known_hosts，目录0700、私钥与主机固定文件0600，没有重建/读取/显示/导出私钥。两端独立控制源码均为干净固定ecbbdfe，新加坡22项Linux控制单测通过；北京安装后再次只读预检通过。此前Git超时后，本轮官方Git查询0.65秒返回200，固定fetch成功；仅单次HTTP/1.1/protocol v0参数，无DNS/VPN/代理/镜像改动。不能把一次恢复等同于永久修复跨区网络波动。
 - 现场最小权限通过：beijingcodex uid990/gid989、无附加组，sudo只允许两个无参数固定包装器，非白名单sudo退出1；新加坡实测空shell/任意命令/附加参数/通用sudo退出64，PTY/转发退出255，SFTP初始化退出64且无协议响应。首次SFTP断言额外要求文本导致误报，复核协议未建立后确认拒绝，未为测试放宽任何限制。
 - 16:53起新加坡真实inspect/status连续成功：accepted/deployed/current/live revision均为 `7da442128f8aef619c593766a4b62736fb19a4de`，collector active，publisher inactive/result success，timer inactive/disabled；模型下载器仍active。未推进生产分支、重启业务、导入模型下载器或修改媒体传输。新加坡 `/home/compassdev/BEIJING-CONTROL-STATUS.md` 已更新当前已验收状态并保留旧阻塞历史，供手机新任务直接恢复。
-- 所有者已批准 ADR-0045 的“两层统一”方案：北京模型下载器、博主采集器和只读桥最终共用当前公共仓库、唯一 `beijing-production` 与一个代码发布入口；两项服务、进程、配置、数据库、媒体目录和回滚永久隔离。本轮建立过渡中央清单，模型下载器明确标记 `pending_verified_import`，统一 90 秒代码发布 timer 明确保持关闭，未改北京生产。
+- 历史过渡记录：所有者已批准 ADR-0045 的“两层统一”方案；当时模型下载器标记为 `pending_verified_import`。ADR-0047 已完成真实源码导入并改为 `managed`，两项服务、进程、配置、数据库、媒体目录和回滚仍永久隔离，代码发布 timer 继续关闭。
 - 历史 ADR-0045 曾安装官方 Alibaba Cloud CLI 3.4.11 和无 AccessKey 的 EcsRamRole 配置轮廓；这些能力保留，不卸载。但现场已确认 SWAS，当前采用 ADR-0046 专用受限 SSH，不继续套用 ECS RAM 绑定模板或扩大云权限。
 - 修复根级北京操作脚本的 Git refspec：无论本地 clone 是否只跟踪 `main`，现在都会把 `main` 和 `beijing-production` 写入明确的 `refs/remotes/origin/*`，不再在 `rev-parse` 阶段误报生产分支不存在。新增部署契约覆盖统一清单 fail-closed、RAM 范围、只读输出和固定动作；北京 227 项、即时 AI 190 项完整回归及全部相关 shell 语法通过，ShellCheck 在当前主机不可用。本轮没有推进 `beijing-production`、重启服务、访问生产数据或正式发布。
-- 模型先生“发布后 24 小时内每 15 分钟、之后每 60 分钟抓评”已由所有者确认，ADR-0044 固定按抖音实际发布时间计算、失败不推进成功游标、单作品不并发及作者点赞三态规则。当前仓库不含北京原模型下载器的抓取调度/数据库写入源码，现有 `beijing-production` 也明确只发布 `blogger-collector`，所以定时抓取器本身仍处于 `IN_PROGRESS`，尚未发布或声称生效；下一步唯一建议是先通过受控维护端把原下载器真实源码与运行单元接入，再实施 15/60 分钟调度和生产验收，不能把普通博主采集器冒充模型先生下载器。
+- 历史阻塞已解除：模型先生 15/60 分钟抓评规则、真实下载器源码和数据库写入程序已由 ADR-0047/0048 接入统一北京套件；当前新增工作是 ADR-0049 的一分钟视频硬优先生产发布，不再重复源码导入。
 - 已完成当前仓库能够安全落地的两段修复：北京只读桥现在把全部规范化评论字段纳入 revision 指纹，即使视频行、评论数和正文未变，只有“模型先生赞过/取消点赞”等元数据变化也会在 15 秒桥接周期形成新 revision；升级时最近 48 小时作品做一次当前快照重建，较旧且可证未变的状态原地迁移，避免把全部历史媒体重传。新加坡投影让显式 `author_liked=false` 覆盖旧 `raw_json=true`，不会把取消点赞重新显示成已点赞。北京 220 项、即时 AI 190 项完整回归通过；全部使用合成数据，未访问真实抖音、写生产资料、调用豆包或正式发布。
 - 即时 AI 0.21.4 模型先生送达自动处理已正式上线。受限发布器把生产从 `da9fd28` 安全快进到功能提交 `c981436`，服务器 189 项回归全部通过；`instant-ai.service` 与 Caddy 均为 active，回环和公网健康接口、Service Worker 均返回 0.21.4，正式 `app.js` 摘要与仓库一致。
 - 原问题根因已确认：北京视频及评论成功送达并投影，但旧模型先生队列默认关闭，关闭时 `complete` 回调直接丢弃任务，之后没有漏回调补偿，所以并非豆包识别失败，而是豆包从未收到任务。
@@ -140,8 +142,8 @@
 
 ## 当前阻塞
 
-- 北京受限SSH安装、跨区只读、越权拒绝、main整合和新加坡真实Codex CLI新任务均已验收。当前硬阻塞是首次发布服务failed/exit-code且可信北京管理登录失效，未拿到具体错误详情。生产目标ff4f42e、实际运行7da4421；不再等待重复安装或main合并。电脑关机手机实机验证和真实回滚演练尚未完成。
-- 原模型下载器源码核验是后续业务实现的硬前提。当前仓库只有只读桥和早期示例，不能据此伪造 15/60 分钟评论调度，也不能把普通博主采集器的 225 项通过误报为模型下载器调度已完成。
+- ADR-0049 / 0.9.2 代码、完整回归和 `main` 功能提交均已完成；按北京生产规则，唯一剩余门禁是所有者明确要求正式发布后推进 `beijing-production`。发布时还必须清除 07:36 的临时评论关闭变量，并由新增门禁核实新进程真实完成一次主页扫描，不能只看 service active。
+- 09-11 早间曾发布后删除且未被故障进程看到的视频，若没有保留链接/作品ID且平台已不可访问，现有系统无法从已删除页面反向恢复；止血恢复后新发视频已正常捕获。
 - 0.21.3 代码、正式发布与公网协议验收无已知功能阻塞。旧评论关系修复依赖新加坡仍保留对应作品的当前已验证评论包；缺少或版本不匹配的记录会安全跳过并在下次启动重试，不根据昵称或正文猜测关系。真实评论受主人登录保护，截图对应三组互动仍待主人手机刷新抽查。
 - 0.21.2 韩国采源、真实发布方、正式发布与公网版本验收无功能阻塞。Google/Bing News 索引限流或结构变化只会让对应单源显式异常；不会用内部频道名填充来源，KB 官方页、Stockplus 快讯索引及其他来源继续独立采集。
 - 0.21.1 代码、正式发布与公网版本验收无功能阻塞。云端开发机浏览器缺少 `libatk`，因此没有执行隔离截图脚本；该系统依赖未擅自安装，不影响已通过的开发/服务器回归、前端契约与生产构建结果。
@@ -183,4 +185,4 @@
 
 ## 下一项唯一建议任务
 
-`手机独立只读验收`：电脑关闭后，由本人在已连接新加坡的Codex新任务先读 /home/compassdev/BEIJING-CONTROL-STATUS.md，再在真实开发项目运行inspect/status，确认d60f75f与disabled/inactive timer。服务器端主线、真实新Codex CLI任务和SSH正式发布已完成，不应重复发布或重建授权。跨区HTTPS reset作为独立网络待查项保留；任何网络/Caddy调整、模型下载器源码导入或真实回滚演练须另行明确授权。
+`正式发布并现场验收模型下载器 0.9.2`：收到所有者明确发布口令后，把已测 `main` 安全推进 `beijing-production`，执行北京统一发布器；清除临时 `MODEL_DOWNLOADER_COMMENTS_ENABLED=0`，核验一分钟连续主页扫描、评论只在空档运行且到点让路、三个业务服务 active、成功扫描发布门禁和 timer disabled/inactive。不得重建密钥、修改 DNS/Caddy 或触碰新加坡即时 AI/时变罗盘。
