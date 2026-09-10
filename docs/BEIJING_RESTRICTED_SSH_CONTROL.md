@@ -1,5 +1,19 @@
 # 北京受限 SSH 控制：首次启用与手机使用
 
+## 2026-09-10 17:32 最新结果（优先于下方历史）
+
+- main整合已完成：ff4f42eace3f77470395d184ed1c4d33271973be，由新加坡compassdev推送。
+- 真正的新加坡Codex CLI新任务只读验收成功，标记SG_CODEX_NEW_TASK_READONLY_OK。手机本人发起/电脑关机实机部分未做，不以CLI结果冒充。
+- 新加坡30项控制契约及仅组件Git archive的220项隔离测试通过。测试venv在 /home/compassdev/beijing-release-validation-venv，不在生产或Git内。
+- 已按用户明确授权仅触发一次北京发布。beijing-production目标ff4f42e，但publisher failed/exit-code，accepted/current/deployed/live仍7da4421；collector和模型下载器均保持旧进程active，timer disabled/inactive。未上线，不盲目重复publish。北京可信管理登录失效，需恢复登录后查看固定发布服务的脱敏错误；受限账号不增加任意日志/通用sudo权限。
+- 当前真实开发入口是 /home/compassdev/Documents/Codex/2026-08-26/instant-ai-finance；原 /home/compassdev/beijing-collector-control 仍固定在bootstrap ecbbdfe，仅作只读恢复，不作为最新发布工作区。
+
+手机在新加坡新任务中可给出：
+
+> 先读取 /home/compassdev/BEIJING-CONTROL-STATUS.md，再进入 /home/compassdev/Documents/Codex/2026-08-26/instant-ai-finance，读取当前STATUS与ADR-0046。以compassdev执行python3 -B deploy/beijing/ssh-control/client.py inspect和status，只读核对北京，暂不重复publish。不要重建密钥，不要读取.env或业务资料。当前有一次发布未完成，先根据错误证据处理。
+
+今后具体功能修改仍限services/beijing-blogger-collector并先测试。正常发布须完整SHA匹配干净HEAD和origin/main；失败回执只用verify查询，不自动重复触发。模型下载器继续pending_verified_import。
+
 状态：**北京受限SSH已安装，新加坡跨区只读与权限边界已实测通过**。
 标记：`BEIJING_SSH_READONLY_LIVE_VERIFIED`。这不是已完成业务发布或手机关机电脑验收的凭证。
 架构见 ADR-0046。下述16:58节为只读启用历史；所有者随后明确授权完成main整合、独立验证并直接发布北京博主采集器。当前任务不修改timer、服务器发布器、新加坡即时AI生产或模型下载器；完成情况以最新状态/真实回执为准。

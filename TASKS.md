@@ -4,8 +4,10 @@
 
 | ID | 状态 | 任务 | 验收证据 |
 |---|---|---|---|
-| P2-BEIJING-SSH-RELEASE | IN_PROGRESS | 把受限通道整合main，从新加坡独立运行并执行一次获准北京发布 | 2026-09-10所有者明确授权直接发布；先修复根级契约误入组件发布包的问题，保留7项检查且新增组件隔离回归。须核对完整SHA/真实receipt；手机关机电脑的实机验收不能以终端进程冒充 |
-| P2-BEIJING-SSH-01 | IN_PROGRESS | 按 ADR-0046 建立手机经新加坡 Codex 的北京受限 SSH 维护入口 | 现场bootstrap/inspect/status/越权验收已完成，见子任务SSH-BOOTSTRAP。Git网络本轮恢复并取得固定ecbbdfe，未增代理；后续波动仍失败停止。原开发main20c70e0未改，控制分支整合及电脑关闭后的手机新任务验收待做；真实publish/回滚未执行。新加坡恢复记录 /home/compassdev/BEIJING-CONTROL-STATUS.md 已更新为当前已接通状态 |
+| P2-BEIJING-SSH-RELEASE | BLOCKED | 执行一次已授权的北京发布并核实真实回执 | main及beijing-production均已推进ff4f42e；仅触发一次，北京发布服务failed/exit-code，accepted/deployed/current/live仍7da4421，collector与模型下载器原PID均active，timer disabled/inactive。尚无成功回执；具体原因未查明，可信北京管理页面登录失效，等待本人恢复登录以读取窄范围发布错误，不盲目重触发 |
+| P2-BEIJING-SSH-MAIN | DONE | 从新加坡整合并推送受限控制主线 | 新加坡compassdev从干净20c70e0快进到ff4f42e并使用服务器既有Git身份推送main，未借Windows代理/agent。30项根级契约、Git archive组件包220项无外网隔离测试通过；7项根级测试已移出组件包，新增独立包回归且203项下限未降低 |
+| P2-BEIJING-SSH-NEW-TASK | DONE | 在新加坡新建真实Codex CLI任务进行只读验收 | 新加坡compassdev的新CLI任务实际运行id/pwd/Git根与HEAD/inspect/status，返回SG_CODEX_NEW_TASK_READONLY_OK，HEAD ff4f42e；不需要Windows传输北京命令。物理手机发起和电脑关机验收仍未完成，不能混称 |
+| P2-BEIJING-SSH-01 | IN_PROGRESS | 按 ADR-0046 建立手机经新加坡 Codex 的北京受限 SSH 维护入口 | bootstrap、main整合、新加坡真实Codex新任务已完成，见子任务。首次发布已触发但服务失败且旧版本继续健康，具体诊断需恢复北京可信管理登录；不重触发、不重建密钥。物理手机/电脑关机验收及回滚演练未完成，模型下载器仍未核验导入 |
 | P2-BEIJING-SSH-BOOTSTRAP | DONE | 固定提交首次安装并从新加坡现场验证受限SSH | ecbbdfe在两端干净校验；北京预检/安装输出BEIJING_READONLY_CLOUD_CONTROL_READY user=beijingcodex，安装后只读预检再次通过。uid990/gid989仅自身组，sudo只有两个无参数固定包装器。新加坡真实inspect/status成功；空shell/任意命令/附加参数/sudo/SFTP拒绝64，PTY/转发拒绝255；SFTP初始化无协议响应，非白名单sudo拒绝1。生产accepted/deployed/current/live均7da4421，collector active，publisher inactive，timer disabled/inactive；没有发布或业务重启 |
 | P2-BEIJING-SUITE-01 | IN_PROGRESS | 把北京模型下载器、博主采集器与只读桥收口为一个 Git 管理套件，并建立新加坡云端 Codex 最小权限控制通道 | ADR-0045 过渡中央清单与固定包装器保留；现场 SWAS 身份核实后，维护通道改走 ADR-0046，不再把 RAM 绑定当当前必要步骤。原模型下载器真实源码/运行单元尚未盘点导入；两端系统和原 HTTPS 资料传输独立不变，统一 timer 保持关闭，生产未变化 |
 | P2-MODEL-16 | IN_PROGRESS | 模型先生新作品 24 小时内每 15 分钟、之后每 60 分钟抓评，并完整同步作者点赞变化 | ADR-0044；已完成桥接与新加坡两段：评论可见字段全部进入 revision 指纹，只有作者点赞/取消点赞变化也会产生新修订；最近48小时一次性重建当前快照、较旧且可证未变的旧指纹原地迁移，显式 `author_liked=false` 可覆盖历史 `true`。北京 220 项、即时 AI 190 项完整回归通过。未完成项是原模型下载器抓评调度；其真实源码/服务单元不在当前仓库，且现有北京 Git 发布器明确不覆盖它，必须先经受控维护端核实接入，不能改普通博主调度或误报上线 |

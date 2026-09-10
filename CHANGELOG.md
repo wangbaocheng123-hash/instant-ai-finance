@@ -1,5 +1,14 @@
 # 变更记录
 
+## 2026-09-10 — main与新加坡Codex新任务通过；首次北京发布未完成
+
+- 真实新加坡开发目录从20c70e0快进并由compassdev推送main至ff4f42eace3f77470395d184ed1c4d33271973be。禁用单次命令的HTTP代理环境与SSH_AUTH_SOCK后Git推送仍成功；专用北京SSH客户端继续禁用代理/agent/转发并严格核对主机公钥。
+- 新加坡30项控制/根级部署契约通过；Git archive组件包在独立网络命名空间以低权限compassdev执行220项完整测试通过。首次系统Python缺PIL/websocket；系统缺ensurepip，因此复用现有pip的--python为Git外专用venv安装requirements依赖后复测通过，未安装系统包或Chromium。新增测试文件独立运行，不需要放宽生产发布器打包范围或降低203项下限。
+- 新建真实新加坡Codex CLI任务执行7条限定只读命令并返回SG_CODEX_NEW_TASK_READONLY_OK。初始模型清单刷新出现timeout，随后任务正常执行完成；不是手机发起/电脑关机实机测试，未声称后者完成。
+- 按用户新授权，从新加坡客户端仅运行一次publish ff4f42e；GitHub的beijing-production已推进该SHA，但北京发布服务退出错误。17:32核对accepted/deployed/current/live仍为7da442128f8aef619c593766a4b62736fb19a4de，failed_revision为空，collector/model-downloader原PID均active，timer disabled/inactive。未出现成功发布回执，没有再次触发、强推/回退分支或更改服务器发布器。
+- 浏览器连接重置后旧终端标签消失，北京管理控制台登录过期。使用既有新加坡SSH身份恢复控制（私钥未读取/导出/新增）；现有北京本机SSH尝试被关闭。受限账号不能任意读发布日志，具体失败原因尚未核实，不把它猜成网络问题。本人北京登录恢复后才继续窄范围诊断。
+- 未修改DNS/Caddy/安全组/采集开关/任何timer、原模型下载器源码或新加坡即时AI/时变罗盘生产。未手工读取或改写真实媒体、评论、持仓、基金或交易资料。原记忆检查的旧GRANDPAAMU_0_21_1_LIVE缺失仍如实保留为基线问题。
+
 ## 2026-09-10 — 受限通道主线整合与首次发布预检
 
 - 所有者追加批准完成主线整合、独立验证和北京博主采集器正式发布，不扩展到新加坡即时AI、时变罗盘、原模型下载器或任何timer。

@@ -1,6 +1,10 @@
 # 项目状态
 
 - 最后更新：2026-09-10
+- 最新结果（17:32北京时间）：`BEIJING_MAIN_AND_SG_CODEX_VERIFIED_RELEASE_BLOCKED`。受限控制代码及发布包测试兼容修复已由新加坡compassdev快进并推送main至 `ff4f42eace3f77470395d184ed1c4d33271973be`。在服务器新建的真实Codex CLI任务返回 `SG_CODEX_NEW_TASK_READONLY_OK`；这不是手机实机/电脑关机测试。
+- 本轮真实发布已经从新加坡只触发一次：远端beijing-production也已为ff4f42e，但北京发布服务为failed/result exit-code；accepted/deployed/current/live仍为 `7da442128f8aef619c593766a4b62736fb19a4de`，failed_revision为空，collector active且PID958413未变、模型下载器active且PID959090未变，timer disabled/inactive。没有BEIJING_SSH_PUBLISH_VERIFIED，不得宣称上线或再次盲目触发。具体错误原因尚未读取到，不能直接归因网络。
+- 验证：新加坡30项根级控制契约通过；按真实Git archive只解包组件、以compassdev在无外网网络命名空间运行220项完整测试通过。专用测试venv位于Git外 /home/compassdev/beijing-release-validation-venv，仅安装已有requirements四类Python依赖，没有安装Chromium/系统包。默认系统Python缺PIL/websocket的首次测试失败已在该隔离venv复测解决。原项目记忆检查仍因旧GRANDPAAMU_0_21_1_LIVE标记缺失报错，未伪造绿灯。
+- 当前阻塞优先于下方历史：浏览器会话重置后两台旧Workbench标签消失，北京可信控制台已退回本人登录页；旧终端地址未恢复。本机原有新加坡SSH身份正常（未读取/导出/重建），所以新加坡Git和Codex验证已继续完成；本机原北京SSH连接被关闭。北京受限账号按设计只读固定状态，不能读取任意发布日志；需本人恢复北京可信管理登录以诊断一次性发布服务失败，不扩大账号权限。
 - 本轮授权更新：所有者明确要求将剩余主线整合和独立验证继续完成，并直接发布北京博主采集器，无需再次确认。仅覆盖北京单组件发布；不发布新加坡即时AI或时变罗盘，不改模型下载器、基础设施或timer。下列16:58只读检查点属于发布前事实，不再作为“未获发布授权”的依据。
 - 发布前审查发现采集器子目录测试错误依赖仓库根deploy文件，现将7项根级契约移至deploy/beijing/tests并增加子目录独立测试；全部检查保留，未修改服务器发布器或203项验收下限。当前main整合/本轮发布仍待真实结果。
 - 最新检查点：`BEIJING_SSH_READONLY_LIVE_VERIFIED`。ADR-0046 北京受限 SSH 已从固定 `ecbbdfe129c539a3b1ec5361499e7c2d5ebc08a5` 完成预检、安装和新加坡真实 compassdev 跨区验收；不仅是端口连通。安装器输出 `BEIJING_READONLY_CLOUD_CONTROL_READY user=beijingcodex`，只新增专用账号和七个控制文件，校验后仅 reload SSH，未触发业务发布。
@@ -128,7 +132,7 @@
 
 ## 当前阻塞
 
-- 北京受限SSH安装、跨区只读和越权拒绝已验收，无当前授权阻塞。剩余是电脑关闭后的手机新任务验收，以及经审查的控制分支整合进实际开发main；原main仍20c70e0，不能从当前detached控制目录直接发布其他目录提交。真实publish/回滚未执行，GitHub跨区网络仍可能波动，失败必须停止而不是未经授权加代理或反复触发。
+- 北京受限SSH安装、跨区只读、越权拒绝、main整合和新加坡真实Codex CLI新任务均已验收。当前硬阻塞是首次发布服务failed/exit-code且可信北京管理登录失效，未拿到具体错误详情。生产目标ff4f42e、实际运行7da4421；不再等待重复安装或main合并。电脑关机手机实机验证和真实回滚演练尚未完成。
 - 原模型下载器源码核验是后续业务实现的硬前提。当前仓库只有只读桥和早期示例，不能据此伪造 15/60 分钟评论调度，也不能把普通博主采集器的 225 项通过误报为模型下载器调度已完成。
 - 0.21.3 代码、正式发布与公网协议验收无已知功能阻塞。旧评论关系修复依赖新加坡仍保留对应作品的当前已验证评论包；缺少或版本不匹配的记录会安全跳过并在下次启动重试，不根据昵称或正文猜测关系。真实评论受主人登录保护，截图对应三组互动仍待主人手机刷新抽查。
 - 0.21.2 韩国采源、真实发布方、正式发布与公网版本验收无功能阻塞。Google/Bing News 索引限流或结构变化只会让对应单源显式异常；不会用内部频道名填充来源，KB 官方页、Stockplus 快讯索引及其他来源继续独立采集。
@@ -171,4 +175,4 @@
 
 ## 下一项唯一建议任务
 
-`手机独立验收已接通的北京受限SSH`：在手机连接新加坡Codex的新任务中，先读 /home/compassdev/BEIJING-CONTROL-STATUS.md，再以compassdev执行其中两条绝对路径inspect/status，只读且不发布。现有密钥、主机固定、北京账号/七文件已完成，禁止重建。控制分支整合main及首次正式发布是后续步骤，不混入本次只读验收；模型下载器仍pending_verified_import。
+`恢复北京可信管理登录并诊断首次发布失败`：只读取blogger-collector-git-deploy.service的本次脱敏错误与固定Git元数据，查明为什么生产目标ff4f42e尚未被接受；不要盲目重复触发。当前main/新加坡Codex通道已完成，禁止重建密钥、改timer或导入模型下载器。已停止本轮只读回执等待客户端，没有停止任何业务服务；用户正式发布授权仍保留，但根因修复若涉及新的基础设施权限须另行确认。
