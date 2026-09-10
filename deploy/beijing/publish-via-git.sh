@@ -38,7 +38,8 @@ cd "${REPOSITORY_ROOT}"
 origin_url="$(git remote get-url origin)"
 [[ "${origin_url}" == *"${EXPECTED_REPOSITORY}" ]] || fail "origin 不是统一公共仓库"
 
-git fetch --no-tags origin main
+git fetch --no-tags origin \
+  "+refs/heads/main:refs/remotes/origin/main"
 git cat-file -e "${target}^{commit}" 2>/dev/null || fail "目标提交不存在"
 remote_main="$(git rev-parse refs/remotes/origin/main^{commit})"
 [[ "$(git rev-parse HEAD^{commit})" == "${remote_main}" ]] || fail "本地 main 与 origin/main 不一致"
@@ -46,7 +47,8 @@ git merge-base --is-ancestor "${target}" "${remote_main}" || fail "目标提交�
 
 current_production=""
 if git ls-remote --exit-code --heads origin beijing-production >/dev/null 2>&1; then
-  git fetch --no-tags origin beijing-production
+  git fetch --no-tags origin \
+    "+refs/heads/beijing-production:refs/remotes/origin/beijing-production"
   current_production="$(git rev-parse refs/remotes/origin/beijing-production^{commit})"
   git merge-base --is-ancestor "${current_production}" "${target}" || fail "生产分支不能安全快进到目标提交"
 fi

@@ -34,7 +34,9 @@ cd "${REPOSITORY_ROOT}"
 origin_url="$(git remote get-url origin)"
 [[ "${origin_url}" == *"${EXPECTED_REPOSITORY}" ]] || fail "origin 不是统一公共仓库"
 
-git fetch --no-tags origin main beijing-production
+git fetch --no-tags origin \
+  "+refs/heads/main:refs/remotes/origin/main" \
+  "+refs/heads/beijing-production:refs/remotes/origin/beijing-production"
 local_main="$(git rev-parse HEAD^{commit})"
 remote_main="$(git rev-parse refs/remotes/origin/main^{commit})"
 [[ "${local_main}" == "${remote_main}" ]] || fail "main 与 origin/main 不一致"

@@ -2,6 +2,15 @@
 
 本文件只记录已经发生的项目变更。研究结论和架构理由分别写入 `research/` 与 `docs/decisions/`。
 
+## 2026-09-10 — 北京采集套件与 RAM 控制通道过渡底座（开发检查点，未发布）
+
+- 新增 ADR-0045 和迁移手册，确定北京模型下载器、博主采集器与只读桥最终共用当前公共仓库、唯一 `beijing-production` 和一个代码发布入口，同时永久保留两项服务、进程、配置、数据库、媒体目录及回滚隔离；不得合成一个进程或共用数据库。
+- 新增 `deploy/beijing/collection-suite.json` 作为中央清单。当前只把博主采集器标为 `managed`，原模型下载器明确为 `pending_verified_import`；真实源码和运行单元未盘点导入前，统一 90 秒代码发布 timer 保持关闭，既有北京生产规则不变。
+- 新增最小权限 RAM 策略模板：`RunCommand` 只允许精确北京实例且 `ecs:CommandRunAs=beijingcodex`，查询只覆盖云助手状态/执行结果，不含 AccessKey、ECS 启停/删除、网络、安全组、磁盘或 RAM 管理权限。北京安装器只创建锁定密码的低权限用户，并只授予只读盘点和既有一次性发布触发两个 root 固定包装器；云端客户端只接受 `inspect` 或 `publish`，并以 `DescribeInvocationResults` 核对实际退出状态。
+- 修复根级 `check-publish-channel.sh` 与 `publish-via-git.sh` 的显式 fetch refspec。即使本地 clone 的默认 fetch 只跟踪 `main`，脚本也会可靠创建 `origin/main` 和 `origin/beijing-production`，不再在随后 `rev-parse` 时失败。
+- 当前新加坡主机从阿里云官方 GitHub release 安装 Alibaba Cloud CLI 3.4.11 到用户级目录；下载包 SHA-256 与官方 release digest `a7e3df497db14c10d4d7587795e9fa7849b0c51dfce02908b9de5a41fe717d5c` 一致，CLI 只保存 `EcsRamRole/cn-beijing` 模式配置，不保存 AccessKey。IMDS 当前仍为无角色状态，所以未向北京发送命令。
+- 北京采集器 227 项完整测试、即时 AI 190 项完整测试、16 项部署契约、相关 shell 语法和 `git diff --check` 通过；ShellCheck 在当前主机不可用。测试未访问真实抖音、生产数据库或媒体，未推进生产分支、重启服务、调用豆包/AI 或正式发布。
+
 ## 2026-09-09 — 模型先生作者点赞修订链路加固（开发检查点，未发布）
 
 - 新增 ADR-0044，固定模型先生评论刷新目标：按实际发布时间，未满 24 小时每 15 分钟，满 24 小时后每 60 分钟；失败不推进成功游标、单作品不并发，作者点赞保留 `true / false / null` 三态。

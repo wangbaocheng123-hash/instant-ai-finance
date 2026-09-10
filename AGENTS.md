@@ -60,6 +60,7 @@
 - 博主智能体的新加坡部分是即时 AI 内的单主人模块，代码、页面、API 和发布均进入现有 `instant-ai-finance` 仓库，不建立或连接第二个新加坡应用仓库；运行数据继续使用隔离的 `/var/lib/instant-ai/blogger-agent`，不得混入财经新闻库或模型先生资料域。北京模型下载器保持原样，另行并存部署博主采集服务；见 ADR-0024、ADR-0025、ADR-0026。
 - 北京采集器可公开源码固定在 `services/beijing-blogger-collector/`；`main` 只保存开发与测试检查点，普通推送不自动上线。`beijing-production` 是北京采集器唯一正式发布分支。用户说“更新并发布北京博主采集器：<具体需求>”时，这一句同时授权 Codex 在同一任务内完成同步、修改、测试、敏感文件检查、提交并推送 `main`、运行 `deploy/beijing/publish-via-git.sh <完整提交SHA>` 安全快进、通过电脑版 Alibaba Cloud Client 的“发送远程命令”执行一次 `systemctl start --no-block blogger-collector-git-deploy.service`，以及等待公网精确版本验收；用户不需要自己打开客户端或服务器终端。用户只要求修改或提交 Git、没有发布含义时，停在 `main`，不推进正式分支。
 - 北京服务器不得定时轮询 Git；`blogger-collector-git-deploy.timer` 必须保持 `disabled` 和 `inactive`。上述 Codex Git 直连更新只覆盖 `blogger-collector` 应用源码，远程命令只启动已经固定在服务器上的一次性 root 发布服务，不直接编辑生产代码。北京统一入口的 30 天登录和“指定一条视频”是本通道建立前已有的独立能力；后续图标或 Git 更新任务不得把它们当作新功能重复实施，也不得因此修改模型下载器、Caddy、域名、安全组、业务数据或凭据。root 发布器或一次性 service 本身的基础设施变更仍须通过电脑版 Alibaba Cloud Client 受控维护。见 ADR-0037。
+- 所有者已批准按 ADR-0045 把北京模型下载器、博主采集器与只读桥最终收口为同一公共仓库、同一 `beijing-production` 和一个代码发布入口，但两项服务、进程、配置、数据库、媒体目录与回滚必须永久隔离。当前仍处于过渡期：原模型下载器真实源码/运行单元尚未受控导入，中央清单必须标记 `pending_verified_import`，统一 90 秒代码发布 timer 必须关闭；在完成源码核验、双组件隔离测试和两次生产验收前，上述 ADR-0037 单组件规则继续生效，不得声称已合并或用示例代码代替生产源码。
 - 运行验证按 `docs/FOUNDATION_DIRECTIVE_R0.md` 的优先级执行；遇到大型依赖时先做静态分析并记录预计成本，等待批准。
 
 ## 每次任务的强制收尾

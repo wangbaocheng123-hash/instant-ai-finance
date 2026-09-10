@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "suite_id": "beijing-collection-suite",
+  "repository": "wangbaocheng123-hash/instant-ai-finance",
+  "production_branch": "beijing-production",
+  "deployment": {
+    "mode": "transition",
+    "poll_seconds_target": 90,
+    "timer_enabled": false,
+    "reason": "model-downloader source and runtime unit are not yet imported and verified"
+  },
+  "components": [
+    {
+      "component_id": "blogger-collector",
+      "source_path": "services/beijing-blogger-collector",
+      "service_unit": "blogger-collector.service",
+      "source_state": "managed",
+      "data_roots": [
+        "/var/lib/blogger-agent"
+      ]
+    },
+    {
+      "component_id": "model-downloader",
+      "source_path": "services/beijing-model-downloader",
+      "service_unit": "model-downloader.service",
+      "source_state": "pending_verified_import",
+      "data_roots": [
+        "/var/lib/model-downloader",
+        "/srv/model-downloader/videos"
+      ]
+    }
+  ],
+  "integration": {
+    "bridge_owner": "blogger-collector",
+    "bridge_mode": "readonly",
+    "shared_process": false,
+    "shared_database": false
+  }
+}

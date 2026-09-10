@@ -1,0 +1,40 @@
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecs:RunCommand"
+      ],
+      "Resource": [
+        "acs:ecs:cn-beijing:<ACCOUNT_ID>:instance/<BEIJING_INSTANCE_ID>"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "ecs:CommandRunAs": [
+            "beijingcodex"
+          ]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecs:DescribeCloudAssistantStatus"
+      ],
+      "Resource": [
+        "acs:ecs:cn-beijing:<ACCOUNT_ID>:instance/<BEIJING_INSTANCE_ID>"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecs:DescribeInvocationResults"
+      ],
+      "Resource": [
+        "acs:ecs:cn-beijing:<ACCOUNT_ID>:instance/<BEIJING_INSTANCE_ID>",
+        "acs:ecs:cn-beijing:<ACCOUNT_ID>:command/*"
+      ]
+    }
+  ]
+}

@@ -1,5 +1,12 @@
 # 北京博主采集器 Codex Git 直连更新
 
+> 2026-09-10 过渡说明：所有者已批准 ADR-0045 的“北京采集套件”目标。原模型下载器
+> 真实源码尚未导入、RAM 通道也尚未完成一次性启用，所以当前生产仍严格执行本文的
+> 单组件发布规则和 `timer disabled/inactive`。阶段 A 验收后，固定的
+> `deploy/beijing/run-cloud-control.sh publish <北京实例ID>` 可以替代电脑版客户端发送
+> 同一条受限触发命令；它不能编辑服务器或扩大本发布器范围。只有双组件迁移和两次连续
+> 发布验收全部完成后，本文才会由统一套件发布手册替代。
+
 北京采集器的可公开源码固定在 `services/beijing-blogger-collector/`。`main` 保存已经测试的开发检查点；`beijing-production` 只保存用户明确批准正式发布的提交。普通 `main` 推送不会进入北京生产环境。
 
 北京服务器不再定时轮询 Git。只有 Codex 收到固定发布口令并安全推进 `beijing-production` 后，才通过电脑版 Alibaba Cloud Client 的“发送远程命令”启动一次 `blogger-collector-git-deploy.service`。固定 root 发布器比较采集器子树的 Git tree：其他目录变化不会构建、重启或改变采集器。采集器子树变化时，发布器验证普通文件与安全路径，将源码提取到新 release，以无生产凭据的 `bloggerbuild` 用户在断网沙箱中运行完整测试，然后原子切换 `/opt/blogger-agent/current` 并做回环健康检查。失败提交会被记录，同一提交不会反复重启；健康检查失败会恢复上一个正常 release。
@@ -19,7 +26,7 @@
 1. 在干净的 `main` 上同步 `origin/main`，修改 `services/beijing-blogger-collector/` 并运行完整测试和敏感文件检查。
 2. 提交并推送 `main`。
 3. 只有用户明确说“更新并发布北京博主采集器”或“正式发布北京采集器”后，运行 `deploy/beijing/publish-via-git.sh <40位提交SHA>`；脚本安全快进生产分支并等待公网精确版本。
-4. 脚本开始等待后，Codex 使用电脑版 Alibaba Cloud Client 的“发送远程命令”，只发送 `systemctl start --no-block blogger-collector-git-deploy.service`，触发这次发布。不得启用 timer，也不得在服务器上直接编辑应用代码。
+4. 脚本开始等待后，过渡期 Codex 使用电脑版 Alibaba Cloud Client 的“发送远程命令”，只发送 `systemctl start --no-block blogger-collector-git-deploy.service`；ADR-0045 阶段 A 验收后可改用固定 `run-cloud-control.sh publish` 包装器触发完全相同的一次性 service。不得启用 timer，也不得在服务器上直接编辑应用代码。
 5. 等待 `/health/version` 确认目标提交；确认窗口为 15 分钟，没有确认时必须报告失败。随后用 `deploy/beijing/check-publish-channel.sh` 做只读复查。
 
 回滚通过在 `main` 新建 revert 提交、完成测试并继续安全快进到 `beijing-production`。禁止强推、回退分支或改写历史。
