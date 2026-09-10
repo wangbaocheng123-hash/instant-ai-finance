@@ -1,6 +1,7 @@
 # 项目状态
 
-- 最后更新：2026-09-10 18:43（北京时间）
+- 最后更新：2026-09-10 22:03（北京时间）
+- 最新开发结果：`MODEL_DOWNLOADER_24X7_3M_READY_NOT_RELEASED`。ADR-0048 已把模型先生新视频检查改为全天 24 小时持续运行、每轮完成后固定等待 3 分钟；删除工作日/周末时段限制，并使北京现存的旧 `MODEL_DOWNLOADER_INTERVAL_MINUTES=5` 不再覆盖业务策略。模型下载器候选版本为 `0.9.1+git.always-on`，新增工作日凌晨、周末凌晨和固定间隔回归；评论仍按发布后未满24小时每15分钟、达到24小时后每60分钟。本轮仅进入 `main`，没有推进 `beijing-production` 或重启北京服务；北京生产仍为 `254d3d1a8c5654cc79d224f105ff63251ec6f87f` / `0.9.0+git.unified` 的原时段与5分钟策略，须主人另行明确正式发布后才生效。
 - 最新结果：`SINGAPORE_TO_BEIJING_FULL_RELEASE_VERIFIED`。新加坡云端已安装 `~/bin/beijing-admin`，真实登录北京 `singaporecodex` 后 `sudo -n id -u` 返回 0；可管理北京全部文件、服务和程序，不再受三命令白名单限制。旧 `beijingcodex` 入口只作为兼容回退。
 - 北京原模型下载器真实源码、三份 systemd 单元和依赖已排除凭据/数据库/媒体后导入 `services/beijing-model-downloader/`；中央清单已改为 `managed`，统一发布入口为 `/usr/local/sbin/beijing-suite-publish`。北京生产已发布并独立核验提交 `254d3d1a8c5654cc79d224f105ff63251ec6f87f`，模型下载器版本 `0.9.0+git.unified`，model/model-web/blogger 三服务均 active，发布 timer 仍 inactive/disabled。
 - ADR-0044 的抓评调度已在真实模型下载器实现：实际发布时间未满24小时每15分钟，达到24小时后每60分钟；按上次成功保存时间推进，失败不推进，Chromium仍由单进程串行。新加坡4项边界测试、31项控制测试、北京采集器220项完整回归和北京发布时4项隔离测试全部通过。

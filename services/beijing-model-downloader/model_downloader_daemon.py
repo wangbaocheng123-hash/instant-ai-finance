@@ -7,7 +7,7 @@ import os
 import re
 import signal
 import threading
-from datetime import datetime, time as dt_time, timedelta
+from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -26,11 +26,7 @@ from profile_monitor import ProfileScanError, ProfileScanner, ProfileVideo
 
 APP_NAME = "模型下载器云端版"
 TIMEZONE = ZoneInfo("Asia/Shanghai")
-MONITOR_WINDOWS = (
-    (dt_time(5, 30), dt_time(9, 0)),
-    (dt_time(15, 0), dt_time(22, 0)),
-)
-WEEKEND_WINDOW = (dt_time(5, 0), dt_time(23, 0))
+VIDEO_CHECK_INTERVAL_MINUTES = 3
 DEFAULT_PROFILE_URL = (
     "https://www.douyin.com/user/"
     "MS4wLjABAAAAK713M9d8PGNb_WiMYf7yKhOI5y60H4uELJK2guDjJT0"
@@ -61,9 +57,7 @@ CREATOR_UID = os.environ.get(
     "MODEL_DOWNLOADER_CREATOR_UID",
     _PROFILE_UID_MATCH.group(1) if _PROFILE_UID_MATCH else "",
 )
-INTERVAL_MINUTES = max(
-    3, int(os.environ.get("MODEL_DOWNLOADER_INTERVAL_MINUTES", "5"))
-)
+INTERVAL_MINUTES = VIDEO_CHECK_INTERVAL_MINUTES
 COMMENTS_ENABLED = os.environ.get(
     "MODEL_DOWNLOADER_COMMENTS_ENABLED",
     "1",
@@ -115,34 +109,8 @@ def comment_refresh_interval_minutes(
     return COMMENT_MATURE_REFRESH_MINUTES
 
 
-def is_monitoring_time(moment: datetime) -> bool:
-    if moment.weekday() >= 5:
-        current = moment.time().replace(tzinfo=None)
-        return WEEKEND_WINDOW[0] <= current < WEEKEND_WINDOW[1]
-    current = moment.time().replace(tzinfo=None)
-    return any(start <= current < end for start, end in MONITOR_WINDOWS)
-
-
-def next_monitor_window_start(moment: datetime) -> datetime:
-    for day_offset in range(8):
-        day = moment.date() + timedelta(days=day_offset)
-        starts = (
-            (WEEKEND_WINDOW[0],)
-            if day.weekday() >= 5
-            else tuple(start for start, _end in MONITOR_WINDOWS)
-        )
-        for start in starts:
-            candidate = datetime.combine(day, start, tzinfo=TIMEZONE)
-            if candidate > moment:
-                return candidate
-    raise RuntimeError("无法计算下一次监控时间。")
-
-
 def next_scheduled_check(moment: datetime) -> datetime:
-    candidate = moment + timedelta(minutes=INTERVAL_MINUTES)
-    if is_monitoring_time(candidate):
-        return candidate
-    return next_monitor_window_start(moment)
+    return moment + timedelta(minutes=INTERVAL_MINUTES)
 
 
 def load_state() -> set[str]:
@@ -579,9 +547,8 @@ class CloudMonitor:
 
     def run(self, once: bool = False) -> int:
         self.log(
-            "%s 已启动；工作日刷新时段 05:30–09:00、15:00–22:00，"
-            "周末刷新时段 05:00–23:00；"
-            "作品间隔 %d 分钟；评论刷新按发布时间分级："
+            "%s 已启动；全天 24 小时持续检查新视频；"
+            "作品检查间隔 %d 分钟；评论刷新按发布时间分级："
             "前 %d 小时每 %d 分钟，之后每 %d 分钟。",
             APP_NAME,
             INTERVAL_MINUTES,
@@ -598,25 +565,6 @@ class CloudMonitor:
                 return 1
 
         while not self.stop_event.is_set():
-            current = now_china()
-            if not is_monitoring_time(current):
-                next_start = next_monitor_window_start(current)
-                try:
-                    self.refresh_tracked_comments()
-                    self.process_repair_requests()
-                except DownloadCancelled:
-                    if self.stop_event.is_set():
-                        break
-                except Exception:
-                    self.logger.exception(
-                        "评论更新或音视频修复失败，稍后自动重试。"
-                    )
-                sleep_seconds = min(
-                    INTERVAL_MINUTES * 60,
-                    max(1.0, (next_start - now_china()).total_seconds()),
-                )
-                self.stop_event.wait(sleep_seconds)
-                continue
             try:
                 self.check_once()
             except DownloadCancelled:
@@ -644,7 +592,7 @@ def main() -> int:
     parser.add_argument(
         "--once",
         action="store_true",
-        help="立即检查一次后退出，不受刷新时段限制",
+        help="立即检查一次后退出",
     )
     args = parser.parse_args()
     logger = setup_logging()
