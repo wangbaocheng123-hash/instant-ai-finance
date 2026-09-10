@@ -1,2 +1,5 @@
 client/instant-ai/index.html text eol=lf
 product/instant_ai/static/index.html text eol=lf
+deploy/beijing/ssh-control/*.sh text eol=lf
+deploy/beijing/ssh-control/*.py text eol=lf
+deploy/beijing/tests/*.py text eol=lf
