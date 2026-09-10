@@ -4,10 +4,12 @@
 
 | ID | 状态 | 任务 | 验收证据 |
 |---|---|---|---|
-| P2-BEIJING-SSH-RELEASE | BLOCKED | 执行一次已授权的北京发布并核实真实回执 | main及beijing-production均已推进ff4f42e；仅触发一次，北京发布服务failed/exit-code，accepted/deployed/current/live仍7da4421，collector与模型下载器原PID均active，timer disabled/inactive。尚无成功回执；具体原因未查明，可信北京管理页面登录失效，等待本人恢复登录以读取窄范围发布错误，不盲目重触发 |
+| P2-BEIJING-SSH-RELEASE | DONE | 执行已授权的北京发布并核实真实回执 | 首次Git fetch低速超时经北京可信脱敏日志确认；同账户直连恢复后，由新加坡受限客户端受控重试一次d60f75f（与已测ff4f42e仅文档不同），北京220项隔离测试通过，BEIJING_SSH_PUBLISH_VERIFIED两次验证成功，accepted/deployed/current/live一致。collector active，模型下载器原PID959090未变，timer disabled/inactive。北京正式域名/回环精确版本均通过；新加坡HTTPS reset另列未验收，不修改网络 |
 | P2-BEIJING-SSH-MAIN | DONE | 从新加坡整合并推送受限控制主线 | 新加坡compassdev从干净20c70e0快进到ff4f42e并使用服务器既有Git身份推送main，未借Windows代理/agent。30项根级契约、Git archive组件包220项无外网隔离测试通过；7项根级测试已移出组件包，新增独立包回归且203项下限未降低 |
 | P2-BEIJING-SSH-NEW-TASK | DONE | 在新加坡新建真实Codex CLI任务进行只读验收 | 新加坡compassdev的新CLI任务实际运行id/pwd/Git根与HEAD/inspect/status，返回SG_CODEX_NEW_TASK_READONLY_OK，HEAD ff4f42e；不需要Windows传输北京命令。物理手机发起和电脑关机验收仍未完成，不能混称 |
-| P2-BEIJING-SSH-01 | IN_PROGRESS | 按 ADR-0046 建立手机经新加坡 Codex 的北京受限 SSH 维护入口 | bootstrap、main整合、新加坡真实Codex新任务已完成，见子任务。首次发布已触发但服务失败且旧版本继续健康，具体诊断需恢复北京可信管理登录；不重触发、不重建密钥。物理手机/电脑关机验收及回滚演练未完成，模型下载器仍未核验导入 |
+| P2-BEIJING-SSH-01 | IN_PROGRESS | 按 ADR-0046 建立手机经新加坡 Codex 的北京受限 SSH 维护入口 | bootstrap、main整合、新加坡真实Codex CLI新任务、真实SSH生产发布及精确回执均已完成。失败根因已确认是北京Git下载低速超时，恢复后受控重试成功；没有依靠本机传递北京发布命令。仅物理手机/电脑关机验收及另行授权回滚演练未完成，原模型下载器未核验导入 |
+| P2-BEIJING-SSH-PHONE | TODO | 本人用手机在电脑关闭后核对新加坡Codex控制 | 先读新加坡BEIJING-CONTROL-STATUS.md，再以compassdev在真实项目运行inspect/status，不修改、不发布、不重建密钥；不能用服务器CLI测试代替手机实机证明 |
+| P2-BEIJING-CROSSREGION-HTTPS | TODO | 单独核查新加坡访问北京HTTPS连接重置 | 新加坡DNS正确47.93.214.76，三次无代理只读TLS连接reset；北京正式域名与回环精确版本均成功，SSH控制发布正常。未证明原因或更改DNS/Caddy/网络，也未声称原媒体传输失败；不属于重建SSH授权的理由 |
 | P2-BEIJING-SSH-BOOTSTRAP | DONE | 固定提交首次安装并从新加坡现场验证受限SSH | ecbbdfe在两端干净校验；北京预检/安装输出BEIJING_READONLY_CLOUD_CONTROL_READY user=beijingcodex，安装后只读预检再次通过。uid990/gid989仅自身组，sudo只有两个无参数固定包装器。新加坡真实inspect/status成功；空shell/任意命令/附加参数/sudo/SFTP拒绝64，PTY/转发拒绝255；SFTP初始化无协议响应，非白名单sudo拒绝1。生产accepted/deployed/current/live均7da4421，collector active，publisher inactive，timer disabled/inactive；没有发布或业务重启 |
 | P2-BEIJING-SUITE-01 | IN_PROGRESS | 把北京模型下载器、博主采集器与只读桥收口为一个 Git 管理套件，并建立新加坡云端 Codex 最小权限控制通道 | ADR-0045 过渡中央清单与固定包装器保留；现场 SWAS 身份核实后，维护通道改走 ADR-0046，不再把 RAM 绑定当当前必要步骤。原模型下载器真实源码/运行单元尚未盘点导入；两端系统和原 HTTPS 资料传输独立不变，统一 timer 保持关闭，生产未变化 |
 | P2-MODEL-16 | IN_PROGRESS | 模型先生新作品 24 小时内每 15 分钟、之后每 60 分钟抓评，并完整同步作者点赞变化 | ADR-0044；已完成桥接与新加坡两段：评论可见字段全部进入 revision 指纹，只有作者点赞/取消点赞变化也会产生新修订；最近48小时一次性重建当前快照、较旧且可证未变的旧指纹原地迁移，显式 `author_liked=false` 可覆盖历史 `true`。北京 220 项、即时 AI 190 项完整回归通过。未完成项是原模型下载器抓评调度；其真实源码/服务单元不在当前仓库，且现有北京 Git 发布器明确不覆盖它，必须先经受控维护端核实接入，不能改普通博主调度或误报上线 |

@@ -1,6 +1,22 @@
 # 北京受限 SSH 控制：首次启用与手机使用
 
-## 2026-09-10 17:32 最新结果（优先于下方历史）
+## 2026-09-10 17:48 最新结果（优先于下方历史）
+
+- `BEIJING_SSH_PUBLISH_VERIFIED`：新加坡compassdev通过实际开发main中的客户端完成正式发布，并以独立verify再次核验。accepted/current/deployed/live均为 `d60f75fd98bc5f09aca6e1e70d6827a85db97c2e`，组件tree `d6568c7a3f9662dd8456c7ddaaf21378b3890dea`。北京真实220项隔离测试通过，publisher inactive/success、collector active，timer disabled/inactive。
+- 北京17:30第一次fetch因30秒低于1024 bytes/sec退出128；本人恢复可信管理登录后读取该次有限脱敏日志，同账户Git直连预检成功。d60f75f与ff4f42e仅五份结果文档不同，组件/控制代码相同；经现有发布器受控重试一次成功，未修改基础设施或永久Git网络配置。
+- 北京正式域名与回环均返回新SHA/1.0.8；新加坡直接HTTPS仍三次reset，DNS正确，独立网络原因未查明。不能声称新加坡HTTPS通过或媒体传输失败，也不要扩大受限SSH权限来处理它。原模型下载器PID959090与路径不变。
+- 真实开发入口已整合进main：`/home/compassdev/Documents/Codex/2026-08-26/instant-ai-finance`；bootstrap独立目录仍只作历史恢复。main后续结果文档提交不等于再次上线。
+- 手机本人发起且电脑关闭的验收尚未进行；服务器端新Codex CLI任务已通过，但不是实机替代。真实回滚演练未做，模型下载器仍pending_verified_import。
+
+手机新任务可直接发送：
+
+> 请先读取 /home/compassdev/BEIJING-CONTROL-STATUS.md，再进入 /home/compassdev/Documents/Codex/2026-08-26/instant-ai-finance，阅读AGENTS、STATUS和ADR-0046。以compassdev执行python3 -B deploy/beijing/ssh-control/client.py inspect和status，仅核对北京运行版本及timer状态。不要修改、发布或重建密钥。
+
+日后修改并发布的单句口令：
+
+> 更新并发布北京博主采集器：〈具体需求〉。在新加坡真实开发项目按AGENTS及ADR-0046检查、修改services/beijing-blogger-collector、测试并推送main，再运行受限SSH客户端publish完整SHA并验证实际回执。保留既有数据和视频传输，不改模型下载器、新加坡即时AI、时变罗盘或timer。
+
+## 2026-09-10 17:32 历史结果（已由上方成功验收替代）
 
 - main整合已完成：ff4f42eace3f77470395d184ed1c4d33271973be，由新加坡compassdev推送。
 - 真正的新加坡Codex CLI新任务只读验收成功，标记SG_CODEX_NEW_TASK_READONLY_OK。手机本人发起/电脑关机实机部分未做，不以CLI结果冒充。
@@ -96,7 +112,7 @@ python3 /home/compassdev/beijing-collector-control/deploy/beijing/ssh-control/cl
 `inspect` 输出服务与 Git 元数据；`status` 输出版本/状态白名单，不读取日志、Cookie、
 环境变量配置或业务正文。新加坡专用密钥/主机公钥不存在或权限不安全时直接停止。
 
-控制源码仍在独立开发分支；正式使用发布客户端前须把经审查的控制代码整合到实际开发工作区的 main，并保持客户端所在 Git 根 HEAD 与 origin/main 一致。不能拿当前 detached 控制目录直接发布其他目录里的提交。
+控制源码已整合到真实开发main；正式使用发布客户端时须保持客户端所在Git根、干净HEAD与origin/main一致。不能拿旧detached bootstrap目录直接发布其他目录里的提交。
 
 收到主人**明确发布指令**、完成需求/测试/审查并提交到 main 后，才在该真实开发工作区运行：
 
@@ -134,7 +150,7 @@ python3 deploy/beijing/ssh-control/client.py verify <相同完整SHA>
 - 现有 Beijing→Singapore 签名 HTTPS 视频/评论传输不改；与 SSH 管理通道各自认证。
 - 现有 root Git 发布器、隔离构建、健康失败恢复和 Cloud CLI 不卸载不重装。
 - 目前只纳管博主采集器；原模型下载器真实源码还没有核实导入，不能直接承诺修改它。
-- 已完成专用密钥、可信主机固定、北京授权安装、新加坡真实SSH只读及越权拒绝检查；未做电脑关机手机验收、真实发布与回滚演练。控制分支尚未整合到 main。
+- 已完成专用密钥、可信主机固定、北京授权安装、新加坡真实SSH只读及越权拒绝检查、main整合、新Codex CLI任务和真实生产发布；未做电脑关机手机验收与回滚演练。新加坡到北京HTTPS reset另列待查，不影响已经完成的SSH回执验收。
 
 本地验证命令（只用合成数据）：
 

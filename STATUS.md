@@ -1,12 +1,16 @@
 # 项目状态
 
 - 最后更新：2026-09-10
-- 最新结果（17:32北京时间）：`BEIJING_MAIN_AND_SG_CODEX_VERIFIED_RELEASE_BLOCKED`。受限控制代码及发布包测试兼容修复已由新加坡compassdev快进并推送main至 `ff4f42eace3f77470395d184ed1c4d33271973be`。在服务器新建的真实Codex CLI任务返回 `SG_CODEX_NEW_TASK_READONLY_OK`；这不是手机实机/电脑关机测试。
+- 最新结果（17:48北京时间）：`BEIJING_SSH_PUBLISH_VERIFIED`。新加坡compassdev通过现有受限SSH客户端完成北京正式发布，accepted/deployed/current/live全部为 `d60f75fd98bc5f09aca6e1e70d6827a85db97c2e`，组件tree为 `d6568c7a3f9662dd8456c7ddaaf21378b3890dea`。北京220项隔离测试通过；publisher inactive/success、collector active/PID1089415，failed_revision为空；timer disabled/inactive。独立verify再次返回成功，模型下载器原PID959090保持active、路径未变。
+- 失败已查明并恢复：北京17:30首次fetch因30秒低于1024 bytes/sec退出128，未切换生产。本人恢复北京可信登录后读取有限脱敏日志、同账户ls-remote成功；核对d60f75f与ff4f42e仅结果文档不同后，从新加坡只受控重试一次，17:45完成验收。没有修改服务器发布器、代理、Git网络配置、DNS、Caddy、安全组或timer。
+- 公网核验分层记录：北京本机经正式HTTPS域名和回环18797均返回status ok / 1.0.8及精确d60f75f；新加坡到北京HTTPS三次只读请求被reset，DNS仍解析正确47.93.214.76，具体跨区HTTPS原因未查明；不能将北京自测冒充新加坡HTTP成功。该路径不被SSH发布客户端使用，真实SSH发布/回执已通过；未更改原签名HTTPS视频传输或采集开关。
+- main整合、真实新加坡Codex CLI新任务和首个SSH发布已完成；物理手机发起/Windows关机与回滚演练仍未做，原模型下载器仍pending_verified_import。下列17:32及更早阻塞均是历史，不应据此重建密钥或重复部署。本次结果文档提交不会再推进beijing-production。
+- 历史结果（17:32北京时间）：`BEIJING_MAIN_AND_SG_CODEX_VERIFIED_RELEASE_BLOCKED`。受限控制代码及发布包测试兼容修复已由新加坡compassdev快进并推送main至 `ff4f42eace3f77470395d184ed1c4d33271973be`。在服务器新建的真实Codex CLI任务返回 `SG_CODEX_NEW_TASK_READONLY_OK`；这不是手机实机/电脑关机测试。
 - 本轮真实发布已经从新加坡只触发一次：远端beijing-production也已为ff4f42e，但北京发布服务为failed/result exit-code；accepted/deployed/current/live仍为 `7da442128f8aef619c593766a4b62736fb19a4de`，failed_revision为空，collector active且PID958413未变、模型下载器active且PID959090未变，timer disabled/inactive。没有BEIJING_SSH_PUBLISH_VERIFIED，不得宣称上线或再次盲目触发。具体错误原因尚未读取到，不能直接归因网络。
-- 验证：新加坡30项根级控制契约通过；按真实Git archive只解包组件、以compassdev在无外网网络命名空间运行220项完整测试通过。专用测试venv位于Git外 /home/compassdev/beijing-release-validation-venv，仅安装已有requirements四类Python依赖，没有安装Chromium/系统包。默认系统Python缺PIL/websocket的首次测试失败已在该隔离venv复测解决。原项目记忆检查仍因旧GRANDPAAMU_0_21_1_LIVE标记缺失报错，未伪造绿灯。
-- 当前阻塞优先于下方历史：浏览器会话重置后两台旧Workbench标签消失，北京可信控制台已退回本人登录页；旧终端地址未恢复。本机原有新加坡SSH身份正常（未读取/导出/重建），所以新加坡Git和Codex验证已继续完成；本机原北京SSH连接被关闭。北京受限账号按设计只读固定状态，不能读取任意发布日志；需本人恢复北京可信管理登录以诊断一次性发布服务失败，不扩大账号权限。
+- 验证：新加坡30项根级控制契约通过；按真实Git archive只解包组件、以compassdev在无外网网络命名空间运行220项完整测试通过。专用测试venv位于Git外 /home/compassdev/beijing-release-validation-venv，仅安装已有requirements四类Python依赖，没有安装Chromium/系统包。默认系统Python缺PIL/websocket的首次测试失败已在该隔离venv复测解决。原项目记忆检查此前因旧GRANDPAAMU_0_21_1_LIVE标记缺失报错；17:51形式检查返回通过，但检查器仅做文本包含，历史问题说明本身包含该字符串，不能据此证明旧状态问题或业务验收已修复。检查器代码未改，实际结果以本轮测试和现场回执为准。
+- 历史17:32阻塞（已恢复）：浏览器会话重置后两台旧Workbench标签消失，北京可信控制台已退回本人登录页；旧终端地址未恢复。本机原有新加坡SSH身份正常（未读取/导出/重建），所以新加坡Git和Codex验证已继续完成；本机原北京SSH连接被关闭。北京受限账号按设计只读固定状态，不能读取任意发布日志；随后本人恢复北京可信管理登录并完成窄范围诊断，没有扩大账号权限。
 - 本轮授权更新：所有者明确要求将剩余主线整合和独立验证继续完成，并直接发布北京博主采集器，无需再次确认。仅覆盖北京单组件发布；不发布新加坡即时AI或时变罗盘，不改模型下载器、基础设施或timer。下列16:58只读检查点属于发布前事实，不再作为“未获发布授权”的依据。
-- 发布前审查发现采集器子目录测试错误依赖仓库根deploy文件，现将7项根级契约移至deploy/beijing/tests并增加子目录独立测试；全部检查保留，未修改服务器发布器或203项验收下限。当前main整合/本轮发布仍待真实结果。
+- 发布前审查发现采集器子目录测试错误依赖仓库根deploy文件，现将7项根级契约移至deploy/beijing/tests并增加子目录独立测试；全部检查保留，未修改服务器发布器或203项验收下限。main整合与本轮发布已通过，详见顶部最新结果。
 - 最新检查点：`BEIJING_SSH_READONLY_LIVE_VERIFIED`。ADR-0046 北京受限 SSH 已从固定 `ecbbdfe129c539a3b1ec5361499e7c2d5ebc08a5` 完成预检、安装和新加坡真实 compassdev 跨区验收；不仅是端口连通。安装器输出 `BEIJING_READONLY_CLOUD_CONTROL_READY user=beijingcodex`，只新增专用账号和七个控制文件，校验后仅 reload SSH，未触发业务发布。
 - 现场身份已纠正：两台都是 SWAS。北京实例 `e905b859a6c24c529ef5c2ea21658462` / `47.93.214.76`，北京 AccountId `1051070265710978`；新加坡实例 `c9e012a3ed944b588d696e71c0e24aea` / `47.236.175.118`。旧 `i-t4nikvwazxwfaghfb7ez` 不再作为已核实 ECS 实例调用。两端已认证 Workbench 的 `admin` 可免密 sudo；本轮未读取凭据，旧桌面输入故障不再是当前控制阻塞。
 - 新加坡继续使用原专用身份和可信 known_hosts，目录0700、私钥与主机固定文件0600，没有重建/读取/显示/导出私钥。两端独立控制源码均为干净固定ecbbdfe，新加坡22项Linux控制单测通过；北京安装后再次只读预检通过。此前Git超时后，本轮官方Git查询0.65秒返回200，固定fetch成功；仅单次HTTP/1.1/protocol v0参数，无DNS/VPN/代理/镜像改动。不能把一次恢复等同于永久修复跨区网络波动。
@@ -175,4 +179,4 @@
 
 ## 下一项唯一建议任务
 
-`恢复北京可信管理登录并诊断首次发布失败`：只读取blogger-collector-git-deploy.service的本次脱敏错误与固定Git元数据，查明为什么生产目标ff4f42e尚未被接受；不要盲目重复触发。当前main/新加坡Codex通道已完成，禁止重建密钥、改timer或导入模型下载器。已停止本轮只读回执等待客户端，没有停止任何业务服务；用户正式发布授权仍保留，但根因修复若涉及新的基础设施权限须另行确认。
+`手机独立只读验收`：电脑关闭后，由本人在已连接新加坡的Codex新任务先读 /home/compassdev/BEIJING-CONTROL-STATUS.md，再在真实开发项目运行inspect/status，确认d60f75f与disabled/inactive timer。服务器端主线、真实新Codex CLI任务和SSH正式发布已完成，不应重复发布或重建授权。跨区HTTPS reset作为独立网络待查项保留；任何网络/Caddy调整、模型下载器源码导入或真实回滚演练须另行明确授权。

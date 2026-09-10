@@ -1,5 +1,19 @@
 # 变更记录
 
+## 2026-09-10 — 新加坡受限SSH完成北京正式发布
+
+- 17:45新加坡客户端返回BEIJING_SSH_PUBLISH_VERIFIED，随后独立verify再次通过。accepted/deployed/current/live均为d60f75fd98bc5f09aca6e1e70d6827a85db97c2e，tree=d6568c7a3f9662dd8456c7ddaaf21378b3890dea；GitHub beijing-production与正式运行精确一致。
+- 北京固定发布器真实执行220项隔离测试通过、切换采集器release并完成健康检查，publisher inactive/success、failed_revision为空；collector新PID1089415 active，原模型下载器PID959090和运行路径不变，timer仍disabled/inactive。部署开始时间为2026-09-10T09:42:49Z；启动瞬间一次回环连接未就绪后由既有健康检查等待恢复，不是最终失败。
+- 北京本机访问正式HTTPS域名与回环18797均返回status ok、版本1.0.8、精确d60f75f。新加坡直接HTTPS三次出现连接reset，DNS正确；该独立跨区HTTP问题未查明，不将北京域名自测写成新加坡HTTP通过。发布验收走已核实SSH回执，未因此改Caddy/DNS/防火墙/代理或现有媒体通道。
+- main与受限控制分支只继续保存结果文档，不再次推进生产；新加坡Git外恢复文件同步最终状态，避免新任务重复安装或部署。手机本人发起/电脑关机与回滚演练仍未执行；原模型下载器源码仍pending_verified_import。
+- 收尾git diff --check通过，仅五份文档入Git。记忆脚本返回通过，但其旧状态标记检查仅做文本包含，会命中历史故障说明中的标记；不将此形式通过视为旧业务状态修复，也未修改检查器来制造通过。
+
+## 2026-09-10 — 北京发布失败根因现场确认
+
+- 所有者恢复北京登录后，通过本次已授权的可信 Workbench 管理连接核实实例 e905b859a6c24c529ef5c2ea21658462 / 47.93.214.76；未进入或修改 DNS。
+- 只读取 17:30 该次固定发布服务的脱敏日志，确认 GitHub fetch 因“30 秒传输低于 1024 bytes/sec”退出 128；不是 SSH 权限失败，旧运行版本没有切换。北京以同一 bloggergit 账户重新进行只读 ls-remote 成功。
+- 核对新加坡干净 main d60f75f 与 ff4f42e 仅五份结果文档不同，采集器及控制代码完全相同；按保留的本次正式发布授权，由新加坡 compassdev 再运行一次既有 publish 客户端，目标 d60f75fd98bc5f09aca6e1e70d6827a85db97c2e。固定发布器已成功 fetch 正式分支。本条仅记录诊断及受控重试，最终结果另行记录；未改发布器、Git 网络配置、权限或 timer。
+
 ## 2026-09-10 — main与新加坡Codex新任务通过；首次北京发布未完成
 
 - 真实新加坡开发目录从20c70e0快进并由compassdev推送main至ff4f42eace3f77470395d184ed1c4d33271973be。禁用单次命令的HTTP代理环境与SSH_AUTH_SOCK后Git推送仍成功；专用北京SSH客户端继续禁用代理/agent/转发并严格核对主机公钥。
