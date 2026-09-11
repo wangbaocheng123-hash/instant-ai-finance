@@ -26,7 +26,7 @@ from profile_monitor import ProfileScanError, ProfileScanner, ProfileVideo
 
 APP_NAME = "模型下载器云端版"
 TIMEZONE = ZoneInfo("Asia/Shanghai")
-VIDEO_CHECK_INTERVAL_MINUTES = 1
+VIDEO_CHECK_INTERVAL_MINUTES = 3
 VIDEO_DEADLINE_GUARD_SECONDS = 8
 MAINTENANCE_MINIMUM_SECONDS = 20
 COMMENT_SLICE_MAX_SECONDS = 35

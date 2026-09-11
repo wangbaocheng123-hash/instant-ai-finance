@@ -23,29 +23,29 @@ CHINA = timezone(timedelta(hours=8))
 
 
 class VideoScheduleTests(unittest.TestCase):
-    def assert_next_check_is_one_minute_later(self, moment: datetime) -> None:
+    def assert_next_check_is_three_minutes_later(self, moment: datetime) -> None:
         self.assertEqual(
-            moment + timedelta(minutes=1),
+            moment + timedelta(minutes=3),
             next_scheduled_check(moment),
         )
 
-    def test_video_interval_is_fixed_at_one_minute(self) -> None:
-        self.assertEqual(1, VIDEO_CHECK_INTERVAL_MINUTES)
-        self.assertEqual(1, INTERVAL_MINUTES)
+    def test_video_interval_is_fixed_at_three_minutes(self) -> None:
+        self.assertEqual(3, VIDEO_CHECK_INTERVAL_MINUTES)
+        self.assertEqual(3, INTERVAL_MINUTES)
 
     def test_weekday_midnight_has_no_monitoring_gap(self) -> None:
-        self.assert_next_check_is_one_minute_later(
+        self.assert_next_check_is_three_minutes_later(
             datetime(2026, 9, 10, 0, 1, tzinfo=CHINA)
         )
 
     def test_weekend_early_morning_has_no_monitoring_gap(self) -> None:
-        self.assert_next_check_is_one_minute_later(
+        self.assert_next_check_is_three_minutes_later(
             datetime(2026, 9, 12, 3, 27, tzinfo=CHINA)
         )
 
     def test_slow_video_work_does_not_add_another_interval(self) -> None:
         started = datetime(2026, 9, 11, 7, 0, tzinfo=CHINA)
-        completed = started + timedelta(minutes=2, seconds=20)
+        completed = started + timedelta(minutes=3, seconds=20)
         self.assertEqual(
             completed,
             next_scheduled_check(started, completed),
@@ -55,7 +55,7 @@ class VideoScheduleTests(unittest.TestCase):
         started = datetime(2026, 9, 11, 7, 0, tzinfo=CHINA)
         completed = started + timedelta(seconds=12)
         self.assertEqual(
-            started + timedelta(minutes=1),
+            started + timedelta(minutes=3),
             next_scheduled_check(started, completed),
         )
 
