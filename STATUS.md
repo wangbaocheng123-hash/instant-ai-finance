@@ -1,12 +1,14 @@
 # 项目状态
 
-- 最后更新：2026-09-11 07:48（北京时间）
-- 最新检查点：`MODEL_DOWNLOADER_VIDEO_PRIORITY_MAIN_READY / PRODUCTION_VIDEO_ONLY_STOPGAP`。ADR-0049 与功能提交 `8bfd2da1d9c6a0bc960abaa4d914a9933978db15` 已把模型下载器改为全天固定 1 分钟、从主页检查开始时间起算；主页扫描及新视频下载为硬优先级，评论/修复只用空档、每次最多一项并预留 8 秒到点取消。模型下载器14项、北京发布/控制32项、北京博主采集器220项、即时AI 190项全部通过；候选版本为 `0.9.2+git.video-priority`，尚未推进 `beijing-production`。
-- 生产故障与止血：复核确认 0.9.1 进程继承了前次一次性取码隧道的四个 proxy 变量，隧道关闭后从 09-10 22:27 至 09-11 07:30 的主页检查全部失败；重启清除进程残留变量后主页恢复，但 07:31 起评论再次连续占用视频循环。07:36 已通过 systemd manager 临时设 `MODEL_DOWNLOADER_COMMENTS_ENABLED=0` 并重启，当前生产仍为 0.9.1 的 3 分钟纯视频止血模式；07:36、07:39、07:43、07:46 连续扫描成功，07:39 发现一条 07:37 发布的新视频并于 07:40 完成有声下载。正式发布 0.9.2 时必须清除此临时变量，恢复新调度器受控评论空档。
-- 历史发布记录已纠偏：`654453060814990796b59eeb8580d041142c5dbf` 的 Git 发布、隔离测试和进程 active 回执确实成功，但当时验收没有要求“新进程真实成功完成一次主页扫描”，因此旧 `MODEL_DOWNLOADER_24X7_3M_RELEASE_VERIFIED` 不能再作为连续采集健康证明。0.9.2 发布器已增加晚于重启标记的成功扫描门禁，并在两个 model systemd 单元清除大小写 HTTP/HTTPS/ALL proxy，100 秒未成功扫描即回滚。
+- 最后更新：2026-09-11 09:06（北京时间）
+- 最新检查点：`MODEL_DOWNLOADER_THREE_MINUTE_HARD_PRIORITY_RELEASE_VERIFIED`。所有者在正式发布前把一分钟候选调整为三分钟；ADR-0050 与生产提交 `b72e33143c37d4a6a75165d42638c1b72ee7be3f` 已上线 `0.9.2+git.video-priority-3m`。主页扫描和新视频下载是独立硬优先轮次，以扫描开始时间为基准固定每三分钟执行；评论/修复每个空档最多一项并预留 8 秒到点取消。
+- 现场连续验收：清除临时 `MODEL_DOWNLOADER_COMMENTS_ENABLED=0` 并重启后，扫描于 08:59:03、09:02:03、09:05:03 开始，连续两段均精确相隔 180 秒；三轮分别于 08:59:16、09:02:16、09:05:17 成功完成，每轮均取得 17 个当前可见作品。两次评论任务在扫描后空档运行约 35 秒，没有延迟下一轮视频检查。
+- 早晨漏抓根因已形成永久防线：两个模型 systemd 单元显式剔除大小写 HTTP/HTTPS/ALL proxy，发布器必须在重启后从 SQLite 看到一条新的真实成功主页扫描，否则回滚；视频失败期间不运行维护，连续三次失败写 critical。临时代理、临时评论开关均已从 systemd manager 清除，进程过滤检查为空。
+- 发布结果：模型下载器、模型管理页、博主采集器三个服务均 active；博主发布器 inactive/result success，代码发布 timer disabled/inactive；博主 accepted 与模型 accepted/deployed 均为 `b72e33143c37d4a6a75165d42638c1b72ee7be3f`。模型14项、北京发布/控制32项、北京博主采集器220项、即时AI 190项全部通过。
+- 发布网络记录：北京第一次直连 GitHub 因30秒低速阈值失败，未切换任何业务。只读确认目标分支后，以一次性新加坡反向通道完成 Git 获取；博主子树未变只更新 accepted，模型发布器完成14项隔离测试和真实扫描门禁。通道随即关闭，所有临时 proxy 环境清除，没有修改 DNS、Caddy、安全组、永久 Git 配置或业务数据。
 - 最新结果：`SINGAPORE_TO_BEIJING_FULL_RELEASE_VERIFIED`。新加坡云端已安装 `~/bin/beijing-admin`，真实登录北京 `singaporecodex` 后 `sudo -n id -u` 返回 0；可管理北京全部文件、服务和程序，不再受三命令白名单限制。旧 `beijingcodex` 入口只作为兼容回退。
-- 北京原模型下载器真实源码、三份 systemd 单元和依赖已排除凭据/数据库/媒体后导入 `services/beijing-model-downloader/`；中央清单已改为 `managed`，统一发布入口为 `/usr/local/sbin/beijing-suite-publish`。北京 Git 生产仍为 `654453060814990796b59eeb8580d041142c5dbf`，模型下载器版本 `0.9.1+git.always-on`，model/model-web/blogger 三服务均 active，发布 timer 仍 inactive/disabled。
-- ADR-0044 的抓评到期规则已在真实模型下载器实现：实际发布时间未满24小时每15分钟，达到24小时后每60分钟；按上次成功保存时间推进，失败不推进。为保护视频抓取，生产止血期间评论暂时停用；0.9.2 将以短时增量空档恢复，不再让评论延迟主页检查。
+- 北京原模型下载器真实源码、三份 systemd 单元和依赖已排除凭据/数据库/媒体后导入 `services/beijing-model-downloader/`；中央清单为 `managed`，统一发布入口为 `/usr/local/sbin/beijing-suite-publish`。北京 Git 生产与模型 accepted/deployed 均为 `b72e33143c37d4a6a75165d42638c1b72ee7be3f`，model/model-web/blogger 三服务 active，发布 timer inactive/disabled。
+- ADR-0044 的抓评到期规则已在真实模型下载器实现：实际发布时间未满24小时每15分钟，达到24小时后每60分钟；按上次成功保存时间推进，失败不推进。评论现已恢复，但只在两次视频检查之间以最长35秒的单项空档运行，不再延迟主页检查。
 - 最新结果（17:48北京时间）：`BEIJING_SSH_PUBLISH_VERIFIED`。新加坡compassdev通过现有受限SSH客户端完成北京正式发布，accepted/deployed/current/live全部为 `d60f75fd98bc5f09aca6e1e70d6827a85db97c2e`，组件tree为 `d6568c7a3f9662dd8456c7ddaaf21378b3890dea`。北京220项隔离测试通过；publisher inactive/success、collector active/PID1089415，failed_revision为空；timer disabled/inactive。独立verify再次返回成功，模型下载器原PID959090保持active、路径未变。
 - 失败已查明并恢复：北京17:30首次fetch因30秒低于1024 bytes/sec退出128，未切换生产。本人恢复北京可信登录后读取有限脱敏日志、同账户ls-remote成功；核对d60f75f与ff4f42e仅结果文档不同后，从新加坡只受控重试一次，17:45完成验收。没有修改服务器发布器、代理、Git网络配置、DNS、Caddy、安全组或timer。
 - 公网核验分层记录：北京本机经正式HTTPS域名和回环18797均返回status ok / 1.0.8及精确d60f75f；新加坡到北京HTTPS三次只读请求被reset，DNS仍解析正确47.93.214.76，具体跨区HTTPS原因未查明；不能将北京自测冒充新加坡HTTP成功。该路径不被SSH发布客户端使用，真实SSH发布/回执已通过；未更改原签名HTTPS视频传输或采集开关。
@@ -185,4 +187,4 @@
 
 ## 下一项唯一建议任务
 
-`正式发布并现场验收模型下载器 0.9.2`：收到所有者明确发布口令后，把已测 `main` 安全推进 `beijing-production`，执行北京统一发布器；清除临时 `MODEL_DOWNLOADER_COMMENTS_ENABLED=0`，核验一分钟连续主页扫描、评论只在空档运行且到点让路、三个业务服务 active、成功扫描发布门禁和 timer disabled/inactive。不得重建密钥、修改 DNS/Caddy 或触碰新加坡即时 AI/时变罗盘。
+`观察三分钟硬优先版本的全天稳定性`：保持当前生产配置，不再调整频率；后续只读核对最近成功扫描时间、连续失败数和新视频首次发现时间。若要把连续失败升级为手机通知，另立窄范围任务，不修改抖音访问频率、DNS/Caddy 或新加坡即时 AI/时变罗盘。
