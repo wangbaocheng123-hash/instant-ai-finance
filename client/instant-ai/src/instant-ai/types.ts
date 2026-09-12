@@ -267,6 +267,9 @@ export interface ModelMrThoughtWorks {
 export interface ModelMrWork {
   id: number;
   title: string;
+  title_source?: 'source' | 'source_placeholder' | 'cover_ocr' | 'ai_video_original' | 'manual';
+  title_confidence?: number | null;
+  title_updated_at?: string;
   description: string;
   url: string;
   published_at: string;

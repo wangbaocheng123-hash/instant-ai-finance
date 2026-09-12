@@ -11,13 +11,26 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from instant_ai.auth import OwnerAuth
 from instant_ai.model_mr import ModelMrClient
-from instant_ai.model_mr_keywords import KEYWORD_CATEGORIES, SCHEMA_VERSION, extract_keywords, normalize_categories, source_hash
+from instant_ai.model_mr_keywords import (
+    KEYWORD_CATEGORIES,
+    SCHEMA_VERSION,
+    extract_keywords,
+    normalize_categories,
+    normalize_response,
+    source_hash,
+)
 from instant_ai.model_mr_metadata import keyword_revision
 from instant_ai.model_mr_processing import ModelMrProcessor, PROVIDER_LOCK
+from instant_ai.model_mr_titles import (
+    extract_cover_frame_data_urls,
+    is_placeholder_title,
+    title_needs_generation,
+)
 from instant_ai.server import InstantAIHandler
 
 
@@ -151,6 +164,114 @@ class ProcessingTests(unittest.TestCase):
         self.asr.assert_called_once()
         self.processor.enqueue_arrival(1, 'a' * 64)
         self.assertFalse(self.processor.process_one())
+
+    def test_placeholder_title_uses_early_frames_in_same_keyword_call(self):
+        self.work['title'] = '抖音作品_7684457886999570865'
+        self.snapshot['works'][0]['title'] = self.work['title']
+        self.client._write_json(self.client.snapshot_path, self.snapshot)
+        self.detail['work']['title'] = self.work['title']
+        self.write_detail()
+        images = ['data:image/jpeg;base64,ZmFrZQ==']
+
+        def keywords(text, *, need_title=False, cover_images=()):
+            self.assertEqual(text, '科技股原文')
+            self.assertTrue(need_title)
+            self.assertEqual(list(cover_images), images)
+            return {
+                **self.keyword_result(text),
+                'title': '这轮行情的高点在什么位置？',
+                'title_source': 'cover_ocr',
+                'title_confidence': 0.94,
+            }
+
+        self.kw.side_effect = keywords
+        with patch(
+            'instant_ai.model_mr_processing.model_mr_titles.extract_cover_frame_data_urls',
+            return_value=images,
+        ) as frames:
+            self.enqueue()
+            self.assertTrue(self.processor.process_one())
+        saved = self.client.processing_detail(1)
+        self.assertEqual(saved['work']['title'], '这轮行情的高点在什么位置？')
+        self.assertEqual(saved['work']['title_source'], 'cover_ocr')
+        self.assertEqual(saved['video_text']['text'], '科技股原文')
+        self.assertEqual(saved['transcripts'], [])
+        frames.assert_called_once()
+        with self.processor.db() as connection:
+            phases = [row[0] for row in connection.execute('SELECT phase FROM calls ORDER BY id')]
+        self.assertEqual(phases, ['asr', 'keywords'])
+
+    def test_missing_cover_title_uses_original_title_from_keyword_result(self):
+        self.work['title'] = '模型先生在抖音记录美好生活20260912'
+        self.snapshot['works'][0]['title'] = self.work['title']
+        self.client._write_json(self.client.snapshot_path, self.snapshot)
+        self.detail['work']['title'] = self.work['title']
+        self.write_detail()
+
+        def keywords(text, *, need_title=False, cover_images=()):
+            self.assertTrue(need_title)
+            self.assertEqual(list(cover_images), [])
+            return {
+                **self.keyword_result(text),
+                'title': '科技股行情进入关键观察阶段',
+                'title_source': 'ai_video_original',
+                'title_confidence': 0.86,
+            }
+
+        self.kw.side_effect = keywords
+        with patch(
+            'instant_ai.model_mr_processing.model_mr_titles.extract_cover_frame_data_urls',
+            side_effect=OSError('synthetic frame failure'),
+        ):
+            self.enqueue()
+            self.processor.process_one()
+        saved = self.client.processing_detail(1)
+        self.assertEqual(saved['work']['title'], '科技股行情进入关键观察阶段')
+        self.assertEqual(saved['work']['title_source'], 'ai_video_original')
+        self.assertEqual(saved['video_text']['text'], '科技股原文')
+
+    def test_valid_source_title_never_sends_frames_or_accepts_ai_title(self):
+        with patch(
+            'instant_ai.model_mr_processing.model_mr_titles.extract_cover_frame_data_urls',
+            side_effect=AssertionError('valid title must skip cover frames'),
+        ):
+            self.enqueue()
+            self.processor.process_one()
+        self.kw.assert_called_once_with('科技股原文')
+        self.assertEqual(self.client.processing_detail(1)['work']['title'], '标题不是关键词来源')
+
+    def test_owner_title_written_during_keyword_call_is_never_overwritten(self):
+        placeholder = '抖音作品_7684457886999570865'
+        self.work['title'] = placeholder
+        self.snapshot['works'][0]['title'] = placeholder
+        self.client._write_json(self.client.snapshot_path, self.snapshot)
+        self.detail['work']['title'] = placeholder
+        self.write_detail()
+
+        def keywords(text, **kwargs):
+            detail = self.client.processing_detail(1)
+            detail['work'].update(title='主人刚刚修改的标题', title_source='manual')
+            self.client._write_json(self.client._detail_path(1), detail)
+            snapshot = self.client._require_snapshot()
+            snapshot['works'][0].update(title='主人刚刚修改的标题', title_source='manual')
+            self.client._write_json(self.client.snapshot_path, snapshot)
+            return {
+                **self.keyword_result(text),
+                'title': 'AI不能覆盖这个标题',
+                'title_source': 'ai_video_original',
+                'title_confidence': 0.9,
+            }
+
+        self.kw.side_effect = keywords
+        with patch(
+            'instant_ai.model_mr_processing.model_mr_titles.extract_cover_frame_data_urls',
+            return_value=[],
+        ):
+            self.enqueue()
+            self.processor.process_one()
+        saved = self.client.processing_detail(1)
+        self.assertEqual(saved['work']['title'], '主人刚刚修改的标题')
+        self.assertEqual(saved['work']['title_source'], 'manual')
 
     def test_existing_original_and_keywords_are_preserved(self):
         self.detail['video_text']['text'] = '主人原文'
@@ -492,6 +613,85 @@ class KeywordAdapterTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, '未自动重试'):
                     extract_keywords('科技股原文')
                 self.assertEqual(opener.return_value.open.call_count, 2)
+
+    def test_multimodal_keyword_call_returns_cover_title_without_changing_original(self):
+        categories = {name: [] for name in KEYWORD_CATEGORIES}
+        categories[KEYWORD_CATEGORIES[7]] = ['高点']
+        payload = {
+            'title': '这轮行情的高点在什么位置？',
+            'title_source': 'cover',
+            'title_confidence': 0.95,
+            'categories': categories,
+        }
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit):
+                return json.dumps({'output_text': json.dumps(payload, ensure_ascii=False)}).encode()
+
+        image = 'data:image/jpeg;base64,ZmFrZQ=='
+        with patch.dict(os.environ, {'INSTANT_AI_DOUBAO_ARK_API_KEY': 'synthetic-test-key'}):
+            with patch('instant_ai.model_mr_keywords.build_opener') as opener:
+                opener.return_value.open.return_value = Response()
+                result = extract_keywords('只来自语音的正式原文', need_title=True, cover_images=[image])
+                self.assertEqual(result['title'], payload['title'])
+                self.assertEqual(result['title_source'], 'cover_ocr')
+                request = opener.return_value.open.call_args.args[0]
+                content = json.loads(request.data)['input'][1]['content']
+                material = json.loads(content[0]['text'])
+                self.assertEqual(material, {
+                    'video_original': '只来自语音的正式原文',
+                    'need_title': True,
+                    'cover_frame_count': 1,
+                })
+                self.assertEqual(content[1], {'type': 'input_image', 'image_url': image})
+                self.assertNotIn('comments', json.dumps(content, ensure_ascii=False))
+
+    def test_low_confidence_cover_title_is_not_accepted(self):
+        categories = {name: [] for name in KEYWORD_CATEGORIES}
+        normalized = normalize_response(
+            {
+                'title': '可能识别错的字幕',
+                'title_source': 'cover',
+                'title_confidence': 0.52,
+                'categories': categories,
+            },
+            need_title=True,
+            cover_frame_count=4,
+        )
+        self.assertEqual(normalized['title'], '')
+        self.assertEqual(normalized['title_source'], 'none')
+
+
+class TitleGuardTests(unittest.TestCase):
+    def test_placeholder_rules_match_only_missing_source_titles(self):
+        self.assertTrue(is_placeholder_title('抖音作品_7684457886999570865'))
+        self.assertTrue(is_placeholder_title('模型先生在抖音记录美好生活20260912'))
+        self.assertTrue(title_needs_generation('抖音视频', 'source_placeholder'))
+        self.assertFalse(title_needs_generation('双针指路', 'source'))
+        self.assertFalse(title_needs_generation('主人标题', 'manual'))
+
+    def test_early_frames_are_ephemeral_and_bounded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            video = root / 'video.mp4'
+            ffmpeg = root / 'ffmpeg'
+            video.write_bytes(b'synthetic-video')
+            ffmpeg.write_bytes(b'executable-placeholder')
+
+            def run(command, **kwargs):
+                Path(command[-1]).write_bytes(b'synthetic-jpeg')
+                return SimpleNamespace(returncode=0)
+
+            with patch.dict(os.environ, {'INSTANT_AI_FFMPEG': str(ffmpeg)}), patch(
+                'instant_ai.model_mr_titles.subprocess.run', side_effect=run
+            ) as runner:
+                images = extract_cover_frame_data_urls(video, 7)
+            self.assertEqual(len(images), 4)
+            self.assertTrue(all(image.startswith('data:image/jpeg;base64,') for image in images))
+            self.assertEqual(runner.call_count, 4)
+            self.assertEqual(set(root.iterdir()), {video, ffmpeg})
 
 
 if __name__ == '__main__':

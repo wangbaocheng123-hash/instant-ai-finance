@@ -93,7 +93,7 @@ export const instantApi = {
   extractModelMrKeywords: (id: number, revision: string) => request<{ message: string }>(`/api/model-mr/works/${id}/extract-keywords`, {
     method: 'POST', body: JSON.stringify({ expected_revision: revision, confirm_billing: true }),
   }),
-  saveModelMrTitle: (id: number, title: string) => request<{ ok: boolean; title: string; saved: boolean; mode: string }>(`/api/model-mr/works/${id}/title`, {
+  saveModelMrTitle: (id: number, title: string) => request<{ ok: boolean; title: string; title_source: 'manual'; saved: boolean; mode: string }>(`/api/model-mr/works/${id}/title`, {
     method: 'POST',
     body: JSON.stringify({ title }),
   }),

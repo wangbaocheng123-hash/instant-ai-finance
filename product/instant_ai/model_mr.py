@@ -19,6 +19,12 @@ from urllib.request import Request, urlopen
 from .doubao_asr import DoubaoAsrUnavailable, is_configured as doubao_asr_is_configured, transcribe_video
 from .paths import LIBRARY_ROOT
 from .model_mr_metadata import KEYWORD_CATEGORIES, clean_keyword_info, clean_links, clean_words, keyword_revision
+from .model_mr_titles import (
+    clean_generated_title,
+    is_meaningful_title,
+    normalize_title_source,
+    title_needs_generation,
+)
 
 
 DEFAULT_ORIGIN = "http://127.0.0.1:8787"
@@ -26,6 +32,13 @@ SNAPSHOT_VERSION = 2
 SUPPORTED_SNAPSHOT_VERSIONS = {1, SNAPSHOT_VERSION}
 BEIJING_COMMENT_PROJECTION_VERSION = 2
 _DETAIL_LOCK = threading.RLock()
+
+
+def _clean_title_confidence(value: object) -> float | None:
+    try:
+        return round(max(0.0, min(1.0, float(value))), 3) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _default_snapshot_path() -> Path:
@@ -222,16 +235,28 @@ class ModelMrClient:
             )
             title_info = source.get("title_info") if isinstance(source.get("title_info"), dict) else {}
             active_title = str(title_info.get("active_title") or cleaned_title).strip()
-            return {"ok": True, "title": active_title, "saved": True, "mode": "live"}
+            return {
+                "ok": True,
+                "title": active_title,
+                "title_source": "manual",
+                "saved": True,
+                "mode": "live",
+            }
         except ModelMrUnavailable:
             with _DETAIL_LOCK:
                 detail = self.work_detail(safe_id)
                 detail["work"]["title"] = cleaned_title
+                detail["work"]["title_source"] = "manual"
+                detail["work"]["title_confidence"] = None
+                detail["work"]["title_updated_at"] = int(time.time())
                 snapshot = self._require_snapshot()
                 matched = False
                 for item in snapshot.get("works", []):
                     if isinstance(item, dict) and int(item.get("id") or 0) == safe_id:
                         item["title"] = cleaned_title
+                        item["title_source"] = "manual"
+                        item["title_confidence"] = None
+                        item["title_updated_at"] = detail["work"]["title_updated_at"]
                         matched = True
                         break
                 if not matched:
@@ -239,7 +264,109 @@ class ModelMrClient:
                 snapshot["updated_at"] = int(time.time())
                 self._write_json(self._detail_path(safe_id), self._clean_snapshot_detail(detail, safe_id))
                 self._write_json(self.snapshot_path, snapshot)
-            return {"ok": True, "title": cleaned_title, "saved": True, "mode": "owner-mobile-library"}
+            return {
+                "ok": True,
+                "title": cleaned_title,
+                "title_source": "manual",
+                "saved": True,
+                "mode": "owner-mobile-library",
+            }
+
+    def title_generation_context(self, work_id: int) -> dict[str, Any]:
+        """Return a guarded decision without contacting the desktop sidecar."""
+
+        safe_id = self._safe_work_id(work_id)
+        detail = self.processing_detail(safe_id)
+        work = detail.get("work") if isinstance(detail.get("work"), dict) else {}
+        title = str(work.get("title") or "").strip()
+        source = self._effective_title_source(safe_id, title, work.get("title_source"))
+        return {
+            "work_id": safe_id,
+            "title": title,
+            "title_source": source,
+            "needs_title": title_needs_generation(title, source),
+        }
+
+    def save_generated_title(
+        self,
+        work_id: int,
+        title: str,
+        *,
+        source: str,
+        confidence: float | None,
+        expected_title: str,
+    ) -> dict[str, Any]:
+        """Save a cover/original-derived title only while the placeholder still exists."""
+
+        safe_id = self._safe_work_id(work_id)
+        cleaned = clean_generated_title(title)
+        if not cleaned:
+            raise ValueError("自动标题为空或格式无效。")
+        if source not in {"cover_ocr", "ai_video_original"}:
+            raise ValueError("自动标题来源无效。")
+        try:
+            score = max(0.0, min(1.0, float(confidence))) if confidence is not None else None
+        except (TypeError, ValueError):
+            score = None
+        if source == "cover_ocr" and (score is None or score < 0.8):
+            raise ValueError("封面标题置信度不足，未保存。")
+
+        with _DETAIL_LOCK:
+            detail = self.processing_detail(safe_id)
+            work = detail.get("work") if isinstance(detail.get("work"), dict) else {}
+            current = str(work.get("title") or "").strip()
+            current_source = self._effective_title_source(
+                safe_id,
+                current,
+                work.get("title_source"),
+            )
+            if current != str(expected_title or "").strip() or not title_needs_generation(current, current_source):
+                return {
+                    "ok": True,
+                    "saved": False,
+                    "title": current,
+                    "title_source": current_source,
+                    "reason": "title changed or no longer needs automatic replacement",
+                }
+
+            updated_at = int(time.time())
+            work.update(
+                {
+                    "title": cleaned,
+                    "title_source": source,
+                    "title_confidence": score,
+                    "title_updated_at": updated_at,
+                }
+            )
+            snapshot = self._require_snapshot()
+            indexed = next(
+                (
+                    item
+                    for item in snapshot.get("works", [])
+                    if isinstance(item, dict) and int(item.get("id") or 0) == safe_id
+                ),
+                None,
+            )
+            if indexed is None:
+                raise ModelMrUnavailable("作品索引中没有这条记录。")
+            indexed.update(
+                {
+                    "title": cleaned,
+                    "title_source": source,
+                    "title_confidence": score,
+                    "title_updated_at": updated_at,
+                }
+            )
+            snapshot["updated_at"] = updated_at
+            self._write_json(self._detail_path(safe_id), self._clean_snapshot_detail(detail, safe_id))
+            self._write_json(self.snapshot_path, snapshot)
+        return {
+            "ok": True,
+            "saved": True,
+            "title": cleaned,
+            "title_source": source,
+            "confidence": score,
+        }
 
     def save_video_text(self, work_id: int, text: str) -> dict[str, Any]:
         safe_id = self._safe_work_id(work_id)
@@ -311,7 +438,18 @@ class ModelMrClient:
             indexed = next((w for w in snapshot["works"] if int(w.get("id", 0)) == work_id), None)
             if indexed is None:
                 raise ValueError("作品不存在。")
-            fields = {key: detail["work"][key] for key in ("keywords", "keyword_info") if key in detail["work"]}
+            fields = {
+                key: detail["work"][key]
+                for key in (
+                    "keywords",
+                    "keyword_info",
+                    "title",
+                    "title_source",
+                    "title_confidence",
+                    "title_updated_at",
+                )
+                if key in detail["work"]
+            }
             fields["has_video_text"] = bool(str(detail.get("video_text", {}).get("text") or "").strip())
             if any(indexed.get(key) != value for key, value in fields.items()):
                 indexed.update(fields)
@@ -406,6 +544,25 @@ class ModelMrClient:
     @property
     def transfer_map_path(self) -> Path:
         return self.snapshot_path.parent / "beijing-transfer-map.json"
+
+    def _effective_title_source(self, work_id: int, title: str, explicit_source: object) -> str:
+        explicit = str(explicit_source or "").strip()
+        if explicit in {"source", "source_placeholder", "cover_ocr", "ai_video_original", "manual"}:
+            return explicit
+        for entry in self._read_transfer_map().values():
+            try:
+                mapped_work_id = int(entry.get("work_id") or 0) if isinstance(entry, dict) else 0
+            except (TypeError, ValueError):
+                mapped_work_id = 0
+            if mapped_work_id != work_id:
+                continue
+            imported = str(entry.get("imported_title") or "").strip()
+            if imported and title and title != imported:
+                # Old snapshots did not persist title_source. A divergence from
+                # the frozen imported title is therefore an owner edit.
+                return "manual"
+            return normalize_title_source("", title=imported or title)
+        return normalize_title_source("", title=title)
 
     def beijing_processing_candidate(
         self,
@@ -539,17 +696,34 @@ class ModelMrClient:
                     ),
                     {},
                 )
-            imported_title = str(entry.get("imported_title") or "")
             previous_title = str(previous_work.get("title") or "").strip()
             incoming_title = (str(title or "").strip() or f"抖音作品 {source_id}")[:120]
+            previous_title_source = self._effective_title_source(
+                work_id,
+                previous_title,
+                previous_work.get("title_source"),
+            )
+            incoming_title_source = "source" if is_meaningful_title(incoming_title) else "source_placeholder"
             preserve_previous_title = bool(
                 previous_title
                 and (
                     not entry
-                    or (imported_title and previous_title != imported_title)
+                    or previous_title_source == "manual"
+                    or (
+                        incoming_title_source == "source_placeholder"
+                        and previous_title_source in {"source", "cover_ocr", "ai_video_original"}
+                        and is_meaningful_title(previous_title)
+                    )
                 )
             )
             active_title = previous_title if preserve_previous_title else incoming_title
+            active_title_source = previous_title_source if preserve_previous_title else incoming_title_source
+            active_title_confidence = (
+                previous_work.get("title_confidence") if preserve_previous_title else None
+            )
+            active_title_updated_at = (
+                previous_work.get("title_updated_at") if preserve_previous_title else int(time.time())
+            )
             clean_comments = [
                 self._clean_comment(item, index)
                 for index, item in enumerate(comments, start=1)
@@ -558,6 +732,9 @@ class ModelMrClient:
             work = {
                 "id": work_id,
                 "title": active_title,
+                "title_source": active_title_source,
+                "title_confidence": active_title_confidence,
+                "title_updated_at": active_title_updated_at,
                 "description": str(description or previous_work.get("description") or ""),
                 "url": str(
                     source_url
@@ -1119,9 +1296,13 @@ class ModelMrClient:
         primary_asset = item.get("primary_asset") if isinstance(item.get("primary_asset"), dict) else {}
         work_id = int(item.get("id") or 0)
         media_available = bool(primary_asset and str(primary_asset.get("mime_type") or "").startswith("video/"))
+        title = str(item.get("active_title") or item.get("title") or "未命名作品")
         return {
             "id": work_id,
-            "title": str(item.get("active_title") or item.get("title") or "未命名作品"),
+            "title": title,
+            "title_source": normalize_title_source(item.get("title_source"), title=title),
+            "title_confidence": _clean_title_confidence(item.get("title_confidence")),
+            "title_updated_at": str(item.get("title_updated_at") or ""),
             "description": description,
             "url": str(item.get("url") or ""),
             "published_at": str(item.get("published_at") or item.get("discovered_at") or ""),
@@ -1142,9 +1323,13 @@ class ModelMrClient:
         info = clean_keyword_info(item.get("keyword_info"), item.get("keywords"))
         media_file = str(item.get("media_file") or "").strip().replace("\\", "/")
         media_available = bool(item.get("media_available") or media_file)
+        title = str(item.get("title") or "未命名作品")
         return {
             "id": work_id,
-            "title": str(item.get("title") or "未命名作品"),
+            "title": title,
+            "title_source": normalize_title_source(item.get("title_source"), title=title),
+            "title_confidence": _clean_title_confidence(item.get("title_confidence")),
+            "title_updated_at": str(item.get("title_updated_at") or ""),
             "description": str(item.get("description") or ""),
             "url": str(item.get("url") or ""),
             "published_at": str(item.get("published_at") or ""),
@@ -1169,6 +1354,9 @@ class ModelMrClient:
         interpretation_note = notes.get("interpretation") if isinstance(notes.get("interpretation"), dict) else {}
         comments_source = value.get("comments") if isinstance(value.get("comments"), list) else []
         summary_source["active_title"] = str(title_info.get("active_title") or video.get("active_title") or "")
+        summary_source["title_source"] = str(title_info.get("title_source") or video.get("title_source") or "")
+        summary_source["title_confidence"] = title_info.get("confidence", video.get("title_confidence"))
+        summary_source["title_updated_at"] = str(title_info.get("updated_at") or video.get("title_updated_at") or "")
         summary_source["has_video_text"] = bool(str(video_text_note.get("text") or "").strip())
         summary_source["has_interpretation"] = bool(str(interpretation_note.get("text") or "").strip())
         summary_source["comment_count"] = int(value.get("comment_total") or len(comments_source))

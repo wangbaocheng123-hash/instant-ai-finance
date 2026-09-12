@@ -14,9 +14,10 @@ import threading
 import time
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable
 
-from . import doubao_asr, model_mr_keywords
+from . import doubao_asr, model_mr_keywords, model_mr_titles
 from .model_mr import MODEL_MR, ModelMrClient
 from .model_mr_metadata import clean_keyword_info, keyword_revision
 
@@ -211,12 +212,15 @@ class ModelMrProcessor:
         if revision != keyword_revision(work.get("keyword_info"), work.get("keywords")):
             raise ValueError("关键词已变化，请刷新详情后重试。")
         info = clean_keyword_info(work.get("keyword_info"), work.get("keywords"))
+        title_context = self.client.title_generation_context(work_id)
         if (info.get("source_hash") == model_mr_keywords.source_hash(text)
-                and info["schema_version"] == model_mr_keywords.SCHEMA_VERSION):
+                and info["schema_version"] == model_mr_keywords.SCHEMA_VERSION
+                and not title_context["needs_title"]):
             return {"ok": True, "state": "done", "message": "原文未变化，沿用已保存关键词，没有调用 API。"}
         return self._enqueue(
             work_id,
-            f"keywords:{work_id}:{model_mr_keywords.source_hash(text)}:{revision}",
+            f"keywords:{work_id}:{model_mr_keywords.source_hash(text)}:"
+            f"{model_mr_keywords.SCHEMA_VERSION}:{int(title_context['needs_title'])}:{revision}",
             "keywords",
             False,
             revision,
@@ -359,10 +363,34 @@ class ModelMrProcessor:
                 self._update(job_id, "running", "keywords")
                 if not self._reserve_call(job_id, "keywords"):
                     return
-                result = model_mr_keywords.extract_keywords(text)
+                title_context = self.client.title_generation_context(work_id)
+                if title_context["needs_title"]:
+                    cover_images: list[str] = []
+                    media = self._media_path(detail)
+                    if media is not None:
+                        try:
+                            cover_images = model_mr_titles.extract_cover_frame_data_urls(media, work_id)
+                        except (model_mr_titles.CoverFrameUnavailable, OSError):
+                            cover_images = []
+                    result = model_mr_keywords.extract_keywords(
+                        text,
+                        need_title=True,
+                        cover_images=cover_images,
+                    )
+                    cached["title_expected"] = title_context["title"]
+                else:
+                    result = model_mr_keywords.extract_keywords(text)
                 cached["keywords"] = result
                 cached["keyword_revision"] = revision
                 self._update(job_id, "running", result=cached)
+            if result.get("title") and result.get("title_source") in {"cover_ocr", "ai_video_original"}:
+                self.client.save_generated_title(
+                    work_id,
+                    str(result["title"]),
+                    source=str(result["title_source"]),
+                    confidence=result.get("title_confidence"),
+                    expected_title=str(cached.get("title_expected") or ""),
+                )
             try:
                 self.client.save_keywords(work_id, result["categories"], result["keywords"],
                                           cached["keyword_revision"], ai_info=result)
@@ -383,6 +411,16 @@ class ModelMrProcessor:
         self._update(job_id, "done")
         with self.db() as conn:
             conn.execute("UPDATE settings SET failures=0 WHERE id=1")
+
+    def _media_path(self, detail: dict[str, Any]) -> Path | None:
+        relative = str(detail.get("work", {}).get("media_file") or "").strip()
+        if not relative:
+            return None
+        root = self.client.media_root.resolve()
+        media = (root / relative).resolve()
+        if root not in media.parents or not media.is_file():
+            return None
+        return media
 
     def run(self, stop: threading.Event | None = None):
         # Cloud-only singleton lock. No server reconfiguration or new scheduler.

@@ -221,7 +221,7 @@ export class ModelMrPanel {
     if (this.processingMessage) section.append(this.message(this.processingMessage));
     const status = this.processing;
     if (!status) return section;
-    section.append(this.message(`新送达视频会自动完成“豆包识别原文 → AI关键词提炼 → 保存展示”，无需逐条点击。升级时仅补扫最近 ${status.initial_recovery_hours} 小时内漏排队的视频，不扫描完整历史库。每日最多 ${status.daily_call_limit} 次模型调用，每条视频最多 ${status.max_video_minutes} 分钟；已有原文和关键词不覆盖。`));
+    section.append(this.message(`新送达视频会自动完成“豆包识别原文 → AI关键词提炼，并在原题和封面均无标题时补充标题 → 保存展示”，无需逐条点击。开头画面只用于识别标题，绝不写入视频原文。升级时仅补扫最近 ${status.initial_recovery_hours} 小时内漏排队的视频，不扫描完整历史库。每日最多 ${status.daily_call_limit} 次模型调用，每条视频最多 ${status.max_video_minutes} 分钟；已有原文、关键词和有效标题不覆盖。`));
     section.append(this.message(`语音识别：${status.speech_configured ? '已配置' : '未配置'}；关键词模型：${status.keywords_configured ? '已配置' : '未配置'}`));
     section.append(this.message(`后台执行器：${status.worker_running ? '运行中' : '等待服务启动'}${status.worker_last_seen ? `；最近检查 ${new Date(status.worker_last_seen * 1000).toLocaleTimeString('zh-CN', { hour12: false })}` : ''}`));
     const toggle = document.createElement('button');
@@ -231,7 +231,7 @@ export class ModelMrPanel {
     section.append(this.message('自动转写会直接保存原文，并标明尚未人工核对。暂停不取消已提交的任务。'));
     status.items.slice(0, 8).forEach((item) => {
       const row = document.createElement('div'); row.className = 'model-processing-job';
-      row.textContent = `作品 ${item.work_id} · ${item.phase === 'asr' ? '语音识别' : '关键词'}：${item.message}`;
+      row.textContent = `作品 ${item.work_id} · ${item.phase === 'asr' ? '语音识别' : '关键词/标题'}：${item.message}`;
       if (['review', 'configuration'].includes(item.state)) {
         const retry = document.createElement('button'); retry.type = 'button';
         retry.dataset.modelAction = 'retry-processing'; retry.dataset.jobId = String(item.id);
@@ -245,7 +245,7 @@ export class ModelMrPanel {
   private async updateProcessing(action: string, jobId = 0): Promise<void> {
     if (this.processingBusy) return;
     const enable = !this.processing?.enabled || (this.processing?.failures || 0) >= 3;
-    if (action === 'toggle-processing' && enable && !window.confirm('恢复后，新送达的模型先生视频将自动调用豆包识别并保存原文、提炼关键词，按音频时长及模型用量计费。每日最多20次调用，每条视频最多20分钟；不会扫描完整历史作品库。确认恢复？')) return;
+    if (action === 'toggle-processing' && enable && !window.confirm('恢复后，新送达的模型先生视频将自动调用豆包识别并保存原文、提炼关键词；原作品和开头画面均无有效标题时，同一次关键词调用会根据原文补充标题。开头画面不进入视频原文。按音频时长及模型用量计费，每日最多20次调用，每条视频最多20分钟；不会扫描完整历史作品库。确认恢复？')) return;
     if (action === 'retry-processing' && !window.confirm('请先核对豆包调用记录；上次失败或中断可能已计费。仅重试所选任务，已缓存结果会复用。确认重试？')) return;
     this.processingBusy = true;
     try {
@@ -264,7 +264,7 @@ export class ModelMrPanel {
   private async extractKeywords(workId: number): Promise<void> {
     const detail = this.details.get(workId);
     if (!detail || this.busyWorks.has(workId)) return;
-    if (!window.confirm('只根据已保存的视频原文调用豆包提炼十类关键词，并保存结果；原文变化或同时编辑时不会覆盖。可能产生模型费用，确认继续？')) return;
+    if (!window.confirm('根据已保存的视频原文调用豆包提炼十类关键词；仅当原作品和开头画面均无有效标题时，同一次调用会根据原文补充标题。开头画面不进入视频原文，已有标题和同时编辑的内容不会覆盖。可能产生模型费用，确认继续？')) return;
     this.busyWorks.add(workId);
     try {
       const result = await instantApi.extractModelMrKeywords(workId, detail.work.keyword_revision || '');
@@ -355,6 +355,14 @@ export class ModelMrPanel {
     if (work.has_video_text) meta.append(this.pill('有视频原文'));
     if (work.has_interpretation) meta.append(this.pill('有解读'));
     if (work.comment_count) meta.append(this.pill(`${work.comment_count} 条评论`));
+    const titleSourceLabels: Partial<Record<NonNullable<ModelMrWork['title_source']>, string>> = {
+      source: '抖音原题',
+      cover_ocr: '封面标题',
+      ai_video_original: 'AI原文标题',
+      manual: '人工标题',
+    };
+    const titleSourceLabel = work.title_source ? titleSourceLabels[work.title_source] : undefined;
+    if (titleSourceLabel) meta.append(this.pill(titleSourceLabel));
     work.keywords.slice(0, 8).forEach((keyword) => meta.append(this.pill(keyword)));
     if (work.keywords.length > 8) meta.append(this.pill(`共 ${work.keywords.length} 个关键词`));
     card.append(heading);
@@ -803,9 +811,17 @@ export class ModelMrPanel {
     this.renderWorks();
     try {
       const result = await instantApi.saveModelMrTitle(workId, title);
-      [...this.works, ...this.relatedWorks].filter((item) => item.id === workId).forEach((work) => { work.title = result.title; });
+      [...this.works, ...this.relatedWorks].filter((item) => item.id === workId).forEach((work) => {
+        work.title = result.title;
+        work.title_source = 'manual';
+        work.title_confidence = null;
+      });
       const detail = this.details.get(workId);
-      if (detail) detail.work.title = result.title;
+      if (detail) {
+        detail.work.title = result.title;
+        detail.work.title_source = 'manual';
+        detail.work.title_confidence = null;
+      }
       this.editingTitles.delete(workId);
       this.setWorkMessage(workId, '标题已保存。', 'is-done');
     } catch (error) {

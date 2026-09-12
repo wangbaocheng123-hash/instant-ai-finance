@@ -98,12 +98,73 @@ class ModelMrGatewayTests(unittest.TestCase):
                 self.assertEqual(client.works(limit=10)["count"], 1)
                 detail = client.work_detail(first["work_id"])
                 self.assertEqual(detail["work"]["title"], "主人标题")
+                self.assertEqual(detail["work"]["title_source"], "manual")
                 self.assertEqual(detail["video_text"]["text"], "主人确认原文")
                 self.assertEqual(detail["work"]["keyword_info"]["categories"]["行业与板块"], ["主人关键词"])
                 self.assertTrue(detail["work"]["keyword_info"]["edited_by_owner"])
                 self.assertEqual(detail["comments"][0]["text"], "更新评论")
                 self.assertIs(detail["comments"][0]["author_liked"], False)
                 self.assertIsNotNone(client.video_path(first["work_id"]))
+
+    def test_transferred_title_priority_is_manual_source_cover_ai_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "public-snapshot.json"
+            snapshot.write_text(
+                json.dumps({"version": 2, "works": [], "thoughts": [], "counts": {}}),
+                encoding="utf-8",
+            )
+            media = root / "incoming.mp4"
+            media.write_bytes(b"verified-video")
+            digest = hashlib.sha256(media.read_bytes()).hexdigest()
+            client = ModelMrClient("http://127.0.0.1:9", snapshot, root / "media")
+
+            def transfer(revision: int, title: str) -> int:
+                result = client.import_beijing_work(
+                    source_work_id="778900",
+                    source_revision=revision,
+                    title=title,
+                    description="",
+                    source_url="https://www.douyin.com/video/778900",
+                    published_at="2026-09-12T09:00:00+08:00",
+                    comments=[],
+                    media_path=media,
+                    media_sha256=digest,
+                )
+                return int(result["work_id"])
+
+            placeholder = "抖音作品_778900"
+            work_id = transfer(1, placeholder)
+            saved = client.save_generated_title(
+                work_id,
+                "根据视频原文拟定的标题",
+                source="ai_video_original",
+                confidence=0.86,
+                expected_title=placeholder,
+            )
+            self.assertTrue(saved["saved"])
+
+            transfer(2, placeholder)
+            detail = client.processing_detail(work_id)
+            self.assertEqual(detail["work"]["title"], "根据视频原文拟定的标题")
+            self.assertEqual(detail["work"]["title_source"], "ai_video_original")
+
+            transfer(3, "双针指路")
+            detail = client.processing_detail(work_id)
+            self.assertEqual(detail["work"]["title"], "双针指路")
+            self.assertEqual(detail["work"]["title_source"], "source")
+
+            transfer(4, placeholder)
+            detail = client.processing_detail(work_id)
+            self.assertEqual(detail["work"]["title"], "双针指路")
+            self.assertEqual(detail["work"]["title_source"], "source")
+
+            with patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")):
+                client.save_title(work_id, "主人最终标题")
+            transfer(5, "来源后来再次改名")
+            detail = client.processing_detail(work_id)
+            self.assertEqual(detail["work"]["title"], "主人最终标题")
+            self.assertEqual(detail["work"]["title_source"], "manual")
 
     def test_explicit_author_unlike_overrides_legacy_raw_like_marker(self) -> None:
         cleaned = ModelMrClient._clean_comment(
@@ -766,8 +827,11 @@ class ModelMrGatewayTests(unittest.TestCase):
                 detail = client.work_detail(12)
 
             self.assertEqual(result["title"], "新标题")
+            self.assertEqual(result["title_source"], "manual")
             self.assertEqual(works["items"][0]["title"], "新标题")
+            self.assertEqual(works["items"][0]["title_source"], "manual")
             self.assertEqual(detail["work"]["title"], "新标题")
+            self.assertEqual(detail["work"]["title_source"], "manual")
 
     def test_owner_title_edit_http_endpoint_is_available_to_the_mobile_client(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
