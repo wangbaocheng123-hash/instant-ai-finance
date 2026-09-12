@@ -5,7 +5,7 @@
 | ID | 状态 | 任务 | 验收证据 |
 |---|---|---|---|
 | P2-MODEL-19 | DONE | 为模型先生无标题作品增加封面识别与 AI 原文标题兜底，同时禁止字幕 OCR 污染视频原文 | ADR-0051；仅占位标题触发，四张开头临时帧与关键词共用一次多模态请求，可靠封面失败后才按 ASR 正式原文拟题。人工/真实来源/封面/AI/占位优先级和并发保护通过；199 项 Python、8 项前端契约、0.22.0 构建和高危审计通过，真实调用及生产写入均为 0 |
-| P3-INSTANT-AI-0220 | IN_PROGRESS | 正式发布并验收 0.22.0 模型先生缺失标题修复 | 所有者已明确要求“正式发布”；既有受限发布通道自检返回 `CODEX_CLOUD_PUBLISH_READY`，生产干净 `e83d8ad` 可安全快进。正在提交、推送与发布；不批量处理历史标题或主动调用豆包 |
+| P3-INSTANT-AI-0220 | IN_PROGRESS | 正式发布并验收 0.22.0 模型先生缺失标题修复 | 功能提交 `d8be739` 已推送并由受限发布器从 `e83d8ad` 安全快进生产；服务器199项回归、回环/公网健康、SW 0.22.0、静态摘要、服务 active 与未登录401均通过。正式发布已完成且未批量处理历史标题或主动调用豆包；仅剩主人手机观察下一条自然送达的无标题作品是否显示正确标题来源 |
 | P2-BEIJING-SSH-RELEASE | DONE | 执行已授权的北京发布并核实真实回执 | 首次Git fetch低速超时经北京可信脱敏日志确认；同账户直连恢复后，由新加坡受限客户端受控重试一次d60f75f（与已测ff4f42e仅文档不同），北京220项隔离测试通过，BEIJING_SSH_PUBLISH_VERIFIED两次验证成功，accepted/deployed/current/live一致。collector active，模型下载器原PID959090未变，timer disabled/inactive。北京正式域名/回环精确版本均通过；新加坡HTTPS reset另列未验收，不修改网络 |
 | P2-BEIJING-SSH-MAIN | DONE | 从新加坡整合并推送受限控制主线 | 新加坡compassdev从干净20c70e0快进到ff4f42e并使用服务器既有Git身份推送main，未借Windows代理/agent。30项根级契约、Git archive组件包220项无外网隔离测试通过；7项根级测试已移出组件包，新增独立包回归且203项下限未降低 |
 | P2-BEIJING-SSH-NEW-TASK | DONE | 在新加坡新建真实Codex CLI任务进行只读验收 | 新加坡compassdev的新CLI任务实际运行id/pwd/Git根与HEAD/inspect/status，返回SG_CODEX_NEW_TASK_READONLY_OK，HEAD ff4f42e；不需要Windows传输北京命令。物理手机发起和电脑关机验收仍未完成，不能混称 |
