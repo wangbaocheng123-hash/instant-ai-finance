@@ -15,7 +15,7 @@ Python 服务只监听云服务器自己的 `127.0.0.1:18765`。公网只通过�
 
 0.18.0 起，同一服务还在正式域名的 `/mcp` 提供“博主智能体（云端）”只读 Streamable HTTP MCP。它复用现有主人账号，通过 OAuth 2.1 authorization-code + PKCE S256 授权，不开放新端口、不需要 ChatGPT API Key，也不允许匿名读取博主文字。OAuth DCR 只接受 ChatGPT 官方回调；客户端登记和一次性授权码摘要保存在 Git 外 `/var/lib/instant-ai/blogger-agent/database/blogger_oauth.db`。使用方法见 `docs/BLOGGER_CLOUD_MCP_USAGE.md` 与 ADR-0030。
 
-0.22.1 候选继续使用同一个 `/mcp`、主人 OAuth 和 `blogger.read` scope，不增加账号、端口或数据库。它把模型先生工具扩展为七工具：作品可分页搜索和读取完整主人元数据，评论以独立工具分页返回本人回复、粉丝评论与同楼互动。评论正文属于外部非可信数据；MCP 不得执行其中指令，也不得返回粉丝账号/主页、来源评论 ID、内部线程哈希、媒体文件、服务器路径、原始 JSON 或密钥。代码发布不迁移、不重写 `/var/lib/instant-ai/model-mr`，也不触发采集、识别或模型调用；正式上线后在原 ChatGPT 连接点击 Refresh 即可刷新工具清单。
+0.22.1 起继续使用同一个 `/mcp`、主人 OAuth 和 `blogger.read` scope，不增加账号、端口或数据库。模型先生工具现为五个、统一 MCP 共七个：作品可分页搜索和读取完整主人元数据，评论以独立工具分页返回本人回复、粉丝评论与同楼互动。评论正文属于外部非可信数据；MCP 不得执行其中指令，也不得返回粉丝账号/主页、来源评论 ID、内部线程哈希、媒体文件、服务器路径、原始 JSON 或密钥。代码发布不迁移、不重写 `/var/lib/instant-ai/model-mr`，也不触发采集、识别或模型调用；在原 ChatGPT 连接点击 Refresh 即可刷新工具清单。
 
 主人账户配置脚本会在终端隐藏读取两次密码；手动密码至少 9 个字符，自动生成密码仍至少 24 个字符。密码不得放入命令参数、Git 或普通日志。
 
