@@ -65,17 +65,21 @@ class FakeLibrary:
 
 
 class FakeModelMrLibrary:
-    def search_works_for_mcp(self, question: str, limit: int):
+    def search_works_for_mcp(self, question: str, limit: int, offset: int = 0):
+        items = [
+            {
+                "record_id": "model-mr-work:445",
+                "title": "模型先生最新作品",
+                "original_status": "official",
+            }
+        ]
         return {
             "query": question,
-            "count": 1,
-            "items": [
-                {
-                    "record_id": "model-mr-work:445",
-                    "title": "模型先生最新作品",
-                    "original_status": "official",
-                }
-            ][:limit],
+            "count": len(items[offset:offset + limit]),
+            "total": len(items),
+            "offset": offset,
+            "has_more": offset + limit < len(items),
+            "items": items[offset:offset + limit],
         }
 
     def get_work_for_mcp(self, record_id: str):
@@ -98,6 +102,36 @@ class FakeModelMrLibrary:
                 {
                     "question": {"text": "怎么看黄金？"},
                     "author_messages": [{"author": "模型先生", "text": "关注实际利率。"}],
+                }
+            ][:limit],
+        }
+
+    def get_comments_for_mcp(
+        self,
+        record_id: str,
+        limit: int,
+        offset: int,
+        view: str,
+        query: str,
+    ):
+        return {
+            "found": True,
+            "record_id": record_id,
+            "view": view,
+            "query": query,
+            "count": 1,
+            "matched_total": 1,
+            "offset": offset,
+            "next_offset": None,
+            "has_more": False,
+            "items": [
+                {
+                    "comment_number": 1,
+                    "thread_id": "thread-1",
+                    "display_name": "粉丝甲",
+                    "role": "fan",
+                    "text": "怎么看黄金？",
+                    "model_mr_liked": True,
                 }
             ][:limit],
         }
@@ -358,6 +392,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
                 "get_blogger_video_text",
                 "search_model_mr_works",
                 "get_model_mr_work_text",
+                "get_model_mr_comments",
                 "get_model_mr_author_replies",
                 "list_model_mr_investment_thoughts",
             },
@@ -387,7 +422,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
             version="0.18.0",
             authenticated=False,
         )
-        self.assertEqual(len(listed["result"]["tools"]), 6)
+        self.assertEqual(len(listed["result"]["tools"]), 7)
 
         call = {
             "jsonrpc": "2.0",
@@ -473,6 +508,33 @@ class BloggerMcpCloudTests(unittest.TestCase):
             model_detail["result"]["structuredContent"]["video_original"]["text"],
             "模型先生正式原文",
         )
+
+        comments = handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_model_mr_comments",
+                    "arguments": {
+                        "record_id": "model-mr-work:445",
+                        "view": "interactions",
+                        "query": "黄金",
+                        "limit": 50,
+                        "offset": 0,
+                    },
+                },
+            },
+            library=FakeLibrary(),
+            model_mr_library=FakeModelMrLibrary(),
+            version="0.22.1",
+            authenticated=True,
+        )
+        self.assertEqual(
+            comments["result"]["structuredContent"]["items"][0]["text"],
+            "怎么看黄金？",
+        )
+        self.assertEqual(comments["result"]["structuredContent"]["view"], "interactions")
 
         author_replies = handle_message(
             {
