@@ -667,6 +667,7 @@ class KeywordAdapterTests(unittest.TestCase):
 class TitleGuardTests(unittest.TestCase):
     def test_placeholder_rules_match_only_missing_source_titles(self):
         self.assertTrue(is_placeholder_title('抖音作品_7684457886999570865'))
+        self.assertTrue(is_placeholder_title('抖音图文_7684457886999570866'))
         self.assertTrue(is_placeholder_title('模型先生在抖音记录美好生活20260912'))
         self.assertTrue(title_needs_generation('抖音视频', 'source_placeholder'))
         self.assertFalse(title_needs_generation('双针指路', 'source'))

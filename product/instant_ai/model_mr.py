@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -28,8 +28,8 @@ from .model_mr_titles import (
 
 
 DEFAULT_ORIGIN = "http://127.0.0.1:8787"
-SNAPSHOT_VERSION = 2
-SUPPORTED_SNAPSHOT_VERSIONS = {1, SNAPSHOT_VERSION}
+SNAPSHOT_VERSION = 3
+SUPPORTED_SNAPSHOT_VERSIONS = {1, 2, SNAPSHOT_VERSION}
 BEIJING_COMMENT_PROJECTION_VERSION = 2
 _DETAIL_LOCK = threading.RLock()
 
@@ -86,19 +86,20 @@ class ModelMrClient:
                 works = snapshot.get("works") if isinstance(snapshot.get("works"), list) else []
                 thoughts = snapshot.get("thoughts") if isinstance(snapshot.get("thoughts"), list) else []
                 counts = snapshot.get("counts") if isinstance(snapshot.get("counts"), dict) else {}
-                owner_library = int(snapshot.get("version") or 0) >= SNAPSHOT_VERSION
+                owner_library = int(snapshot.get("version") or 0) >= 2
                 return {
                     "available": True,
                     "module": "模型先生",
                     "mode": "owner-mobile-library" if owner_library else "sanitized-snapshot",
                     "message": (
-                        "模型先生主人资料库已连接；本地视频、正式原文和评论只在登录后提供。"
+                        "模型先生主人资料库已连接；本地视频、图文原图、正文和评论只在登录后提供。"
                         if owner_library
                         else "模型先生精简资料已连接。"
                     ),
                     "features": (
                         [
                             "本地视频",
+                            "图文原图与正文",
                             "视频原文",
                             "豆包识别文字" if doubao_asr_is_configured() else "豆包转写结果",
                             "评论",
@@ -541,6 +542,40 @@ class ModelMrClient:
         mime_type = mimetypes.guess_type(target.name)[0] or "video/mp4"
         return target, mime_type
 
+    def image_path(self, work_id: int, ordinal: int) -> tuple[Path, str] | None:
+        safe_id = self._safe_work_id(work_id)
+        try:
+            safe_ordinal = int(ordinal)
+        except (TypeError, ValueError):
+            return None
+        if safe_ordinal < 0 or safe_ordinal > 99:
+            return None
+        try:
+            detail = self.work_detail(safe_id)
+        except ModelMrUnavailable:
+            return None
+        work = detail.get("work") if isinstance(detail.get("work"), dict) else {}
+        media_files = self._clean_media_files(work.get("media_files"))
+        media = next(
+            (
+                item
+                for item in media_files
+                if item["role"] == "image" and item["ordinal"] == safe_ordinal
+            ),
+            None,
+        )
+        if media is None:
+            return None
+        root = self.media_root.resolve()
+        target = (root / media["filename"]).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return None
+        if not target.is_file():
+            return None
+        return target, str(media["mime_type"])
+
     @property
     def transfer_map_path(self) -> Path:
         return self.snapshot_path.parent / "beijing-transfer-map.json"
@@ -624,21 +659,93 @@ class ModelMrClient:
         source_url: str,
         published_at: str,
         comments: list[dict[str, Any]],
-        media_path: Path,
-        media_sha256: str,
+        media_path: Path | None = None,
+        media_sha256: str = "",
+        work_type: str = "video",
+        media_items: list[Mapping[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Idempotently import one verified Beijing model-downloader work."""
 
         source_id = str(source_work_id or "").strip()
-        digest = str(media_sha256 or "").strip().lower()
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", source_id):
             raise ValueError("来源作品编号无效。")
         revision = int(source_revision)
-        if revision <= 0 or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        normalized_work_type = str(work_type or "video").strip().lower()
+        if normalized_work_type not in {"video", "image", "gallery"}:
+            raise ValueError("来源作品类型无效。")
+        normalized_media: list[dict[str, Any]] = []
+        source_items = list(media_items or [])
+        if len(source_items) > 100:
+            raise ValueError("来源媒体数量超过上限。")
+        if not source_items and media_path is not None:
+            source_items = [
+                {
+                    "path": media_path,
+                    "sha256": media_sha256,
+                    "mime_type": "video/mp4",
+                    "role": "video",
+                    "ordinal": 0,
+                }
+            ]
+        expected_role = "video" if normalized_work_type == "video" else "image"
+        allowed_mimes = (
+            {"video/mp4"}
+            if expected_role == "video"
+            else {"image/jpeg", "image/png", "image/webp"}
+        )
+        extension_by_mime = {
+            "video/mp4": ".mp4",
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+        }
+        seen_ordinals: set[int] = set()
+        for index, item in enumerate(source_items):
+            if not isinstance(item, Mapping):
+                raise ValueError("来源媒体格式无效。")
+            digest = str(item.get("sha256") or "").strip().lower()
+            role = str(item.get("role") or "").strip().lower()
+            mime_type = str(item.get("mime_type") or "").strip().lower()
+            ordinal = int(item.get("ordinal") if item.get("ordinal") is not None else index)
+            if (
+                role != expected_role
+                or mime_type not in allowed_mimes
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or ordinal < 0
+                or ordinal > 99
+                or ordinal in seen_ordinals
+            ):
+                raise ValueError("来源媒体版本无效。")
+            source_media = Path(str(item.get("path") or "")).resolve(strict=True)
+            if not source_media.is_file():
+                raise ValueError("来源媒体不存在。")
+            seen_ordinals.add(ordinal)
+            normalized_media.append(
+                {
+                    "path": source_media,
+                    "sha256": digest,
+                    "mime_type": mime_type,
+                    "role": role,
+                    "ordinal": ordinal,
+                    "extension": extension_by_mime[mime_type],
+                }
+            )
+        normalized_media.sort(key=lambda item: int(item["ordinal"]))
+        if (
+            revision <= 0
+            or not normalized_media
+            or (normalized_work_type == "video" and len(normalized_media) != 1)
+        ):
             raise ValueError("来源作品版本无效。")
-        source_media = Path(media_path).resolve(strict=True)
-        if not source_media.is_file():
-            raise ValueError("来源视频不存在。")
+        revision_digest = (
+            str(normalized_media[0]["sha256"])
+            if normalized_work_type == "video"
+            else hashlib.sha256(
+                "\n".join(
+                    str(item["sha256"]) for item in normalized_media
+                ).encode("ascii")
+            ).hexdigest()
+        )
 
         with _DETAIL_LOCK:
             snapshot = self._snapshot() or {
@@ -674,8 +781,39 @@ class ModelMrClient:
             if int(entry.get("source_revision") or 0) > revision:
                 return {"ok": True, "work_id": work_id, "status": "stale"}
 
-            media_name = f"beijing-{source_id}-{digest[:16]}.mp4"
-            self._copy_media(source_media, self.media_root / media_name, digest)
+            saved_media: list[dict[str, Any]] = []
+            for item in normalized_media:
+                if item["role"] == "video":
+                    media_name = (
+                        f"beijing-{source_id}-{str(item['sha256'])[:16]}.mp4"
+                    )
+                else:
+                    media_name = (
+                        f"beijing-{source_id}-{int(item['ordinal']) + 1:02}-"
+                        f"{str(item['sha256'])[:16]}{item['extension']}"
+                    )
+                self._copy_media(
+                    Path(item["path"]),
+                    self.media_root / media_name,
+                    str(item["sha256"]),
+                )
+                saved_media.append(
+                    {
+                        "filename": media_name,
+                        "mime_type": str(item["mime_type"]),
+                        "role": str(item["role"]),
+                        "ordinal": int(item["ordinal"]),
+                        "sha256": str(item["sha256"]),
+                    }
+                )
+            media_name = next(
+                (
+                    str(item["filename"])
+                    for item in saved_media
+                    if item["role"] == "video"
+                ),
+                "",
+            )
 
             detail_path = self._detail_path(work_id)
             previous_raw: dict[str, Any] = {}
@@ -739,14 +877,16 @@ class ModelMrClient:
                 "url": str(
                     source_url
                     or previous_work.get("url")
-                    or f"https://www.douyin.com/video/{source_id}"
+                    or f"https://www.douyin.com/{'note' if normalized_work_type != 'video' else 'video'}/{source_id}"
                 ),
                 "published_at": str(published_at or previous_work.get("published_at") or ""),
+                "work_type": normalized_work_type,
                 "has_video_text": bool(previous.get("video_text", {}).get("text")) if previous else False,
                 "has_interpretation": bool(previous.get("interpretation", {}).get("text")) if previous else False,
                 "comment_count": len(clean_comments),
                 "media_available": True,
                 "media_file": media_name,
+                "media_files": saved_media,
                 "keywords": list(previous_work.get("keywords") or []),
                 "keyword_info": clean_keyword_info(previous_work.get("keyword_info"), previous_work.get("keywords")),
             }
@@ -782,7 +922,11 @@ class ModelMrClient:
             counts.update(
                 {
                     "works": len(works),
-                    "media": sum(1 for item in works if item.get("media_file")),
+                    "media": sum(
+                        len(self._clean_media_files(item.get("media_files")))
+                        or int(bool(item.get("media_file")))
+                        for item in works
+                    ),
                     "comments": sum(max(0, int(item.get("comment_count") or 0)) for item in works),
                 }
             )
@@ -791,7 +935,8 @@ class ModelMrClient:
                 "work_id": work_id,
                 "source_revision": revision,
                 "imported_title": incoming_title,
-                "media_sha256": digest,
+                "media_sha256": revision_digest,
+                "work_type": normalized_work_type,
                 "comment_projection_version": BEIJING_COMMENT_PROJECTION_VERSION,
             }
             self._write_json(self.snapshot_path, snapshot)
@@ -904,7 +1049,11 @@ class ModelMrClient:
             if not isinstance(item, dict):
                 continue
             candidate = str(item.get("url") or "").rstrip("/")
-            if candidate and (candidate == target_url or candidate.endswith(f"/video/{source_id}")):
+            if candidate and (
+                candidate == target_url
+                or candidate.endswith(f"/video/{source_id}")
+                or candidate.endswith(f"/note/{source_id}")
+            ):
                 return int(item.get("id") or 0)
         return 0
 
@@ -914,10 +1063,10 @@ class ModelMrClient:
         if destination.is_file():
             if ModelMrClient._sha256_file(destination) == expected_sha256:
                 return
-            raise ModelMrUnavailable("模型先生目标视频摘要冲突。")
+            raise ModelMrUnavailable("模型先生目标媒体摘要冲突。")
         handle, temporary_name = tempfile.mkstemp(
             prefix=".beijing-model-",
-            suffix=".mp4",
+            suffix=destination.suffix,
             dir=destination.parent,
         )
         os.close(handle)
@@ -934,7 +1083,7 @@ class ModelMrClient:
                 output_stream.flush()
                 os.fsync(output_stream.fileno())
             if digest.hexdigest() != expected_sha256:
-                raise ModelMrUnavailable("模型先生来源视频摘要不匹配。")
+                raise ModelMrUnavailable("模型先生来源媒体摘要不匹配。")
             os.replace(temporary, destination)
         finally:
             temporary.unlink(missing_ok=True)
@@ -1309,7 +1458,12 @@ class ModelMrClient:
             "has_video_text": bool(item.get("has_video_text")),
             "has_interpretation": bool(item.get("has_interpretation")),
             "comment_count": max(0, int(item.get("comment_count") or 0)),
+            "work_type": "video",
             "media_available": media_available,
+            "video_available": media_available,
+            "image_count": 0,
+            "image_urls": [],
+            "media_files": [],
             "video_url": f"/api/model-mr/works/{work_id}/video" if media_available and work_id else "",
             "media_file": "",
             "keywords": keyword_info["keywords"],
@@ -1322,7 +1476,21 @@ class ModelMrClient:
         work_id = int(item.get("id") or 0)
         info = clean_keyword_info(item.get("keyword_info"), item.get("keywords"))
         media_file = str(item.get("media_file") or "").strip().replace("\\", "/")
-        media_available = bool(item.get("media_available") or media_file)
+        media_files = cls._clean_media_files(item.get("media_files"))
+        raw_work_type = str(item.get("work_type") or "").strip().lower()
+        work_type = (
+            raw_work_type
+            if raw_work_type in {"video", "image", "gallery"}
+            else "image"
+            if any(media["role"] == "image" for media in media_files)
+            else "video"
+        )
+        images = [media for media in media_files if media["role"] == "image"]
+        video_available = bool(
+            work_type == "video"
+            and (item.get("media_available") or media_file)
+        )
+        media_available = bool(video_available or images)
         title = str(item.get("title") or "未命名作品")
         return {
             "id": work_id,
@@ -1336,13 +1504,66 @@ class ModelMrClient:
             "has_video_text": bool(item.get("has_video_text")),
             "has_interpretation": bool(item.get("has_interpretation")),
             "comment_count": max(0, int(item.get("comment_count") or 0)),
+            "work_type": work_type,
             "media_available": media_available,
-            "video_url": f"/api/model-mr/works/{work_id}/video" if media_available and work_id else "",
+            "video_available": video_available,
+            "image_count": len(images),
+            "image_urls": [
+                f"/api/model-mr/works/{work_id}/images/{media['ordinal']}"
+                for media in images
+                if work_id
+            ],
+            "media_files": media_files,
+            "video_url": f"/api/model-mr/works/{work_id}/video" if video_available and work_id else "",
             "media_file": media_file,
             "keywords": info["keywords"],
             "keyword_info": info,
             "keyword_revision": keyword_revision(info),
         }
+
+    @staticmethod
+    def _clean_media_files(value: object) -> list[dict[str, Any]]:
+        source = value if isinstance(value, list) else []
+        cleaned: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        allowed = {
+            "video": {"video/mp4"},
+            "image": {"image/jpeg", "image/png", "image/webp"},
+        }
+        for raw in source[:100]:
+            if not isinstance(raw, dict):
+                continue
+            filename = str(raw.get("filename") or "").strip().replace("\\", "/")
+            role = str(raw.get("role") or "").strip().lower()
+            mime_type = str(raw.get("mime_type") or "").strip().lower()
+            try:
+                ordinal = int(raw.get("ordinal") or 0)
+            except (TypeError, ValueError):
+                continue
+            digest = str(raw.get("sha256") or "").strip().lower()
+            if (
+                not filename
+                or filename.startswith("/")
+                or any(part in {"", ".", ".."} for part in filename.split("/"))
+                or role not in allowed
+                or mime_type not in allowed[role]
+                or ordinal < 0
+                or ordinal > 99
+                or ordinal in seen
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            ):
+                continue
+            seen.add(ordinal)
+            cleaned.append(
+                {
+                    "filename": filename,
+                    "role": role,
+                    "mime_type": mime_type,
+                    "ordinal": ordinal,
+                    "sha256": digest,
+                }
+            )
+        return sorted(cleaned, key=lambda media: (media["ordinal"], media["role"]))
 
     @classmethod
     def _clean_detail(cls, value: dict[str, Any], *, work_id: int, live: bool) -> dict[str, Any]:
@@ -1385,6 +1606,7 @@ class ModelMrClient:
             "comment_total": max(len(comments), int(value.get("comment_total") or 0)),
             "capabilities": {
                 "video": bool(primary),
+                "images": False,
                 "save_title": True,
                 "save_video_text": True,
                 "transcribe_video": live,
@@ -1398,7 +1620,12 @@ class ModelMrClient:
         work = cls._clean_snapshot_work(value.get("work") if isinstance(value.get("work"), dict) else {"id": work_id})
         if work["id"] != work_id:
             work["id"] = work_id
-            work["video_url"] = f"/api/model-mr/works/{work_id}/video" if work["media_available"] else ""
+            work["video_url"] = f"/api/model-mr/works/{work_id}/video" if work["video_available"] else ""
+            work["image_urls"] = [
+                f"/api/model-mr/works/{work_id}/images/{media['ordinal']}"
+                for media in work["media_files"]
+                if media["role"] == "image"
+            ]
         video_text = value.get("video_text") if isinstance(value.get("video_text"), dict) else {}
         interpretation = value.get("interpretation") if isinstance(value.get("interpretation"), dict) else {}
         transcripts = [cls._clean_transcript(item) for item in value.get("transcripts", []) if isinstance(item, dict)] if isinstance(value.get("transcripts"), list) else []
@@ -1423,12 +1650,17 @@ class ModelMrClient:
             ),
             "comment_total": max(len(comments), int(value.get("comment_total") or 0)),
             "capabilities": {
-                "video": bool(work["media_available"]),
+                "video": bool(work["video_available"]),
+                "images": bool(work["image_count"]),
                 "save_title": True,
-                "save_video_text": True,
-                "transcribe_video": bool(transcripts or video_text.get("text")),
-                "doubao_asr": doubao_asr_is_configured()
-                or any("doubao" in str(item.get("source") or "").casefold() for item in transcripts),
+                "save_video_text": work["work_type"] == "video",
+                "transcribe_video": work["work_type"] == "video"
+                and bool(transcripts or video_text.get("text")),
+                "doubao_asr": work["work_type"] == "video"
+                and (
+                    doubao_asr_is_configured()
+                    or any("doubao" in str(item.get("source") or "").casefold() for item in transcripts)
+                ),
                 "comments": True,
             },
         }

@@ -55,7 +55,7 @@ export class ModelMrPanel {
     this.element.hidden = true;
     this.element.innerHTML = `
       <header class="panel-header model-mr-header">
-        <div class="panel-heading"><h2>模型先生</h2><span>主人手机版 · 视频、原文与评论</span></div>
+        <div class="panel-heading"><h2>模型先生</h2><span>主人手机版 · 视频、图文、原文与评论</span></div>
         <span class="panel-count">连接中</span>
       </header>
       <nav class="model-mr-tabs" aria-label="模型先生功能">
@@ -107,7 +107,7 @@ export class ModelMrPanel {
     this.chatConfig = chatConfig;
     this.processing = processing;
     const media = status.counts?.media ?? 0;
-    this.badge.textContent = media ? `${status.counts?.works ?? works.count} 部 · ${media} 视频` : `${status.counts?.works ?? works.count} 部`;
+    this.badge.textContent = media ? `${status.counts?.works ?? works.count} 部 · ${media} 个本地媒体` : `${status.counts?.works ?? works.count} 部`;
     this.renderActiveTab();
   }
 
@@ -351,7 +351,9 @@ export class ModelMrPanel {
     heading.append(titleGroup, date);
     const meta = document.createElement('div');
     meta.className = 'model-work-meta';
-    if (work.media_available) meta.append(this.pill('本地视频'));
+    const isImagePost = work.work_type === 'image' || work.work_type === 'gallery';
+    if (isImagePost && work.image_count) meta.append(this.pill(`图文 · ${work.image_count} 张原图`));
+    else if (work.video_available || work.media_available) meta.append(this.pill('本地视频'));
     if (work.has_video_text) meta.append(this.pill('有视频原文'));
     if (work.has_interpretation) meta.append(this.pill('有解读'));
     if (work.comment_count) meta.append(this.pill(`${work.comment_count} 条评论`));
@@ -387,8 +389,8 @@ export class ModelMrPanel {
     }
     const actions = document.createElement('div');
     actions.className = 'model-work-actions';
-    if (work.media_available) actions.append(this.actionButton('播放本地视频', work.id, 'open-detail', 'video', true));
-    actions.append(this.actionButton('视频原文', work.id, 'open-detail', 'text'));
+    if (work.media_available) actions.append(this.actionButton(isImagePost ? '查看图文原图' : '播放本地视频', work.id, 'open-detail', 'video', true));
+    actions.append(this.actionButton(isImagePost ? '图文正文' : '视频原文', work.id, 'open-detail', 'text'));
     actions.append(this.actionButton(`评论 ${work.comment_count || ''}`.trim(), work.id, 'open-detail', 'comments'));
     actions.append(this.actionButton(`AI关键词 ${work.keywords.length}`, work.id, 'open-detail', 'keywords'));
     if (work.has_interpretation) actions.append(this.actionButton('解读感悟', work.id, 'open-detail', 'interpretation'));
@@ -454,7 +456,8 @@ export class ModelMrPanel {
     const tabs = document.createElement('nav');
     tabs.className = 'model-detail-tabs';
     (['video', 'text', 'comments', 'keywords', 'interpretation'] as WorkDetailTab[]).forEach((value) => {
-      const labels: Record<WorkDetailTab, string> = { video: '本地视频', text: '视频原文', comments: `评论 ${detail.comment_total}`, keywords: 'AI关键词', interpretation: '解读感悟' };
+      const isImagePost = detail.work.work_type === 'image' || detail.work.work_type === 'gallery';
+      const labels: Record<WorkDetailTab, string> = { video: isImagePost ? '图文原图' : '本地视频', text: isImagePost ? '图文正文' : '视频原文', comments: `评论 ${detail.comment_total}`, keywords: 'AI关键词', interpretation: '解读感悟' };
       const button = this.actionButton(labels[value], workId, 'detail-tab', value);
       button.classList.toggle('is-active', value === tab);
       tabs.append(button);
@@ -486,7 +489,27 @@ export class ModelMrPanel {
   private renderVideo(detail: ModelMrWorkDetail): HTMLElement {
     const panel = document.createElement('div');
     panel.className = 'model-video-panel';
-    if (detail.work.media_available && detail.work.video_url) {
+    const isImagePost = detail.work.work_type === 'image' || detail.work.work_type === 'gallery';
+    if (isImagePost && detail.work.image_urls.length) {
+      const gallery = document.createElement('div');
+      gallery.className = 'model-image-gallery';
+      detail.work.image_urls.forEach((url, index) => {
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        const image = document.createElement('img');
+        image.src = url;
+        image.alt = `${detail.work.title} · 第 ${index + 1} 张原图`;
+        image.loading = 'lazy';
+        image.decoding = 'async';
+        link.append(image);
+        gallery.append(link);
+      });
+      const note = document.createElement('p');
+      note.textContent = `已保存 ${detail.work.image_count} 张原图；点击图片可查看原尺寸。`;
+      panel.append(gallery, note);
+    } else if (detail.work.video_available && detail.work.video_url) {
       const video = document.createElement('video');
       video.controls = true;
       video.playsInline = true;
@@ -503,7 +526,7 @@ export class ModelMrPanel {
         note.classList.add('is-error');
       });
       panel.append(video, note);
-    } else panel.append(this.message('这条作品暂未匹配到本地视频，可使用抖音原链接查看来源。'));
+    } else panel.append(this.message(isImagePost ? '这条图文暂未匹配到本地原图，可使用抖音原链接查看来源。' : '这条作品暂未匹配到本地视频，可使用抖音原链接查看来源。'));
     return panel;
   }
 
@@ -512,12 +535,14 @@ export class ModelMrPanel {
     panel.className = 'model-video-text-panel';
     const text = document.createElement('textarea');
     text.id = `model-video-text-${detail.work.id}`;
-    text.value = detail.video_text.text || detail.transcripts[0]?.text || '';
-    text.placeholder = '尚无视频原文，可点击下方识别按钮载入或生成文字。';
+    const isImagePost = detail.work.work_type === 'image' || detail.work.work_type === 'gallery';
+    text.value = isImagePost ? detail.work.description : detail.video_text.text || detail.transcripts[0]?.text || '';
+    text.placeholder = isImagePost ? '这条图文没有公开正文。' : '尚无视频原文，可点击下方识别按钮载入或生成文字。';
     text.maxLength = 200000;
+    text.readOnly = isImagePost;
     const source = document.createElement('p');
     source.className = 'model-text-source';
-    source.textContent = detail.video_text.source ? `当前来源：${detail.video_text.source}${detail.video_text.official ? '（正式原文）' : ''}` : '识别结果请核对后保存为正式原文。';
+    source.textContent = isImagePost ? '当前来源：抖音图文公开正文；与原图一同保存。' : detail.video_text.source ? `当前来源：${detail.video_text.source}${detail.video_text.official ? '（正式原文）' : ''}` : '识别结果请核对后保存为正式原文。';
     if (detail.video_text.source === 'doubao-auto-unreviewed') source.textContent = '豆包已自动识别并保存，尚未人工核对；您可修改后保存确认。';
     const actions = document.createElement('div');
     actions.className = 'model-text-actions';
@@ -528,8 +553,9 @@ export class ModelMrPanel {
     videoButton.disabled = busy || !detail.capabilities.transcribe_video;
     doubaoButton.disabled = busy || !detail.capabilities.doubao_asr;
     saveButton.disabled = busy || !detail.capabilities.save_video_text;
-    actions.append(videoButton, doubaoButton, saveButton);
-    panel.append(text, source, actions);
+    if (!isImagePost) actions.append(videoButton, doubaoButton, saveButton);
+    panel.append(text, source);
+    if (!isImagePost) panel.append(actions);
     return panel;
   }
 

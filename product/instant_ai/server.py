@@ -719,6 +719,13 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         finally:
             upstream.close()
 
+    def _serve_model_mr_image(self, work_id: int, ordinal: int) -> None:
+        local = MODEL_MR.image_path(work_id, ordinal)
+        if local is None:
+            self._json({"error": "图文原图不存在。"}, HTTPStatus.NOT_FOUND)
+            return
+        self._serve_private_file(*local)
+
     def _serve_blogger_video(self, work_key: str) -> None:
         local = BLOGGER_LIBRARY.video_path(work_key)
         if local is None:
@@ -743,6 +750,9 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             self._serve_blogger_video(path.split("/")[4])
         elif re.fullmatch(r"/api/model-mr/works/\d+/video", path):
             self._serve_model_mr_video(int(path.split("/")[4]))
+        elif re.fullmatch(r"/api/model-mr/works/\d+/images/\d+", path):
+            parts = path.split("/")
+            self._serve_model_mr_image(int(parts[4]), int(parts[6]))
         elif path.startswith("/api/"):
             self._not_found()
         else:
@@ -800,6 +810,9 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                 self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
         elif re.fullmatch(r"/api/model-mr/works/\d+/video", path):
             self._serve_model_mr_video(int(path.split("/")[4]))
+        elif re.fullmatch(r"/api/model-mr/works/\d+/images/\d+", path):
+            parts = path.split("/")
+            self._serve_model_mr_image(int(parts[4]), int(parts[6]))
         elif re.fullmatch(r"/api/model-mr/works/\d+", path):
             try:
                 self._json(MODEL_MR.work_detail(int(path.rsplit("/", 1)[-1])))

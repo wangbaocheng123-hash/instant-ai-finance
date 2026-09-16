@@ -52,18 +52,27 @@ class ModelMrTransferProjector:
 
         work = manifest.get("work") if isinstance(manifest.get("work"), dict) else {}
         media_items = manifest.get("media") if isinstance(manifest.get("media"), list) else []
-        video_descriptor = next(
+        work_type = str(work.get("work_type") or "video")
+        expected_role = "video" if work_type == "video" else "image"
+        descriptors = sorted(
             (
                 item
                 for item in media_items
                 if isinstance(item, dict)
-                and item.get("role") == "video"
-                and item.get("mime_type") == "video/mp4"
+                and item.get("role") == expected_role
+                and (
+                    item.get("mime_type") == "video/mp4"
+                    if expected_role == "video"
+                    else item.get("mime_type")
+                    in {"image/jpeg", "image/png", "image/webp"}
+                )
             ),
-            None,
+            key=lambda item: int(item.get("ordinal") or 0),
         )
-        if video_descriptor is None:
-            raise ModelMrUnavailable("模型先生传输没有 MP4 视频。")
+        if not descriptors:
+            raise ModelMrUnavailable(
+                "模型先生传输没有可用的视频或图文原图。"
+            )
         artifacts = {
             str(item.get("artifact_id") or ""): item
             for item in transfer.get("artifacts", [])
@@ -74,9 +83,22 @@ class ModelMrTransferProjector:
             if isinstance(manifest.get("comment_snapshot"), dict)
             else {}
         )
-        video_artifact = artifacts.get(str(video_descriptor.get("media_id") or ""))
         comment_artifact = artifacts.get(str(bundle_descriptor.get("bundle_id") or ""))
-        if not video_artifact or not comment_artifact:
+        resolved_media = []
+        for descriptor in descriptors:
+            artifact = artifacts.get(str(descriptor.get("media_id") or ""))
+            if not artifact:
+                raise ModelMrUnavailable("模型先生传输附件不完整。")
+            resolved_media.append(
+                {
+                    "path": self._artifact_path(artifact),
+                    "sha256": str(descriptor.get("sha256") or ""),
+                    "mime_type": str(descriptor.get("mime_type") or ""),
+                    "role": str(descriptor.get("role") or ""),
+                    "ordinal": int(descriptor.get("ordinal") or 0),
+                }
+            )
+        if not comment_artifact:
             raise ModelMrUnavailable("模型先生传输附件不完整。")
 
         imported = self.model_mr.import_beijing_work(
@@ -86,18 +108,18 @@ class ModelMrTransferProjector:
             description=str(work.get("description") or ""),
             source_url=str(work.get("source_url") or ""),
             published_at=str(work.get("published_at") or ""),
+            work_type=work_type,
             comments=self._comments(
                 self._artifact_path(comment_artifact),
                 bundle_descriptor,
             ),
-            media_path=self._artifact_path(video_artifact),
-            media_sha256=str(video_descriptor.get("sha256") or ""),
+            media_items=resolved_media,
         )
-        if imported.get("status") == "imported":
+        if imported.get("status") == "imported" and expected_role == "video":
             from .model_mr_processing import ModelMrProcessor
             # The request only records intent. Paid work runs on the serial worker.
             ModelMrProcessor(self.model_mr).enqueue_arrival(
-                int(imported["work_id"]), str(video_descriptor.get("sha256") or ""))
+                int(imported["work_id"]), str(descriptors[0].get("sha256") or ""))
 
     def processing_arrivals_since(self, completed_since: int, limit: int = 500) -> list[dict[str, Any]]:
         """Resolve completed Model Mr transports into projected processing IDs.

@@ -27,7 +27,8 @@
       "source_state": "managed",
       "data_roots": [
         "/var/lib/model-downloader",
-        "/srv/model-downloader/videos"
+        "/srv/model-downloader/videos",
+        "/srv/model-downloader/images"
       ]
     }
   ],

@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import hmac
 import io
+import mimetypes
 import os
 import re
 import secrets
@@ -40,6 +41,12 @@ DOWNLOADS_ROOT = Path(
     os.environ.get(
         "MODEL_DOWNLOADER_DOWNLOADS",
         "/srv/model-downloader/videos",
+    )
+)
+IMAGES_ROOT = Path(
+    os.environ.get(
+        "MODEL_DOWNLOADER_IMAGES",
+        "/srv/model-downloader/images",
     )
 )
 COMMENTS_ROOT = Path(
@@ -252,6 +259,14 @@ BASE_TEMPLATE = """
       border-radius: 6px;
       color: #40506a;
     }
+    .image-gallery {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .image-gallery img { width: 100%; height: auto; display: block; border-radius: 10px; }
+    .image-gallery figure { margin: 0; }
+    .image-gallery figcaption { margin-top: 7px; }
     @media (max-width: 850px) {
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .top-inner { align-items: flex-start; flex-direction: column; }
@@ -259,6 +274,7 @@ BASE_TEMPLATE = """
     }
     @media (max-width: 520px) {
       .grid { grid-template-columns: 1fr; }
+      .image-gallery { grid-template-columns: 1fr; }
       nav a { padding: 7px 8px; }
       .wrap { padding-left: 12px; padding-right: 12px; }
     }
@@ -270,7 +286,7 @@ BASE_TEMPLATE = """
   <div class="top-inner">
     <a class="brand" href="{{ url_for('dashboard') }}">模型下载器管理中心</a>
     <nav>
-      <a href="{{ url_for('dashboard') }}">视频库</a>
+      <a href="{{ url_for('dashboard') }}">作品库</a>
       <a href="{{ url_for('cleanup_page') }}">手动清理</a>
       <a href="{{ url_for('update_page') }}">系统更新</a>
       <a href="{{ url_for('backup_page') }}">数据备份</a>
@@ -354,6 +370,33 @@ def safe_video_path(raw_path: str | None) -> Path | None:
     return candidate
 
 
+def safe_image_path(raw_path: str | None) -> Path | None:
+    if not raw_path:
+        return None
+    try:
+        root = IMAGES_ROOT.resolve()
+        candidate = Path(raw_path).resolve()
+        candidate.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
+def work_media(video_id: str) -> list[sqlite3.Row]:
+    with connect() as connection:
+        return connection.execute(
+            """
+            SELECT ordinal, role, file_path, mime_type, file_size, sha256
+            FROM work_media
+            WHERE video_id=?
+            ORDER BY ordinal
+            """,
+            (video_id,),
+        ).fetchall()
+
+
 def safe_comment_path(video_id: str, published_at: str) -> Path | None:
     day = str(published_at or "")[:10]
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
@@ -389,12 +432,23 @@ def delete_video_and_comments(video_id: str) -> tuple[int, int]:
     """Delete one work and keep a tombstone so it is not downloaded again."""
     row = find_video(video_id)
     paths: list[Path] = []
-    raw_video_path = str(row["file_path"] or "")
-    video_path = safe_video_path(raw_video_path)
-    if raw_video_path and Path(raw_video_path).exists() and video_path is None:
-        raise ValueError("视频路径不在模型下载器目录内，已拒绝删除。")
-    if video_path:
-        paths.append(video_path)
+    if str(row["work_type"] or "video") == "image":
+        for media in work_media(video_id):
+            if str(media["role"] or "") != "image":
+                continue
+            raw_image_path = str(media["file_path"] or "")
+            image_path = safe_image_path(raw_image_path)
+            if raw_image_path and Path(raw_image_path).exists() and image_path is None:
+                raise ValueError("图片路径不在模型下载器目录内，已拒绝删除。")
+            if image_path and image_path not in paths:
+                paths.append(image_path)
+    else:
+        raw_video_path = str(row["file_path"] or "")
+        video_path = safe_video_path(raw_video_path)
+        if raw_video_path and Path(raw_video_path).exists() and video_path is None:
+            raise ValueError("视频路径不在模型下载器目录内，已拒绝删除。")
+        if video_path:
+            paths.append(video_path)
     comment_path = safe_comment_path(video_id, row["published_at"])
     if comment_path:
         paths.append(comment_path)
@@ -604,7 +658,10 @@ def dashboard():
                 SELECT video_id, creator, title, source_url, published_at,
                        downloaded_at, file_path, file_size, duration_seconds,
                        download_status, comments_collected_at, comment_count,
-                       comment_refresh_requested
+                       comment_refresh_requested, work_type, description,
+                       (SELECT COUNT(*) FROM work_media AS media
+                        WHERE media.video_id=videos.video_id
+                          AND media.role='image') AS image_count
                 FROM videos
                 {where}
                 ORDER BY published_at DESC
@@ -634,12 +691,12 @@ def dashboard():
             ).fetchone()
     page_count = max(1, (total + per_page - 1) // per_page)
     return render_page(
-        "视频库",
+        "作品库",
         """
         <div class="hero">
           <div>
-            <h1>视频与评论库</h1>
-            <div class="muted">不用找服务器目录，直接在这里播放、下载和导出。</div>
+            <h1>作品与评论库</h1>
+            <div class="muted">视频、图文正文和全部原图统一保存在这里。</div>
           </div>
           <form method="get" class="actions">
             <input style="width:260px" type="text" name="q" value="{{ search }}" placeholder="搜索标题或作品 ID">
@@ -648,7 +705,7 @@ def dashboard():
         </div>
         <section class="grid">
           <div class="card stat"><span class="muted">作品记录</span><strong>{{ summary.videos }}</strong></div>
-          <div class="card stat"><span class="muted">已下载视频</span><strong>{{ summary.downloaded }}</strong></div>
+          <div class="card stat"><span class="muted">已下载作品</span><strong>{{ summary.downloaded }}</strong></div>
           <div class="card stat"><span class="muted">评论数据</span><strong>{{ summary.comments }}</strong></div>
           <div class="card stat"><span class="muted">今天作品</span><strong>{{ summary.today }}</strong></div>
         </section>
@@ -678,12 +735,15 @@ def dashboard():
                   <td class="nowrap">{{ row.published_at[:16].replace('T',' ') }}</td>
                   <td class="title-cell">
                     <strong>{{ row.title or ('抖音作品_' + row.video_id) }}</strong>
+                    <span class="pill blue">{{ '图文' if row.work_type == 'image' else '视频' }}</span>
                     <div class="muted">{{ row.video_id }}</div>
-                    <div class="muted" style="font-size:12px">下载名：{{ row.download_name }}</div>
+                    {% if row.description %}<div class="muted" style="margin-top:5px">{{ row.description[:180] }}{% if row.description|length > 180 %}…{% endif %}</div>{% endif %}
+                    {% if row.work_type != 'image' %}<div class="muted" style="font-size:12px">下载名：{{ row.download_name }}</div>{% endif %}
                   </td>
                   <td class="nowrap">
                     {{ file_size_label(row.file_size) }}
                     {% if row.duration_seconds %}<div class="muted">{{ '%.1f'|format(row.duration_seconds) }} 秒</div>{% endif %}
+                    {% if row.work_type == 'image' %}<div class="muted">{{ row.image_count }} 张原图</div>{% endif %}
                   </td>
                   <td>
                     <span class="nowrap">{{ row.comment_count }} 条</span>
@@ -692,10 +752,14 @@ def dashboard():
                   <td>
                     <div class="actions nowrap">
                       {% if row.file_path and row.download_status in ('downloaded', 'repair_requested', 'repair_failed') %}
-                        <a class="button green" target="_blank" href="{{ url_for('play_video', video_id=row.video_id) }}">播放</a>
-                        <a class="button" href="{{ url_for('download_video', video_id=row.video_id) }}">下载视频</a>
+                        {% if row.work_type == 'image' %}
+                          <a class="button green" href="{{ url_for('images_page', video_id=row.video_id) }}">查看/下载原图</a>
+                        {% else %}
+                          <a class="button green" target="_blank" href="{{ url_for('play_video', video_id=row.video_id) }}">播放</a>
+                          <a class="button" href="{{ url_for('download_video', video_id=row.video_id) }}">下载视频</a>
+                        {% endif %}
                       {% else %}
-                        <span class="pill fail">视频未就绪</span>
+                        <span class="pill fail">媒体未就绪</span>
                       {% endif %}
                       <a class="button soft" href="{{ url_for('comments_page', video_id=row.video_id) }}">查看评论</a>
                       <form method="post" action="{{ url_for('request_comment_refresh', video_id=row.video_id) }}">
@@ -705,7 +769,7 @@ def dashboard():
                       <a class="button orange" href="{{ url_for('export_comments_csv', video_id=row.video_id) }}">导出评论</a>
                       <form method="post" action="{{ url_for('request_video_repair', video_id=row.video_id) }}">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button class="gray" type="submit">重新下载/修复声音</button>
+                        <button class="gray" type="submit">重新下载/修复媒体</button>
                       </form>
                       <a class="button danger" href="{{ url_for('delete_video_page', video_id=row.video_id) }}">删除</a>
                     </div>
@@ -743,7 +807,8 @@ def find_video(video_id: str) -> sqlite3.Row:
             """
             SELECT video_id, title, file_path, file_size, source_url,
                    published_at, comment_count, download_status,
-                   comments_collected_at, comment_refresh_requested
+                   comments_collected_at, comment_refresh_requested,
+                   work_type, description
             FROM videos WHERE video_id=?
             """,
             (video_id,),
@@ -786,6 +851,65 @@ def download_video(video_id: str):
     )
 
 
+@app.route("/videos/<video_id>/images")
+@login_required
+def images_page(video_id: str):
+    video = find_video(video_id)
+    if str(video["work_type"] or "") != "image":
+        abort(404)
+    images = [row for row in work_media(video_id) if row["role"] == "image"]
+    if not images:
+        abort(404, "图文原图不存在。")
+    return render_page(
+        "图文原图",
+        """
+        <div class="hero">
+          <div>
+            <h1>{{ video.title or ('抖音图文_' + video.video_id) }}</h1>
+            <div class="muted">共 {{ images|length }} 张原图 · 作品 ID {{ video.video_id }}</div>
+          </div>
+          <a class="button soft" href="{{ url_for('dashboard') }}">返回作品库</a>
+        </div>
+        {% if video.description %}<section class="card"><h2>图文正文</h2><p style="white-space:pre-wrap">{{ video.description }}</p></section>{% endif %}
+        <section class="card image-gallery">
+          {% for image in images %}
+          <figure>
+            <a target="_blank" href="{{ url_for('serve_image', video_id=video.video_id, ordinal=image.ordinal) }}"><img loading="lazy" src="{{ url_for('serve_image', video_id=video.video_id, ordinal=image.ordinal) }}" alt="第 {{ image.ordinal + 1 }} 张原图"></a>
+            <figcaption><a class="button" href="{{ url_for('serve_image', video_id=video.video_id, ordinal=image.ordinal, download=1) }}">下载第 {{ image.ordinal + 1 }} 张</a></figcaption>
+          </figure>
+          {% endfor %}
+        </section>
+        """,
+        video=video,
+        images=images,
+    )
+
+
+@app.route("/videos/<video_id>/images/<int:ordinal>")
+@login_required
+def serve_image(video_id: str, ordinal: int):
+    video = find_video(video_id)
+    image = next(
+        (row for row in work_media(video_id) if int(row["ordinal"]) == ordinal),
+        None,
+    )
+    if image is None:
+        abort(404)
+    path = safe_image_path(image["file_path"])
+    if path is None:
+        abort(404, "图文原图不存在。")
+    extension = path.suffix.lower() or mimetypes.guess_extension(image["mime_type"]) or ".jpg"
+    return send_file(
+        path,
+        mimetype=str(image["mime_type"] or mimetypes.guess_type(path.name)[0] or "image/jpeg"),
+        as_attachment=request.args.get("download") == "1",
+        download_name=f"{safe_download_name(video['published_at'], video_id)[:-4]}_{ordinal + 1:02}{extension}",
+        conditional=True,
+        etag=True,
+        max_age=3600,
+    )
+
+
 @app.route("/videos/<video_id>/repair", methods=["POST"])
 @login_required
 def request_video_repair(video_id: str):
@@ -804,7 +928,7 @@ def request_video_repair(video_id: str):
         )
     flash(
         f"已安排重新下载“{video['title'] or video_id}”。"
-        "后台会自动重新解析、合并声音并验证 MP4；通常几分钟内完成。"
+        "后台会按作品类型重新解析并校验视频或全部原图；通常几分钟内完成。"
     )
     return redirect(url_for("dashboard"))
 
@@ -853,14 +977,14 @@ def delete_video_page(video_id: str):
         <div class="hero">
           <div>
             <h1>确认删除这条作品</h1>
-            <div class="muted">删除动作不可撤销，请先确认视频和评论已经下载到电脑。</div>
+            <div class="muted">删除动作不可撤销，请先确认作品媒体和评论已经下载到电脑。</div>
           </div>
         </div>
         <section class="card danger-zone">
           <h2>{{ video.title or ('抖音作品_' + video.video_id) }}</h2>
           <p>作品 ID：{{ video.video_id }}</p>
           <p>发布时间：{{ video.published_at[:16].replace('T', ' ') }}</p>
-          <p>将同步删除：视频文件、{{ video.comment_count }} 条评论、评论 JSON 和数据库记录。</p>
+          <p>将同步删除：{{ '全部原图' if video.work_type == 'image' else '视频文件' }}、{{ video.comment_count }} 条评论、评论 JSON 和数据库记录。</p>
           <p><strong>删除后会留下“已手动删除”标记，监控程序不会再次下载它。</strong></p>
           <div class="actions">
             <form method="post">
@@ -919,7 +1043,7 @@ def cleanup_page():
         </section>
         <section class="card danger-zone">
           <h2>本次共 {{ rows|length }} 条作品</h2>
-          <p>视频约 {{ file_size_label(total_size) }}，评论 {{ total_comments }} 条。视频和对应评论会同步删除。</p>
+          <p>媒体约 {{ file_size_label(total_size) }}，评论 {{ total_comments }} 条。视频/原图和对应评论会同步删除。</p>
           <div class="table-scroll">
             <table>
               <thead><tr><th>发布时间</th><th>作品</th><th>视频大小</th><th>评论</th></tr></thead>
@@ -936,7 +1060,7 @@ def cleanup_page():
           <form method="post" action="{{ url_for('cleanup_delete') }}" style="margin-top:16px">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="before" value="{{ selected }}">
-            <label><input type="checkbox" name="confirmed" value="yes" required> 我确认这些视频和评论已经拿到电脑，可以永久删除</label>
+            <label><input type="checkbox" name="confirmed" value="yes" required> 我确认这些作品媒体和评论已经拿到电脑，可以永久删除</label>
             <button class="danger" type="submit">永久删除以上 {{ rows|length }} 条</button>
           </form>
           {% endif %}
@@ -1090,7 +1214,7 @@ def comments_page(video_id: str):
             <div class="muted">{{ tracking_label }}</div>
           </div>
           <div class="actions">
-            <a class="button soft" href="{{ url_for('dashboard') }}">返回视频库</a>
+            <a class="button soft" href="{{ url_for('dashboard') }}">返回作品库</a>
             <form method="post" action="{{ url_for('request_comment_refresh', video_id=video.video_id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button class="gray" type="submit">立即补抓全部回复</button>
@@ -1402,7 +1526,7 @@ def backup_page():
         </div>
         <section class="card">
           <h2>一键生成备份</h2>
-          <p>备份包含评论数据和数据库，不重复打包体积很大的 MP4。视频可在“视频库”里逐个下载。</p>
+          <p>备份包含评论数据和数据库，不重复打包体积很大的视频或原图。媒体可在“作品库”里逐个下载。</p>
           <form method="post" action="{{ url_for('create_backup') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit">生成新的数据备份</button>
@@ -1457,7 +1581,7 @@ def create_backup():
             readme = (
                 "本备份由模型下载器管理中心生成。\n"
                 "library.sqlite3 是视频与评论索引；comments 目录是评论 JSON 快照。\n"
-                "MP4 视频没有重复打包，请在管理中心视频库中下载。\n"
+                "视频和图文原图没有重复打包，请在管理中心作品库中下载。\n"
             ).encode("utf-8")
             info = tarfile.TarInfo("使用说明.txt")
             info.size = len(readme)

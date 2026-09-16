@@ -28,7 +28,7 @@ TITLE_SOURCES = {
 }
 
 _PLACEHOLDER_PATTERNS = (
-    re.compile(r"^抖音(?:作品|视频)(?:[_\s#：:\-]*[A-Za-z0-9._:-]+)?$", re.IGNORECASE),
+    re.compile(r"^抖音(?:作品|视频|图文)(?:[_\s#：:\-]*[A-Za-z0-9._:-]+)?$", re.IGNORECASE),
     re.compile(r"^(?:模型先生|模型哥看世界)在抖音记录美好生活(?:\d{8})?$"),
     re.compile(r"^(?:模型先生|模型哥看世界)的抖音(?:[-—–|｜·].*)?$"),
     re.compile(r"^(?:未命名作品|暂无标题|标题待识别)$"),

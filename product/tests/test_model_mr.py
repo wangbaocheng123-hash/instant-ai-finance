@@ -21,6 +21,88 @@ from instant_ai.server import InstantAIHandler
 
 
 class ModelMrGatewayTests(unittest.TestCase):
+    def test_verified_beijing_gallery_preserves_caption_and_serves_originals(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "public-snapshot.json"
+            snapshot.write_text(
+                json.dumps({"version": 2, "works": [], "thoughts": [], "counts": {}}),
+                encoding="utf-8",
+            )
+            first = root / "incoming-1.jpg"
+            second = root / "incoming-2.png"
+            first.write_bytes(b"\xff\xd8\xffgallery-one")
+            second.write_bytes(b"\x89PNG\r\n\x1a\ngallery-two")
+            client = ModelMrClient("http://127.0.0.1:9", snapshot, root / "media")
+            imported = client.import_beijing_work(
+                source_work_id="778898",
+                source_revision=1,
+                title="模型先生图文",
+                description="第一行正文\n第二行正文",
+                source_url="https://www.douyin.com/note/778898",
+                published_at="2026-09-16T09:00:00+08:00",
+                comments=[],
+                work_type="gallery",
+                media_items=[
+                    {
+                        "path": first,
+                        "sha256": hashlib.sha256(first.read_bytes()).hexdigest(),
+                        "mime_type": "image/jpeg",
+                        "role": "image",
+                        "ordinal": 0,
+                    },
+                    {
+                        "path": second,
+                        "sha256": hashlib.sha256(second.read_bytes()).hexdigest(),
+                        "mime_type": "image/png",
+                        "role": "image",
+                        "ordinal": 1,
+                    },
+                ],
+            )
+
+            with patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")):
+                work = client.works(limit=10)["items"][0]
+                detail = client.work_detail(imported["work_id"])
+                status = client.status()
+            self.assertEqual(work["work_type"], "gallery")
+            self.assertEqual(work["image_count"], 2)
+            self.assertEqual(work["description"], "第一行正文\n第二行正文")
+            self.assertEqual(len(work["image_urls"]), 2)
+            self.assertEqual(status["counts"]["media"], 2)
+            self.assertFalse(work["video_available"])
+            self.assertIsNone(client.video_path(imported["work_id"]))
+            self.assertEqual(client.image_path(imported["work_id"], 0)[1], "image/jpeg")
+            self.assertEqual(client.image_path(imported["work_id"], 1)[1], "image/png")
+            self.assertTrue(detail["capabilities"]["images"])
+            self.assertFalse(detail["capabilities"]["transcribe_video"])
+            mcp_work = ModelMrMcpLibrary(snapshot).get_work_for_mcp(
+                f"model-mr-work:{imported['work_id']}"
+            )
+            self.assertEqual(mcp_work["work"]["work_type"], "gallery")
+            self.assertEqual(mcp_work["work"]["image_count"], 2)
+            self.assertEqual(mcp_work["work"]["description"], "第一行正文\n第二行正文")
+
+            auth = OwnerAuth(required=False, path=root / "missing-auth.json")
+            server = ThreadingHTTPServer(("127.0.0.1", 0), InstantAIHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            with patch("instant_ai.server.MODEL_MR", client), patch("instant_ai.server.AUTH", auth):
+                thread.start()
+                try:
+                    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                    connection.request(
+                        "GET",
+                        f"/api/model-mr/works/{imported['work_id']}/images/1",
+                    )
+                    response = connection.getresponse()
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.getheader("Content-Type"), "image/png")
+                    self.assertEqual(response.read(), second.read_bytes())
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=5)
+
     def test_verified_beijing_work_is_idempotent_and_preserves_owner_fields(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

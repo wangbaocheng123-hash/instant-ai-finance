@@ -446,6 +446,110 @@ class BloggerTransferHTTPTests(unittest.TestCase):
         search = mcp.search_works_for_mcp("最新", limit=1)
         self.assertEqual(search["items"][0]["record_id"], f"model-mr-work:{work['id']}")
 
+    def test_reserved_model_mr_gallery_projects_without_video_processing(self) -> None:
+        model_root = Path(self.temporary.name) / "model-mr-gallery"
+        snapshot = model_root / "public-snapshot.json"
+        snapshot.parent.mkdir(parents=True)
+        snapshot.write_text(
+            json.dumps({"version": 2, "works": [], "thoughts": [], "counts": {}}),
+            encoding="utf-8",
+        )
+        model_mr = ModelMrClient("http://127.0.0.1:9", snapshot, model_root / "media")
+        self.application.on_complete = ModelMrTransferProjector(
+            blogger_root=self.root,
+            model_mr=model_mr,
+        ).project
+        first = b"\xff\xd8\xff" + b"gallery-one" + b"\xff\xd9"
+        second = b"\x89PNG\r\n\x1a\n" + b"gallery-two"
+        manifest = manifest_for(
+            first,
+            self.comment_plain,
+            creator_id=MODEL_MR_TRANSFER_CREATOR_ID,
+            creator_name="模型先生",
+        )
+        manifest.pop("transfer_id")
+        manifest.pop("revision_sha256")
+        manifest["work"].update(
+            work_type="gallery",
+            description="图文完整正文",
+            source_url="https://www.douyin.com/note/7654321098765432100",
+        )
+        bodies = [first, second]
+        manifest["media"] = []
+        for ordinal, (body, mime_type, extension) in enumerate(
+            ((first, "image/jpeg", "jpg"), (second, "image/png", "png"))
+        ):
+            digest = hashlib.sha256(body).hexdigest()
+            manifest["media"].append(
+                {
+                    "media_id": f"image:{ordinal}:{digest[:40]}",
+                    "role": "image",
+                    "filename": f"model-mr-{ordinal + 1}.{extension}",
+                    "mime_type": mime_type,
+                    "size_bytes": len(body),
+                    "sha256": digest,
+                    "ordinal": ordinal,
+                }
+            )
+        revision_sha256 = hashlib.sha256(canonical(manifest)).hexdigest()
+        identity = "\n".join(
+            (
+                NODE_ID,
+                MODEL_MR_TRANSFER_CREATOR_ID,
+                manifest["work"]["platform"],
+                manifest["work"]["source_work_id"],
+                str(manifest["work"]["revision"]),
+                revision_sha256,
+            )
+        ).encode("utf-8")
+        manifest["revision_sha256"] = revision_sha256
+        manifest["transfer_id"] = hashlib.sha256(identity).hexdigest()
+        self.manifest = manifest
+
+        self.accept_manifest()
+        for descriptor, body in zip(manifest["media"], bodies, strict=True):
+            media_path = (
+                f"{DEFAULT_MANIFEST_PATH}/{manifest['transfer_id']}/media/"
+                f"{quote(descriptor['media_id'], safe='')}"
+            )
+            response = self.call(
+                "PUT",
+                media_path,
+                body,
+                content_type=descriptor["mime_type"],
+            )
+            self.assertEqual(response.status, 201, response.payload)
+        bundle = manifest["comment_snapshot"]["bundle"]
+        comments_path = (
+            f"{DEFAULT_MANIFEST_PATH}/{manifest['transfer_id']}/comments/"
+            f"{bundle['bundle_id']}"
+        )
+        comments = self.call(
+            "PUT",
+            comments_path,
+            gzip_bytes(self.comment_plain),
+            content_type="application/gzip",
+        )
+        self.assertEqual(comments.status, 201, comments.payload)
+        complete_path = f"{DEFAULT_MANIFEST_PATH}/{manifest['transfer_id']}/complete"
+        complete = self.call(
+            "POST",
+            complete_path,
+            canonical({"transfer_id": manifest["transfer_id"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(complete.status, 200, complete.payload)
+
+        with patch("instant_ai.model_mr.urlopen", side_effect=URLError("offline")):
+            work = model_mr.works(limit=10)["items"][0]
+            detail = model_mr.work_detail(work["id"])
+        self.assertEqual(work["work_type"], "gallery")
+        self.assertEqual(work["image_count"], 2)
+        self.assertEqual(work["description"], "图文完整正文")
+        self.assertEqual(len(work["image_urls"]), 2)
+        self.assertTrue(detail["capabilities"]["images"])
+        self.assertFalse((model_root / "processing.sqlite3").exists())
+
     def test_comment_rows_freeze_beijing_v1_fields_types_boundaries_and_sorting(self) -> None:
         expected_fields = frozenset(
             {

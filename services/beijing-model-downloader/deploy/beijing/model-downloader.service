@@ -1,5 +1,5 @@
 [Unit]
-Description=Model Douyin Video Downloader
+Description=Model Douyin Video and Image Post Downloader
 After=network-online.target
 Wants=network-online.target
 

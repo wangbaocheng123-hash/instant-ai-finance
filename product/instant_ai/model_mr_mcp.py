@@ -221,6 +221,8 @@ class ModelMrMcpLibrary:
                     "title_source": work["title_source"],
                     "title_confidence": work["title_confidence"],
                     "description": work["description"],
+                    "work_type": work["work_type"],
+                    "image_count": work["image_count"],
                     "published_at": work["published_at"],
                     "source_url": work["source_url"],
                     "keywords": keyword_info["keywords"],
@@ -317,7 +319,9 @@ class ModelMrMcpLibrary:
                 "author_shortcut_tool": "get_model_mr_author_replies",
             },
             "evidence_note": (
-                "这是主人已保存并标记为正式的视频原文。"
+                "图文正文来自抖音公开作品描述；原图只在主人登录后的页面提供。"
+                if work["work_type"] in {"image", "gallery"}
+                else "这是主人已保存并标记为正式的视频原文。"
                 if original["status"] == "official"
                 else "这是尚未确认为正式原文的保存文字，引用前需要核对。"
                 if original["text"]
@@ -653,6 +657,12 @@ class ModelMrMcpLibrary:
     @classmethod
     def _clean_work(cls, item: dict[str, Any]) -> dict[str, Any]:
         keywords = item.get("keywords") if isinstance(item.get("keywords"), list) else []
+        media_files = item.get("media_files") if isinstance(item.get("media_files"), list) else []
+        derived_image_count = sum(
+            1
+            for media in media_files
+            if isinstance(media, dict) and media.get("role") == "image"
+        )
         title = _text(item.get("title")).strip()[:240] or "未命名作品"
         try:
             raw_confidence = float(item.get("title_confidence"))
@@ -673,6 +683,16 @@ class ModelMrMcpLibrary:
             "source_url": _safe_url(item.get("url")),
             "published_at": _text(item.get("published_at")).strip()[:80],
             "comment_count": max(0, cls._integer(item.get("comment_count"))),
+            "work_type": (
+                _text(item.get("work_type")).strip().lower()
+                if _text(item.get("work_type")).strip().lower()
+                in {"video", "image", "gallery"}
+                else "video"
+            ),
+            "image_count": max(
+                derived_image_count,
+                cls._integer(item.get("image_count")),
+            ),
             "media_available": bool(item.get("media_available") or item.get("media_file")),
             "keywords": [_text(keyword).strip()[:80] for keyword in keywords[:12] if _text(keyword).strip()],
         }

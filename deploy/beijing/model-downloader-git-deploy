@@ -170,7 +170,7 @@ run_release_tests() {
     fail "isolated model downloader tests failed"
   fi
   count="$(sed -nE 's/^Ran ([0-9]+) tests?.*/\1/p' "${output_file}" | tail -n 1)"
-  [[ "${count}" =~ ^[0-9]+$ && "${count}" -ge 4 ]] || fail "model downloader test count below floor"
+  [[ "${count}" =~ ^[0-9]+$ && "${count}" -ge 18 ]] || fail "model downloader test count below floor"
   log "isolated tests passed count=${count}"
   rm -f -- "${output_file}"
 }

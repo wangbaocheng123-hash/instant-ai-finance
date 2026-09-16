@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from datetime import datetime, timedelta
@@ -7,7 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class LibraryStore:
@@ -47,6 +48,8 @@ class LibraryStore:
                     video_id TEXT PRIMARY KEY,
                     creator TEXT NOT NULL DEFAULT '',
                     title TEXT NOT NULL DEFAULT '',
+                    description TEXT NOT NULL DEFAULT '',
+                    work_type TEXT NOT NULL DEFAULT 'video',
                     source_url TEXT NOT NULL,
                     published_at TEXT NOT NULL,
                     discovered_at TEXT NOT NULL,
@@ -63,6 +66,22 @@ class LibraryStore:
 
                 CREATE INDEX IF NOT EXISTS idx_videos_published_at
                 ON videos(published_at DESC);
+
+                CREATE TABLE IF NOT EXISTS work_media (
+                    video_id TEXT NOT NULL,
+                    ordinal INTEGER NOT NULL,
+                    role TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    PRIMARY KEY(video_id, ordinal),
+                    FOREIGN KEY(video_id) REFERENCES videos(video_id)
+                        ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_work_media_video
+                ON work_media(video_id, ordinal);
 
                 CREATE TABLE IF NOT EXISTS comments (
                     comment_id TEXT PRIMARY KEY,
@@ -200,6 +219,14 @@ class LibraryStore:
                     comment_refresh_requested INTEGER NOT NULL DEFAULT 0
                     """
                 )
+            if "description" not in video_columns:
+                connection.execute(
+                    "ALTER TABLE videos ADD COLUMN description TEXT NOT NULL DEFAULT ''"
+                )
+            if "work_type" not in video_columns:
+                connection.execute(
+                    "ALTER TABLE videos ADD COLUMN work_type TEXT NOT NULL DEFAULT 'video'"
+                )
             run_columns = {
                 str(column["name"])
                 for column in connection.execute(
@@ -256,6 +283,8 @@ class LibraryStore:
         source_url: str,
         published_at: datetime,
         now: datetime,
+        work_type: str = "video",
+        description: str = "",
     ) -> bool:
         timestamp = self._iso(now)
         with self._connect() as connection:
@@ -268,17 +297,23 @@ class LibraryStore:
             connection.execute(
                 """
                 INSERT INTO videos(
-                    video_id, creator, title, source_url, published_at,
-                    discovered_at, updated_at
+                    video_id, creator, title, description, work_type,
+                    source_url, published_at, discovered_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(video_id) DO UPDATE SET
                     creator = excluded.creator,
                     title = CASE
                         WHEN excluded.title LIKE '抖音作品_%'
+                          OR excluded.title LIKE '抖音图文_%'
                         THEN videos.title
                         ELSE excluded.title
                     END,
+                    description = CASE
+                        WHEN excluded.description = '' THEN videos.description
+                        ELSE excluded.description
+                    END,
+                    work_type = excluded.work_type,
                     source_url = excluded.source_url,
                     published_at = excluded.published_at,
                     updated_at = excluded.updated_at
@@ -287,6 +322,8 @@ class LibraryStore:
                     video_id,
                     creator,
                     title,
+                    str(description or ""),
+                    "image" if work_type == "image" else "video",
                     source_url,
                     self._iso(published_at),
                     timestamp,
@@ -377,6 +414,7 @@ class LibraryStore:
             return connection.execute(
                 """
                 SELECT video_id, title, source_url, published_at, file_path
+                       , work_type, description
                 FROM videos
                 WHERE download_status = 'repair_requested'
                 ORDER BY published_at
@@ -415,13 +453,19 @@ class LibraryStore:
         file_size: int,
         duration_seconds: float | None,
         downloaded_at: datetime,
+        description: str = "",
     ) -> None:
         timestamp = self._iso(downloaded_at)
         with self._connect() as connection:
             connection.execute(
                 """
                 UPDATE videos SET
-                    title = ?,
+                    title = CASE
+                        WHEN ? LIKE '抖音作品_%' OR ? LIKE '抖音图文_%'
+                        THEN title ELSE ?
+                    END,
+                    description = CASE WHEN ? = '' THEN description ELSE ? END,
+                    work_type = 'video',
                     downloaded_at = ?,
                     file_path = ?,
                     file_size = ?,
@@ -432,6 +476,10 @@ class LibraryStore:
                 """,
                 (
                     title,
+                    title,
+                    title,
+                    str(description or ""),
+                    str(description or ""),
                     timestamp,
                     str(file_path),
                     int(file_size),
@@ -440,6 +488,126 @@ class LibraryStore:
                     video_id,
                 ),
             )
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        try:
+            with Path(path).open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except OSError:
+            return ""
+        return digest.hexdigest()
+
+    def mark_images_downloaded(
+        self,
+        *,
+        video_id: str,
+        title: str,
+        description: str,
+        media: list[tuple[Path, str]],
+        downloaded_at: datetime,
+    ) -> None:
+        if not media:
+            raise ValueError("图文作品至少需要一张图片。")
+        timestamp = self._iso(downloaded_at)
+        rows: list[tuple[int, Path, str, int, str]] = []
+        for ordinal, (path, mime_type) in enumerate(media):
+            resolved = Path(path)
+            size = resolved.stat().st_size
+            digest = self._sha256_file(resolved)
+            if not digest:
+                raise OSError(f"无法读取图文原图：{resolved}")
+            rows.append((ordinal, resolved, str(mime_type), size, digest))
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE videos SET
+                    title = CASE
+                        WHEN ? LIKE '抖音作品_%' OR ? LIKE '抖音图文_%'
+                        THEN title ELSE ?
+                    END,
+                    description = CASE WHEN ? = '' THEN description ELSE ? END,
+                    work_type = 'image',
+                    downloaded_at = ?,
+                    file_path = ?,
+                    file_size = ?,
+                    duration_seconds = NULL,
+                    download_status = 'downloaded',
+                    updated_at = ?
+                WHERE video_id = ?
+                """,
+                (
+                    title,
+                    title,
+                    title,
+                    str(description or ""),
+                    str(description or ""),
+                    timestamp,
+                    str(rows[0][1]),
+                    sum(item[3] for item in rows),
+                    timestamp,
+                    video_id,
+                ),
+            )
+            connection.execute(
+                "DELETE FROM work_media WHERE video_id = ?",
+                (video_id,),
+            )
+            connection.executemany(
+                """
+                INSERT INTO work_media(
+                    video_id, ordinal, role, file_path, mime_type,
+                    file_size, sha256
+                ) VALUES (?, ?, 'image', ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        video_id,
+                        ordinal,
+                        str(path),
+                        mime_type,
+                        size,
+                        digest,
+                    )
+                    for ordinal, path, mime_type, size, digest in rows
+                ],
+            )
+
+    def media_files(self, video_id: str) -> list[sqlite3.Row]:
+        with self._connect() as connection:
+            return connection.execute(
+                """
+                SELECT video_id, ordinal, role, file_path, mime_type,
+                       file_size, sha256
+                FROM work_media
+                WHERE video_id = ?
+                ORDER BY ordinal
+                """,
+                (video_id,),
+            ).fetchall()
+
+    def image_media_complete(self, video_id: str) -> bool:
+        rows = self.media_files(video_id)
+        if not rows:
+            return False
+        for row in rows:
+            path = Path(str(row["file_path"] or ""))
+            expected_size = int(row["file_size"] or 0)
+            expected_digest = str(row["sha256"] or "").lower()
+            try:
+                actual_size = path.stat().st_size if path.is_file() else -1
+            except OSError:
+                return False
+            if (
+                str(row["role"] or "") != "image"
+                or expected_size <= 0
+                or actual_size != expected_size
+                or self._sha256_file(path) != expected_digest
+            ):
+                return False
+        return True
 
     def mark_download_failed(
         self,

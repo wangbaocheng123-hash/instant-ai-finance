@@ -16,6 +16,7 @@ readonly KNOWN_PATHS=(
   /var/lib/model-downloader
   /srv/model-downloader
   /srv/model-downloader/videos
+  /srv/model-downloader/images
   /var/lib/blogger-agent
   /opt/blogger-agent/current
   /opt/blogger-agent/production-source.git

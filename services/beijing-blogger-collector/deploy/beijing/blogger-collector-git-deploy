@@ -184,7 +184,7 @@ run_release_tests() {
     fail "isolated test suite failed"
   fi
   count="$(sed -nE 's/^Ran ([0-9]+) tests?.*/\1/p' "${output_file}" | tail -n 1)"
-  [[ "${count}" =~ ^[0-9]+$ && "${count}" -ge 203 ]] || fail "test count is below the 203-test release floor"
+  [[ "${count}" =~ ^[0-9]+$ && "${count}" -ge 204 ]] || fail "test count is below the 204-test release floor"
   log "isolated tests passed count=${count}"
   rm -rf -- "${source_dir}/.test-runtime" "${output_file}"
 }

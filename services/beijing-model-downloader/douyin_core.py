@@ -232,6 +232,19 @@ class ParseResult:
     audio_content_length: int = 0
 
 
+@dataclass
+class ImageParseResult:
+    share_url: str
+    final_page_url: str
+    work_id: str
+    title: str
+    description: str
+    image_urls: list[str]
+    referer: str
+    user_agent: str
+    cookies: dict[str, str]
+
+
 class CDPConnection:
     def __init__(self, ws_url: str):
         self.ws = websocket.create_connection(ws_url, timeout=2, origin="http://localhost")
@@ -630,6 +643,143 @@ class DouyinResolver:
             ),
         )
 
+    def resolve_images(
+        self,
+        share_text: str,
+        timeout: float = 35,
+    ) -> ImageParseResult:
+        share_url = extract_douyin_url(share_text)
+        id_match = VIDEO_ID_RE.search(share_url)
+        work_id = id_match.group(1) if id_match else ""
+        if not work_id:
+            raise ParseError("图文链接中没有找到作品 ID。")
+        self.log(f"已提取图文链接：{share_url}")
+        self._start_chrome()
+        assert self.cdp
+        self.cdp.call("Network.enable", {"maxTotalBufferSize": 50000000})
+        self.cdp.call("Page.enable")
+        self.cdp.call("Runtime.enable")
+        self.cdp.call("Page.navigate", {"url": share_url})
+        self.log("正在打开公开图文页并读取正文和原图列表…")
+
+        deadline = time.monotonic() + timeout
+        response_requests: set[str] = set()
+        image_urls: list[str] = []
+        description = ""
+        final_url = share_url
+        last_page_probe = 0.0
+        while time.monotonic() < deadline:
+            self._check_cancel()
+            if time.monotonic() - last_page_probe > 1:
+                last_page_probe = time.monotonic()
+                page_result = self._image_meta_from_page(work_id)
+                if page_result:
+                    description = str(
+                        page_result.get("desc")
+                        or page_result.get("title")
+                        or description
+                    ).strip()
+                    image_urls = _image_urls_from_aweme(page_result) or image_urls
+            if image_urls:
+                break
+            try:
+                event = self.cdp.events.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            method = event.get("method")
+            params = event.get("params", {})
+            if method == "Page.frameNavigated":
+                frame = params.get("frame", {})
+                if not frame.get("parentId") and frame.get("url", "").startswith("http"):
+                    final_url = str(frame["url"])
+            elif method == "Network.responseReceived":
+                response = params.get("response", {})
+                response_url = str(response.get("url") or "")
+                mime = str(response.get("mimeType") or "").lower()
+                if (
+                    "douyin.com" in (urlparse(response_url).hostname or "")
+                    and ("json" in mime or "aweme" in response_url)
+                    and any(
+                        marker in response_url
+                        for marker in ("aweme/detail", "aweme/post", "aweme/multi")
+                    )
+                ):
+                    request_id = str(params.get("requestId") or "")
+                    if request_id:
+                        response_requests.add(request_id)
+            elif method == "Network.loadingFinished":
+                request_id = str(params.get("requestId") or "")
+                if request_id not in response_requests:
+                    continue
+                response_requests.discard(request_id)
+                try:
+                    body = self.cdp.call(
+                        "Network.getResponseBody",
+                        {"requestId": request_id},
+                    ).get("body", "")
+                    payload = json.loads(body or "{}")
+                except Exception:
+                    continue
+                aweme = _find_aweme_with_images(payload, work_id)
+                if aweme:
+                    description = str(
+                        aweme.get("desc") or aweme.get("title") or description
+                    ).strip()
+                    image_urls = _image_urls_from_aweme(aweme)
+
+        if not image_urls:
+            raise ParseError("图文解析超时：没有取得作品原图，请稍后重试。")
+        cookie_rows = self.cdp.call("Network.getAllCookies").get("cookies", [])
+        cookies = {row["name"]: row["value"] for row in cookie_rows if row.get("name")}
+        user_agent = str(self._evaluate("navigator.userAgent") or "Mozilla/5.0")
+        try:
+            page_title = str(self._evaluate("document.title") or "")
+        except Exception:
+            page_title = ""
+        fallback = page_title.split(" - 抖音")[0].strip() or f"抖音图文_{work_id}"
+        title = _image_title(description, fallback)
+        self.log(
+            f"图文作品 {work_id} 已识别正文和 {len(image_urls)} 张原图。"
+        )
+        return ImageParseResult(
+            share_url=share_url,
+            final_page_url=final_url,
+            work_id=work_id,
+            title=title,
+            description=description,
+            image_urls=image_urls,
+            referer=final_url,
+            user_agent=user_agent,
+            cookies=cookies,
+        )
+
+    def _image_meta_from_page(self, work_id: str) -> dict | None:
+        expression = f"""(()=>{{
+          const target={json.dumps(work_id)};
+          const roots=[window._ROUTER_DATA,window.__INITIAL_STATE__,window.__NEXT_DATA__].filter(Boolean);
+          const queue=[...roots]; const seen=new Set(); let steps=0;
+          while(queue.length && steps<20000){{
+            const value=queue.shift(); steps+=1;
+            if(!value || typeof value!=='object' || seen.has(value)) continue;
+            seen.add(value);
+            const id=String(value.aweme_id||value.awemeId||value.item_id||value.itemId||'');
+            const images=value.images || value.image_list || (value.image_post_info&&value.image_post_info.images);
+            if(id===target && Array.isArray(images) && images.length){{
+              return JSON.stringify({{aweme_id:id,desc:value.desc||value.title||'',images}});
+            }}
+            for(const child of Object.values(value)){{
+              if(child && typeof child==='object') queue.push(child);
+            }}
+          }}
+          return '';
+        }})()"""
+        try:
+            raw = self._evaluate(expression)
+            value = json.loads(raw or "{}")
+            return value if isinstance(value, dict) and value else None
+        except Exception:
+            return None
+
     def close(self):
         if self.cdp:
             self.cdp.close()
@@ -659,6 +809,176 @@ class DouyinResolver:
 
     def __exit__(self, *_):
         self.close()
+
+
+def _image_title(description: str, fallback: str) -> str:
+    for line in str(description or "").splitlines():
+        cleaned = " ".join(line.split()).strip()
+        if cleaned:
+            return cleaned[:120]
+    return str(fallback or "抖音图文").strip()[:120]
+
+
+def _find_aweme_with_images(value: object, work_id: str) -> dict | None:
+    queue_values: list[object] = [value]
+    visited = 0
+    while queue_values and visited < 50000:
+        current = queue_values.pop()
+        visited += 1
+        if isinstance(current, dict):
+            current_id = str(
+                current.get("aweme_id")
+                or current.get("awemeId")
+                or current.get("item_id")
+                or current.get("itemId")
+                or ""
+            )
+            image_post_info = current.get("image_post_info") or {}
+            images = (
+                current.get("images")
+                or current.get("image_list")
+                or (
+                    image_post_info.get("images")
+                    if isinstance(image_post_info, dict)
+                    else None
+                )
+            )
+            if current_id == work_id and isinstance(images, list) and images:
+                return current
+            queue_values.extend(current.values())
+        elif isinstance(current, list):
+            queue_values.extend(current)
+    return None
+
+
+def _image_urls_from_aweme(aweme: dict) -> list[str]:
+    image_post_info = aweme.get("image_post_info") or {}
+    images = (
+        aweme.get("images")
+        or aweme.get("image_list")
+        or (
+            image_post_info.get("images")
+            if isinstance(image_post_info, dict)
+            else None
+        )
+        or []
+    )
+    urls: list[str] = []
+    for image in images:
+        if not isinstance(image, dict):
+            continue
+        candidates: list[str] = []
+        for key in ("download_url_list", "url_list"):
+            values = image.get(key) or []
+            if isinstance(values, list):
+                candidates.extend(
+                    str(item) for item in values if str(item).startswith("http")
+                )
+        for nested_key in ("display_image", "owner_watermark_image", "thumbnail"):
+            nested = image.get(nested_key) or {}
+            if isinstance(nested, dict):
+                values = nested.get("url_list") or []
+                if isinstance(values, list):
+                    candidates.extend(
+                        str(item) for item in values if str(item).startswith("http")
+                    )
+        if candidates and candidates[0] not in urls:
+            urls.append(candidates[0])
+    return urls
+
+
+def image_mime_type(path: Path) -> str:
+    try:
+        with Path(path).open("rb") as handle:
+            header = handle.read(16)
+    except OSError:
+        return ""
+    if header.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
+
+
+def download_images(
+    result: ImageParseResult,
+    destination: Path,
+    custom_prefix: str,
+    cancel_event: threading.Event | None = None,
+) -> list[Path]:
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    cancel_event = cancel_event or threading.Event()
+    prefix = sanitize_filename(custom_prefix, fallback=result.work_id)
+    headers = {
+        "User-Agent": result.user_agent,
+        "Referer": result.referer,
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    }
+    outputs: list[Path] = []
+    created_outputs: list[Path] = []
+    try:
+        for index, url in enumerate(result.image_urls, start=1):
+            if cancel_event.is_set():
+                raise DownloadCancelled("下载已取消。")
+            existing = next(
+                (
+                    path
+                    for path in destination.glob(f"{prefix}_{index:02}.*")
+                    if path.is_file()
+                    and path.stat().st_size > 1024
+                    and image_mime_type(path)
+                ),
+                None,
+            )
+            if existing:
+                outputs.append(existing)
+                continue
+            with requests.get(
+                url,
+                headers=headers,
+                cookies=result.cookies,
+                stream=True,
+                timeout=(10, 45),
+            ) as response:
+                response.raise_for_status()
+                content_type = str(response.headers.get("Content-Type") or "").lower()
+                if "png" in content_type:
+                    extension = ".png"
+                elif "webp" in content_type:
+                    extension = ".webp"
+                else:
+                    extension = ".jpg"
+                output = destination / f"{prefix}_{index:02}{extension}"
+                temporary = output.with_suffix(output.suffix + ".download")
+                with temporary.open("wb") as handle:
+                    for chunk in response.iter_content(1024 * 256):
+                        if cancel_event.is_set():
+                            raise DownloadCancelled("下载已取消。")
+                        if chunk:
+                            handle.write(chunk)
+                detected_mime = image_mime_type(temporary)
+                if temporary.stat().st_size <= 1024 or not detected_mime:
+                    temporary.unlink(missing_ok=True)
+                    raise ParseError(f"第 {index} 张原图不是有效的 JPEG、PNG 或 WebP。")
+                actual_extension = {
+                    "image/jpeg": ".jpg",
+                    "image/png": ".png",
+                    "image/webp": ".webp",
+                }[detected_mime]
+                output = destination / f"{prefix}_{index:02}{actual_extension}"
+                temporary.replace(output)
+                outputs.append(output)
+                created_outputs.append(output)
+    except Exception:
+        for temporary in destination.glob(f"{prefix}_*.download"):
+            temporary.unlink(missing_ok=True)
+        for output in created_outputs:
+            output.unlink(missing_ok=True)
+        raise
+    return outputs
 
 
 def download_video(

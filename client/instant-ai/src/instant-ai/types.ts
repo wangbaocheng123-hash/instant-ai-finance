@@ -276,8 +276,12 @@ export interface ModelMrWork {
   has_video_text: boolean;
   has_interpretation: boolean;
   comment_count: number;
+  work_type: 'video' | 'image' | 'gallery';
   media_available: boolean;
+  video_available: boolean;
   video_url: string;
+  image_count: number;
+  image_urls: string[];
   keywords: string[];
   keyword_info?: ModelMrKeywordInfo;
   keyword_revision?: string;
@@ -336,6 +340,7 @@ export interface ModelMrWorkDetail {
   comment_total: number;
   capabilities: {
     video: boolean;
+    images: boolean;
     save_title: boolean;
     save_video_text: boolean;
     transcribe_video: boolean;

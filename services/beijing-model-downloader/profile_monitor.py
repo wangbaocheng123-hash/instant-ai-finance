@@ -16,7 +16,7 @@ import requests
 from douyin_core import CDPConnection, CHROME_PATH, DownloadCancelled, ParseError
 
 
-PROFILE_VIDEO_RE = re.compile(r"/video/(\d{15,22})(?:[/?#]|$)")
+PROFILE_WORK_RE = re.compile(r"/(video|note)/(\d{15,22})(?:[/?#]|$)")
 METRIC_ONLY_RE = re.compile(r"^(?:\d+(?:\.\d+)?(?:万|亿)?|置顶)$")
 MIN_STABLE_PROFILE_CARDS = 3
 
@@ -27,6 +27,7 @@ class ProfileVideo:
     url: str
     title: str
     created_at: datetime
+    work_type: str = "video"
 
 
 class ProfileScanError(RuntimeError):
@@ -191,7 +192,7 @@ class ProfileScanner:
                       url: location.href,
                       title: document.title || '',
                       text: (document.body && document.body.innerText || '').slice(0, 1600),
-                      cards: [...document.querySelectorAll('a[href*="/video/"]')]
+                      cards: [...document.querySelectorAll('a[href*="/video/"],a[href*="/note/"]')]
                         .map(a => ({
                           href: a.href,
                           classCount: a.classList.length,
@@ -239,10 +240,11 @@ class ProfileScanner:
                     or int(card.get("classCount") or 0) < 2
                 ):
                     continue
-                match = PROFILE_VIDEO_RE.search(href)
+                match = PROFILE_WORK_RE.search(href)
                 if not match:
                     continue
-                video_id = match.group(1)
+                path_type = match.group(1).lower()
+                video_id = match.group(2)
                 title = " ".join((card.get("title") or "").split())
                 # The profile card usually exposes only its like/play count
                 # (for example "1.1万") as innerText.  That is not a caption;
@@ -252,9 +254,14 @@ class ProfileScanner:
                     title = ""
                 by_id[video_id] = ProfileVideo(
                     video_id=video_id,
-                    url=f"https://www.douyin.com/video/{video_id}",
-                    title=title or f"抖音作品_{video_id}",
+                    url=f"https://www.douyin.com/{path_type}/{video_id}",
+                    title=title or (
+                        f"抖音图文_{video_id}"
+                        if path_type == "note"
+                        else f"抖音作品_{video_id}"
+                    ),
                     created_at=video_created_at(video_id),
+                    work_type="image" if path_type == "note" else "video",
                 )
             # A single unrelated recommendation can appear during hydration.
             # This dedicated monitor targets a creator with hundreds of works,
@@ -264,7 +271,13 @@ class ProfileScanner:
                 videos = sorted(
                     by_id.values(), key=lambda row: int(row.video_id), reverse=True
                 )
-                self.log(f"主页扫描成功：发现 {len(videos)} 个当前可见作品")
+                image_count = sum(
+                    1 for item in videos if item.work_type == "image"
+                )
+                self.log(
+                    f"主页扫描成功：发现 {len(videos)} 个当前可见作品"
+                    f"（视频 {len(videos) - image_count}，图文 {image_count}）"
+                )
                 return creator, videos
 
         text = last_snapshot.get("text", "")

@@ -17,7 +17,9 @@ from douyin_core import (
     DouyinResolver,
     DownloadCancelled,
     ParseError,
+    download_images,
     download_video,
+    image_mime_type,
     inspect_mp4,
 )
 from library_store import LibraryStore
@@ -41,6 +43,9 @@ BASE_DIR = Path(
 )
 DOWNLOAD_ROOT = Path(
     os.environ.get("MODEL_DOWNLOADER_DOWNLOADS", "/srv/model-downloader/videos")
+)
+IMAGES_ROOT = Path(
+    os.environ.get("MODEL_DOWNLOADER_IMAGES", "/srv/model-downloader/images")
 )
 COMMENTS_ROOT = Path(
     os.environ.get("MODEL_DOWNLOADER_COMMENTS", "/srv/model-downloader/comments")
@@ -207,8 +212,9 @@ class CloudMonitor:
         ]
         return sorted(rows, key=lambda row: int(row.video_id))
 
-    def today_destination(self) -> Path:
-        destination = DOWNLOAD_ROOT / now_china().date().isoformat()
+    def today_destination(self, work_type: str = "video") -> Path:
+        root = IMAGES_ROOT if work_type == "image" else DOWNLOAD_ROOT
+        destination = root / now_china().date().isoformat()
         destination.mkdir(parents=True, exist_ok=True)
         return destination
 
@@ -223,6 +229,33 @@ class CloudMonitor:
             return existing
         return None
 
+    def existing_images(
+        self,
+        destination: Path,
+        video_id: str,
+    ) -> list[Path]:
+        stored: list[Path] = []
+        if hasattr(self.library, "media_files"):
+            for row in self.library.media_files(video_id):
+                if str(row["role"] or "") != "image":
+                    continue
+                candidate = Path(str(row["file_path"] or ""))
+                if (
+                    candidate.is_file()
+                    and candidate.stat().st_size > 1024
+                    and image_mime_type(candidate)
+                ):
+                    stored.append(candidate)
+        if stored:
+            return stored
+        return sorted(
+            path
+            for path in destination.glob(f"*_{video_id}_[0-9][0-9].*")
+            if path.is_file()
+            and path.stat().st_size > 1024
+            and image_mime_type(path)
+        )
+
     def download_one(
         self,
         video: ProfileVideo,
@@ -231,10 +264,17 @@ class CloudMonitor:
         force: bool = False,
         known_file: Path | None = None,
         cancel_event: threading.Event | None = None,
-    ) -> Path:
+    ) -> Path | list[Path]:
         active_cancel_event = (
             cancel_event if cancel_event is not None else self.cancel_event
         )
+        if video.work_type == "image":
+            return self.download_image_work(
+                video,
+                destination,
+                force=force,
+                cancel_event=active_cancel_event,
+            )
         existing = self.existing_file(destination, video.video_id)
         if known_file and known_file.is_file():
             existing = known_file
@@ -281,6 +321,97 @@ class CloudMonitor:
             if backup:
                 backup.unlink(missing_ok=True)
             return output
+
+    def download_image_work(
+        self,
+        video: ProfileVideo,
+        destination: Path,
+        *,
+        force: bool = False,
+        cancel_event: threading.Event,
+    ) -> list[Path]:
+        existing = self.existing_images(destination, video.video_id)
+        if existing and not force:
+            if self.library.image_media_complete(video.video_id):
+                self.log(
+                    "图文作品 %s 已存在 %d 张原图，跳过重复下载。",
+                    video.video_id,
+                    len(existing),
+                )
+                return existing
+            force = True
+
+        backups: list[tuple[Path, Path]] = []
+        if force:
+            for path in existing:
+                backup = path.with_name(f".{path.name}.repair-backup")
+                backup.unlink(missing_ok=True)
+                path.replace(backup)
+                backups.append((path, backup))
+        try:
+            outputs = self._download_fresh_images(
+                video,
+                destination,
+                cancel_event=cancel_event,
+            )
+        except Exception:
+            for original, backup in backups:
+                if backup.exists():
+                    original.unlink(missing_ok=True)
+                    backup.replace(original)
+            raise
+        else:
+            for _original, backup in backups:
+                backup.unlink(missing_ok=True)
+            return outputs
+
+    def _download_fresh_images(
+        self,
+        video: ProfileVideo,
+        destination: Path,
+        *,
+        cancel_event: threading.Event,
+    ) -> list[Path]:
+        self.log(f"发现图文作品 {video.video_id}，开始解析正文和原图。")
+        resolver = DouyinResolver(
+            log=self.log,
+            cancel_event=cancel_event,
+            profile_dir=BROWSER_PROFILE,
+        )
+        try:
+            result = resolver.resolve_images(video.url, timeout=50)
+        finally:
+            resolver.close()
+        custom_prefix = f"{video.created_at:%Y%m%d_%H%M}_{video.video_id}"
+        outputs: list[Path] = []
+        try:
+            outputs = download_images(
+                result,
+                destination,
+                custom_prefix,
+                cancel_event=cancel_event,
+            )
+            media = [(path, image_mime_type(path)) for path in outputs]
+            if not outputs or any(not mime_type for _path, mime_type in media):
+                raise ParseError("图文原图校验失败，已删除并等待重试。")
+            self.library.mark_images_downloaded(
+                video_id=video.video_id,
+                title=result.title,
+                description=result.description,
+                media=media,
+                downloaded_at=now_china(),
+            )
+        except Exception:
+            for path in outputs:
+                path.unlink(missing_ok=True)
+            raise
+        self.log(
+            "图文下载完成：作品 %s，共 %d 张原图，正文 %d 字。",
+            video.video_id,
+            len(outputs),
+            len(result.description),
+        )
+        return outputs
 
     def _download_fresh(
         self,
@@ -416,6 +547,15 @@ class CloudMonitor:
             url=str(row["source_url"]),
             title=str(row["title"] or f"抖音作品_{row['video_id']}"),
             created_at=published,
+            work_type=(
+                str(row["work_type"] or "video")
+                if "work_type" in row.keys()
+                else (
+                    "image"
+                    if "/note/" in str(row["source_url"] or "")
+                    else "video"
+                )
+            ),
         )
 
     def _comment_candidates(self):
@@ -453,10 +593,15 @@ class CloudMonitor:
 
     def _repair_one(self, row, deadline: datetime) -> None:
         video = self._stored_video(row)
-        destination = DOWNLOAD_ROOT / video.created_at.date().isoformat()
+        root = IMAGES_ROOT if video.work_type == "image" else DOWNLOAD_ROOT
+        destination = root / video.created_at.date().isoformat()
         destination.mkdir(parents=True, exist_ok=True)
         raw_path = str(row["file_path"] or "")
-        known_file = Path(raw_path) if raw_path else None
+        known_file = (
+            Path(raw_path)
+            if raw_path and video.work_type == "video"
+            else None
+        )
         timer = self._arm_maintenance_deadline(deadline)
         try:
             self.download_one(
@@ -476,7 +621,7 @@ class CloudMonitor:
         except Exception:
             self.library.mark_repair_failed(video.video_id, now_china())
             self.logger.exception(
-                "作品 %s 的音视频修复失败，可在管理页面再次重试。",
+                "作品 %s 的媒体修复失败，可在管理页面再次重试。",
                 video.video_id,
             )
         finally:
@@ -567,7 +712,6 @@ class CloudMonitor:
 
             rows = self.today_rows(videos)
             visible_today = len(rows)
-            destination = self.today_destination()
             pending: list[ProfileVideo] = []
             for row in rows:
                 accepted = self.library.upsert_video(
@@ -577,12 +721,22 @@ class CloudMonitor:
                     source_url=row.url,
                     published_at=row.created_at,
                     now=now_china(),
+                    work_type=row.work_type,
                 )
                 if not accepted:
                     self.log(
                         "作品 %s 已被手动删除，跳过且不再重复下载。",
                         row.video_id,
                     )
+                    continue
+                destination = self.today_destination(row.work_type)
+                if row.work_type == "image":
+                    images = self.existing_images(destination, row.video_id)
+                    if images and self.library.image_media_complete(row.video_id):
+                        self.downloaded_ids.add(row.video_id)
+                        continue
+                    self.downloaded_ids.discard(row.video_id)
+                    pending.append(row)
                     continue
                 existing = self.existing_file(destination, row.video_id)
                 if existing:
@@ -614,7 +768,10 @@ class CloudMonitor:
                 if self.stop_event.is_set():
                     raise DownloadCancelled("服务正在停止。")
                 try:
-                    self.download_one(row, destination)
+                    self.download_one(
+                        row,
+                        self.today_destination(row.work_type),
+                    )
                 except Exception:
                     self.library.mark_download_failed(
                         row.video_id,
@@ -655,8 +812,8 @@ class CloudMonitor:
 
     def run(self, once: bool = False) -> int:
         self.log(
-            "%s 已启动；全天 24 小时持续检查新视频；"
-            "新视频硬优先、从每轮开始起固定间隔 %d 分钟；"
+            "%s 已启动；全天 24 小时持续检查新作品（视频和图文）；"
+            "新作品硬优先、从每轮开始起固定间隔 %d 分钟；"
             "评论和修复仅使用检查空档并到点让路；"
             "评论刷新按发布时间分级：前 %d 小时每 %d 分钟，"
             "之后每 %d 分钟。",
@@ -693,8 +850,8 @@ class CloudMonitor:
 
             if self.consecutive_scan_failures >= 3:
                 self.logger.critical(
-                    "新视频主页已连续检查失败 %d 次；评论和修复继续停让，"
-                    "下一周期仍优先重试视频。",
+                    "新作品主页已连续检查失败 %d 次；评论和修复继续停让，"
+                    "下一周期仍优先重试作品。",
                     self.consecutive_scan_failures,
                 )
 

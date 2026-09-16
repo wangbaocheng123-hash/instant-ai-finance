@@ -55,7 +55,7 @@ class BeijingDeploymentContractTests(unittest.TestCase):
         script = self.read("blogger-collector-git-deploy")
         self.assertIn("https://mirrors.aliyun.com/pypi/simple/", script)
         self.assertIn("-p 'test_*.py'", script)
-        self.assertIn('"${count}" -ge 203', script)
+        self.assertIn('"${count}" -ge 204', script)
         self.assertIn("MODEL_DOWNLOADER_BRIDGE_ENABLED=0", script)
         self.assertNotIn('BLOGGER_AGENT_MEDIA_DIR="${source_dir}', script)
 

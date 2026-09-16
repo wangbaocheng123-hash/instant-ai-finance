@@ -273,6 +273,93 @@ class ModelDownloaderBridgeTests(unittest.TestCase):
                 )
             )
 
+    def test_downloaded_image_post_enqueues_caption_and_ordered_gallery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            video_root = root / "videos"
+            image_root = root / "images"
+            artifact_root = root / "outbox" / "artifacts"
+            video_root.mkdir()
+            image_root.mkdir()
+            artifact_root.mkdir(parents=True)
+            first = image_root / "work_01.jpg"
+            second = image_root / "work_02.png"
+            first.write_bytes(b"\xff\xd8\xff" + b"first-image")
+            second.write_bytes(b"\x89PNG\r\n\x1a\n" + b"second-image")
+            database = root / "library.sqlite3"
+            with sqlite3.connect(database) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE videos(
+                        video_id TEXT, creator TEXT, title TEXT, description TEXT,
+                        work_type TEXT, source_url TEXT, published_at TEXT,
+                        discovered_at TEXT, downloaded_at TEXT, file_path TEXT,
+                        file_size INTEGER, duration_seconds REAL,
+                        download_status TEXT, comments_collected_at TEXT,
+                        comment_count INTEGER, updated_at TEXT
+                    );
+                    CREATE TABLE work_media(
+                        video_id TEXT, ordinal INTEGER, role TEXT, file_path TEXT,
+                        mime_type TEXT, file_size INTEGER, sha256 TEXT
+                    );
+                    CREATE TABLE comments(
+                        video_id TEXT, comment_id TEXT, parent_comment_id TEXT,
+                        author_name TEXT, text TEXT, created_at TEXT,
+                        digg_count INTEGER, reply_count INTEGER, ip_label TEXT,
+                        is_creator INTEGER, is_author_digged INTEGER,
+                        reply_to_comment_id TEXT, reply_to_user_name TEXT,
+                        label_text TEXT, collected_at TEXT
+                    );
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO videos VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        "778900", "模型先生", "图文标题", "完整正文\n第二行",
+                        "image", "https://www.douyin.com/note/778900",
+                        "2026-09-16T09:00:00+08:00", "", "", str(first),
+                        first.stat().st_size + second.stat().st_size, None,
+                        "downloaded", "2026-09-16T09:05:00+08:00", 0,
+                        "2026-09-16T09:05:00+08:00",
+                    ),
+                )
+                connection.executemany(
+                    "INSERT INTO work_media VALUES(?,?,?,?,?,?,?)",
+                    [
+                        ("778900", 0, "image", str(first), "image/jpeg", first.stat().st_size, ""),
+                        ("778900", 1, "image", str(second), "image/png", second.stat().st_size, ""),
+                    ],
+                )
+
+            outbox = TransferOutbox(
+                root / "outbox" / "transfer.sqlite3",
+                allowed_artifact_roots=(artifact_root,),
+            )
+            bridge = ModelDownloaderBridge(
+                outbox=outbox,
+                artifact_dir=artifact_root,
+                collector_node_id="beijing-1",
+                collector_key_id="key-1",
+                collector_version="test",
+                database_path=database,
+                media_root=video_root,
+                image_root=image_root,
+                state_path=root / "state.json",
+            )
+
+            self.assertEqual(bridge.scan_once()["enqueued"], 1)
+            queued = outbox.get(outbox.list_recent(limit=1)[0]["transfer_id"])
+            self.assertEqual(queued["manifest"]["work"]["work_type"], "gallery")
+            self.assertEqual(queued["manifest"]["work"]["description"], "完整正文 第二行")
+            self.assertEqual(
+                [item["ordinal"] for item in queued["manifest"]["media"]],
+                [0, 1],
+            )
+            self.assertEqual(
+                [item["mime_type"] for item in queued["manifest"]["media"]],
+                ["image/jpeg", "image/png"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

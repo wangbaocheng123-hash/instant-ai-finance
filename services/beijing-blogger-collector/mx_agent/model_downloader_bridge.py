@@ -20,6 +20,7 @@ from .transfer_outbox import TransferOutbox
 MODEL_MR_TRANSFER_CREATOR_ID = "732ceafb-2bb3-5042-b303-967bdcf4312d"
 DEFAULT_DATABASE = Path("/var/lib/model-downloader/library.sqlite3")
 DEFAULT_MEDIA_ROOT = Path("/srv/model-downloader/videos")
+DEFAULT_IMAGE_ROOT = Path("/srv/model-downloader/images")
 WIRE_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]+")
 COMMENT_SIGNATURE_VERSION = 2
 COMMENT_SIGNATURE_REBASE_HOURS = 48
@@ -65,6 +66,7 @@ class ModelDownloaderBridge:
         collector_version: str,
         database_path: Path = DEFAULT_DATABASE,
         media_root: Path = DEFAULT_MEDIA_ROOT,
+        image_root: Path = DEFAULT_IMAGE_ROOT,
         state_path: Path | None = None,
         interval_seconds: int = 15,
         enabled: bool = True,
@@ -76,6 +78,7 @@ class ModelDownloaderBridge:
         self.collector_version = collector_version
         self.database_path = Path(database_path)
         self.media_root = Path(media_root)
+        self.image_root = Path(image_root)
         self.state_path = Path(state_path or self.artifact_dir.parent / "model-mr-bridge-state.json")
         self.interval_seconds = max(5, min(int(interval_seconds), 3600))
         self.enabled = bool(enabled)
@@ -99,6 +102,7 @@ class ModelDownloaderBridge:
     ) -> "ModelDownloaderBridge":
         database = Path(os.getenv("MODEL_DOWNLOADER_DATABASE", str(DEFAULT_DATABASE)))
         media_root = Path(os.getenv("MODEL_DOWNLOADER_MEDIA_ROOT", str(DEFAULT_MEDIA_ROOT)))
+        image_root = Path(os.getenv("MODEL_DOWNLOADER_IMAGE_ROOT", str(DEFAULT_IMAGE_ROOT)))
         return cls(
             outbox=outbox,
             artifact_dir=artifact_dir,
@@ -107,6 +111,7 @@ class ModelDownloaderBridge:
             collector_version=collector_version,
             database_path=database,
             media_root=media_root,
+            image_root=image_root,
             state_path=Path(
                 os.getenv(
                     "MODEL_DOWNLOADER_BRIDGE_STATE_PATH",
@@ -159,12 +164,20 @@ class ModelDownloaderBridge:
             enqueued = unchanged = skipped = 0
             state_dirty = False
             with closing(self._connect()) as connection:
+                video_columns = self._table_columns(connection, "videos")
+                work_type_column = (
+                    "work_type" if "work_type" in video_columns else "'video' AS work_type"
+                )
+                description_column = (
+                    "description" if "description" in video_columns else "'' AS description"
+                )
                 rows = connection.execute(
-                    """
+                    f"""
                     SELECT video_id, creator, title, source_url, published_at,
                            discovered_at, downloaded_at, file_path, file_size,
                            duration_seconds, download_status,
-                           comments_collected_at, comment_count, updated_at
+                           comments_collected_at, comment_count, updated_at,
+                           {work_type_column}, {description_column}
                     FROM videos
                     WHERE file_path IS NOT NULL AND TRIM(file_path) != ''
                       AND download_status IN ('downloaded','repair_requested','repair_failed')
@@ -175,6 +188,9 @@ class ModelDownloaderBridge:
                     row = dict(raw)
                     source_id = str(row.get("video_id") or "").strip()
                     try:
+                        media = self._media(connection, row)
+                        if not media:
+                            raise ValueError("model_downloader_media_missing")
                         captured_at = next(
                             (
                                 value
@@ -189,7 +205,7 @@ class ModelDownloaderBridge:
                             "1970-01-01T00:00:00+00:00",
                         )
                         comments = self._comments(connection, source_id, captured_at)
-                        signature = self._signature(row, comments)
+                        signature = self._signature(row, comments, media)
                     except (OSError, ValueError, sqlite3.Error):
                         skipped += 1
                         continue
@@ -218,7 +234,12 @@ class ModelDownloaderBridge:
                         unchanged += 1
                         continue
                     try:
-                        queued = self._enqueue(row, comments, captured_at=captured_at)
+                        queued = self._enqueue(
+                            row,
+                            comments,
+                            media,
+                            captured_at=captured_at,
+                        )
                     except (OSError, ValueError, sqlite3.Error):
                         skipped += 1
                         continue
@@ -247,8 +268,19 @@ class ModelDownloaderBridge:
         connection.execute("PRAGMA query_only=ON")
         return connection
 
-    def _safe_media_path(self, value: object) -> Path:
-        root = self.media_root.resolve(strict=True)
+    @staticmethod
+    def _table_columns(
+        connection: sqlite3.Connection,
+        table: str,
+    ) -> set[str]:
+        return {
+            str(row["name"])
+            for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+
+    def _safe_media_path(self, value: object, role: str = "video") -> Path:
+        root_path = self.image_root if role == "image" else self.media_root
+        root = root_path.resolve(strict=True)
         target = Path(str(value or "")).resolve(strict=True)
         if target != root and root not in target.parents:
             raise ValueError("model_downloader_media_outside_root")
@@ -256,21 +288,75 @@ class ModelDownloaderBridge:
             raise ValueError("model_downloader_media_missing")
         return target
 
+    def _media(
+        self,
+        connection: sqlite3.Connection,
+        row: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        work_type = str(row.get("work_type") or "video")
+        result: list[dict[str, Any]] = []
+        if work_type == "image" and self._table_columns(connection, "work_media"):
+            stored = connection.execute(
+                """
+                SELECT ordinal, role, file_path, mime_type, file_size, sha256
+                FROM work_media
+                WHERE video_id=? AND role='image'
+                ORDER BY ordinal
+                """,
+                (str(row.get("video_id") or ""),),
+            ).fetchall()
+            for item in stored:
+                value = dict(item)
+                path = self._safe_media_path(value.get("file_path"), "image")
+                mime_type = str(value.get("mime_type") or "")
+                if mime_type not in {"image/jpeg", "image/png", "image/webp"}:
+                    raise ValueError("model_downloader_image_mime_invalid")
+                result.append(
+                    {
+                        "path": path,
+                        "role": "image",
+                        "mime_type": mime_type,
+                        "ordinal": max(0, int(value.get("ordinal") or 0)),
+                    }
+                )
+            return result
+        path = self._safe_media_path(row.get("file_path"), "video")
+        return [
+            {
+                "path": path,
+                "role": "video",
+                "mime_type": "video/mp4",
+                "ordinal": 0,
+            }
+        ]
+
     def _signature(
         self,
         row: Mapping[str, Any],
         comments: list[dict[str, Any]],
+        media: list[dict[str, Any]],
     ) -> str:
-        path = self._safe_media_path(row.get("file_path"))
-        stat = path.stat()
+        media_rows = []
+        for item in media:
+            path = Path(item["path"])
+            stat = path.stat()
+            media_rows.append(
+                [
+                    item["role"],
+                    item["mime_type"],
+                    item["ordinal"],
+                    stat.st_size,
+                    stat.st_mtime_ns,
+                ]
+            )
         value = {
             "video": [
                 row.get("video_id"),
                 row.get("title"),
                 row.get("source_url"),
                 row.get("published_at"),
-                stat.st_size,
-                stat.st_mtime_ns,
+                media_rows[0][3],
+                media_rows[0][4],
                 row.get("comment_count"),
             ],
             # Comment fields are part of the revision identity. In particular,
@@ -286,6 +372,11 @@ class ModelDownloaderBridge:
                 for item in comments
             ],
         }
+        if str(row.get("work_type") or "video") == "image":
+            value["image_post"] = [
+                row.get("description"),
+                media_rows,
+            ]
         payload = json.dumps(
             value,
             ensure_ascii=False,
@@ -366,6 +457,7 @@ class ModelDownloaderBridge:
         self,
         row: Mapping[str, Any],
         comments: list[dict[str, Any]],
+        media_items: list[dict[str, Any]],
         *,
         captured_at: str,
     ) -> dict[str, Any]:
@@ -376,12 +468,55 @@ class ModelDownloaderBridge:
         comment_path = self.artifact_dir / "model-mr" / f"comments-{bundle['sha256']}.ndjson.gz"
         self._atomic_bytes(comment_path, bundle_bytes)
 
-        source_media = self._safe_media_path(row.get("file_path"))
-        media_sha = sha256_file(source_media)
-        media_path = self.artifact_dir / "model-mr" / f"video-{media_sha}.mp4"
-        self._stage_media(source_media, media_path, media_sha)
-        media_size = media_path.stat().st_size
-        media_id = media_sha
+        work_type = str(row.get("work_type") or "video")
+        media_descriptors: list[dict[str, Any]] = []
+        media_artifacts: list[dict[str, Any]] = []
+        extension_by_mime = {
+            "video/mp4": ".mp4",
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+        }
+        for item in media_items:
+            source_media = Path(item["path"])
+            media_sha = sha256_file(source_media)
+            mime_type = str(item["mime_type"])
+            ordinal = int(item["ordinal"])
+            role = str(item["role"])
+            extension = extension_by_mime[mime_type]
+            media_path = (
+                self.artifact_dir
+                / "model-mr"
+                / f"{role}-{media_sha}{extension}"
+            )
+            self._stage_media(source_media, media_path, media_sha)
+            media_size = media_path.stat().st_size
+            media_id = (
+                media_sha
+                if role == "video"
+                else f"image:{ordinal}:{media_sha[:40]}"
+            )
+            media_descriptors.append(
+                {
+                    "media_id": media_id,
+                    "role": role,
+                    "filename": f"model-mr-{source_id}-{ordinal + 1:02}{extension}",
+                    "mime_type": mime_type,
+                    "size_bytes": media_size,
+                    "sha256": media_sha,
+                    "ordinal": ordinal,
+                }
+            )
+            media_artifacts.append(
+                {
+                    "artifact_id": media_id,
+                    "artifact_kind": "media",
+                    "local_path": str(media_path),
+                    "size_bytes": media_size,
+                    "sha256": media_sha,
+                    "mime_type": mime_type,
+                }
+            )
         reservation = self.outbox.reserve(
             node_id=self.collector_node_id,
             creator_id=MODEL_MR_TRANSFER_CREATOR_ID,
@@ -402,25 +537,24 @@ class ModelDownloaderBridge:
             work={
                 "platform": "douyin",
                 "source_work_id": source_id,
-                "work_type": "video",
-                "title": str(row.get("title") or "")[:1000],
-                "description": "",
-                "source_url": str(row.get("source_url") or f"https://www.douyin.com/video/{source_id}"),
+                "work_type": (
+                    "gallery"
+                    if work_type == "image" and len(media_descriptors) > 1
+                    else "image"
+                    if work_type == "image"
+                    else "video"
+                ),
+                "title": _wire_text(row.get("title"), 1000),
+                "description": _wire_text(row.get("description"), 20000),
+                "source_url": str(
+                    row.get("source_url")
+                    or f"https://www.douyin.com/{'note' if work_type == 'image' else 'video'}/{source_id}"
+                ),
                 "cover_url": "",
                 "published_at": _iso(row.get("published_at")) or None,
             },
             work_revision=reservation.work_revision,
-            media=[
-                {
-                    "media_id": media_id,
-                    "role": "video",
-                    "filename": f"model-mr-{source_id}.mp4",
-                    "mime_type": "video/mp4",
-                    "size_bytes": media_size,
-                    "sha256": media_sha,
-                    "ordinal": 0,
-                }
-            ],
+            media=media_descriptors,
             comment_snapshot={
                 "snapshot_id": hashlib.sha256(f"{source_id}:{bundle['sha256']}".encode()).hexdigest(),
                 "captured_at": captured_at,
@@ -440,14 +574,7 @@ class ModelDownloaderBridge:
         return self.outbox.enqueue(
             manifest,
             artifacts=[
-                {
-                    "artifact_id": media_id,
-                    "artifact_kind": "media",
-                    "local_path": str(media_path),
-                    "size_bytes": media_size,
-                    "sha256": media_sha,
-                    "mime_type": "video/mp4",
-                },
+                *media_artifacts,
                 {
                     "artifact_id": bundle["bundle_id"],
                     "artifact_kind": "comment_bundle",
