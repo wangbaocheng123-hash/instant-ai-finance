@@ -5,7 +5,7 @@
 - 只读核对今天 07:47 的真实作品后确认，三分钟扫描一直成功，漏抓原因是抖音给该作品使用了新的 `/article/7685913028676799717` 路由；旧主页选择器只接受 `/video/`、`/note/`。即使只补路由也仍会失败，因为长图文顶层 `desc/images` 为空，标题和正文分别位于 `article_info.article_title` 与 `article_info.article_content` 的 JSON Markdown。
 - 北京模型下载器升级为 `0.10.1+git.article-posts`：主页、作品 ID 和旧记录类型判断均接受 `/article/`；解析器保留独立标题和完整 Markdown，有内嵌原图时按顺序保存，没有内嵌图时保存抖音公开 `video.origin_cover`。不合成图片、不从封面 OCR 正文，旧 `/note/` 与视频路径保持兼容。
 - 新增真实结构对应的纯文字长图文、内嵌多图优先级和新路由回归，模型下载器 21 项测试、Python 编译和差异检查通过。未发布代码直接在北京公开页进行只读探针，主页取得 20 条作品（17 视频、3 图文），目标被识别为 article 图文；解析得到 23 字标题、215 字正文、2 段和 1 张可下载的 176,249 字节 JPEG 封面。
-- 修复提交 `e91477c809a2ce2eb89e7d48e89f544ca3011c8a` 已推送 `main` 与 `beijing-production`，北京统一发布器通过服务器 21 项隔离测试和发布后真实扫描门禁。accepted/deployed/current 均为目标提交，model/model-web/blogger 三服务 active，timer disabled/inactive；本次 GitHub 直连发布成功，没有建立代理或修改网络、凭据和基础设施。
+- 修复提交 `e91477c809a2ce2eb89e7d48e89f544ca3011c8a` 已推送 `main` 与 `beijing-production`，北京统一发布器通过服务器 21 项隔离测试和发布后真实扫描门禁。模型 accepted/deployed/current 均为目标提交；博主子树未变，accepted 前移至目标提交而 deployed 保持 `50c8c2c`。model/model-web/blogger 三服务 active，timer disabled/inactive；本次 GitHub 直连发布成功，没有建立代理或修改网络、凭据和基础设施。
 - 发布后扫描 8457 真实发现今日 2 条并新下载目标图文；数据库记录、正文、JPEG 文件、MIME、大小和 SHA-256 全部有效。评论空档已保存 116 条当前公开记录；桥接 revision 2 以 HTTP 200 送达新加坡，图片和评论 artifact 均 verified，同步投影回调成功。评论包当前规范化捕获 114/预期 116 并明确标为 incomplete，后续按既定 15 分钟规则刷新；未登录模型先生 API 仍返回 401。即时 AI 代码仍为 0.23.0，无需重复发布，也未触发 ASR、豆包或 AI。
 
 ## 2026-09-16 — 模型先生图文下载与私有投影（正式发布）
