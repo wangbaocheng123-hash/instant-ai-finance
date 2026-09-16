@@ -552,7 +552,10 @@ class CloudMonitor:
                 if "work_type" in row.keys()
                 else (
                     "image"
-                    if "/note/" in str(row["source_url"] or "")
+                    if any(
+                        marker in str(row["source_url"] or "")
+                        for marker in ("/note/", "/article/")
+                    )
                     else "video"
                 )
             ),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
 import tempfile
@@ -12,13 +13,17 @@ COMPONENT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(COMPONENT))
 
 from douyin_core import (  # noqa: E402
+    VIDEO_ID_RE,
     _find_aweme_with_images,
+    _image_description_from_aweme,
     _image_title,
+    _image_title_from_aweme,
     _image_urls_from_aweme,
+    extract_douyin_url,
     image_mime_type,
 )
 from library_store import LibraryStore, SCHEMA_VERSION  # noqa: E402
-from profile_monitor import PROFILE_WORK_RE  # noqa: E402
+from profile_monitor import IMAGE_WORK_PATH_TYPES, PROFILE_WORK_RE  # noqa: E402
 
 
 CHINA = timezone(timedelta(hours=8))
@@ -90,6 +95,18 @@ class ImagePostTests(unittest.TestCase):
         self.assertEqual(video.groups(), ("video", "7000000000000000001"))
         self.assertEqual(note.groups(), ("note", "7000000000000000002"))
 
+    def test_article_route_is_an_image_work_and_keeps_the_work_id(self) -> None:
+        url = "https://www.douyin.com/article/7000000000000000003?from=profile"
+        profile_match = PROFILE_WORK_RE.search(url)
+        resolver_match = VIDEO_ID_RE.search(url)
+        self.assertEqual(
+            profile_match.groups(),
+            ("article", "7000000000000000003"),
+        )
+        self.assertIn(profile_match.group(1), IMAGE_WORK_PATH_TYPES)
+        self.assertEqual(resolver_match.group(1), "7000000000000000003")
+        self.assertEqual(extract_douyin_url(f"新图文 {url}"), url)
+
     def test_nested_note_keeps_caption_and_original_image_order(self) -> None:
         work_id = "7000000000000000003"
         payload = {
@@ -119,6 +136,87 @@ class ImagePostTests(unittest.TestCase):
             ],
         )
         self.assertEqual(_image_title(aweme["desc"], "fallback"), "第一行正文")
+
+    def test_text_article_keeps_markdown_and_public_origin_cover(self) -> None:
+        work_id = "7000000000000000004"
+        payload = {
+            "aweme_detail": {
+                "aweme_id": work_id,
+                "desc": "",
+                "article_info": {
+                    "article_title": "长图文标题",
+                    "article_content": json.dumps(
+                        {
+                            "long_article_abstract": "",
+                            "markdown": "第一段正文\n\n第二段正文",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "fe_data": json.dumps(
+                        {
+                            "image_length": 0,
+                            "image_list": [],
+                            "is_rich_media": False,
+                        }
+                    ),
+                },
+                "video": {
+                    "origin_cover": {
+                        "url_list": [
+                            "https://p3.douyinpic.com/article-cover.jpg",
+                            "https://p9.douyinpic.com/article-cover.jpg",
+                        ]
+                    },
+                    "cover": {
+                        "url_list": [
+                            "https://p3.douyinpic.com/lower-priority-cover.jpg"
+                        ]
+                    },
+                },
+            }
+        }
+        aweme = _find_aweme_with_images(payload, work_id)
+        self.assertIsNotNone(aweme)
+        self.assertEqual(
+            _image_description_from_aweme(aweme or {}),
+            "第一段正文\n\n第二段正文",
+        )
+        self.assertEqual(_image_title_from_aweme(aweme or {}), "长图文标题")
+        self.assertEqual(
+            _image_urls_from_aweme(aweme or {}),
+            ["https://p3.douyinpic.com/article-cover.jpg"],
+        )
+
+    def test_article_embedded_images_take_priority_over_cover(self) -> None:
+        work_id = "7000000000000000005"
+        aweme = {
+            "aweme_id": work_id,
+            "article_info": {
+                "article_title": "带图长文",
+                "article_content": json.dumps({"markdown": "正文"}),
+                "fe_data": json.dumps(
+                    {
+                        "image_list": [
+                            {"url": "https://p3.douyinpic.com/article-1.webp"},
+                            {"url_list": ["https://p3.douyinpic.com/article-2.jpg"]},
+                        ]
+                    }
+                ),
+            },
+            "video": {
+                "origin_cover": {
+                    "url_list": ["https://p3.douyinpic.com/cover.jpg"]
+                }
+            },
+        }
+        self.assertIs(_find_aweme_with_images(aweme, work_id), aweme)
+        self.assertEqual(
+            _image_urls_from_aweme(aweme),
+            [
+                "https://p3.douyinpic.com/article-1.webp",
+                "https://p3.douyinpic.com/article-2.jpg",
+            ],
+        )
 
     def test_schema_migrates_and_persists_caption_and_multiple_originals(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
