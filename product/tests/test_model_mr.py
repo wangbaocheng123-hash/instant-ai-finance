@@ -9,7 +9,7 @@ import http.client
 import threading
 from pathlib import Path
 from http.server import ThreadingHTTPServer
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 from urllib.error import URLError
 
 from instant_ai.auth import OwnerAuth
@@ -17,7 +17,12 @@ from instant_ai.model_mr import ModelMrClient
 from instant_ai.model_mr_mcp import ModelMrMcpLibrary
 from instant_ai.model_mr_transfer import ModelMrTransferProjector
 from instant_ai.blogger_library import MODEL_MR_TRANSFER_CREATOR_ID
-from instant_ai.server import InstantAIHandler
+from instant_ai.server import (
+    InstantAIHandler,
+    MEDIA_OPEN_ENDED_RANGE_BYTES,
+    MEDIA_WRITE_TIMEOUT_SECONDS,
+    REQUEST_READ_TIMEOUT_SECONDS,
+)
 
 
 class ModelMrGatewayTests(unittest.TestCase):
@@ -68,7 +73,13 @@ class ModelMrGatewayTests(unittest.TestCase):
             self.assertEqual(work["work_type"], "gallery")
             self.assertEqual(work["image_count"], 2)
             self.assertEqual(work["description"], "第一行正文\n第二行正文")
-            self.assertEqual(len(work["image_urls"]), 2)
+            self.assertEqual(
+                work["image_urls"],
+                [
+                    f"/media/model-mr/works/{imported['work_id']}/images/0",
+                    f"/media/model-mr/works/{imported['work_id']}/images/1",
+                ],
+            )
             self.assertEqual(status["counts"]["media"], 2)
             self.assertFalse(work["video_available"])
             self.assertIsNone(client.video_path(imported["work_id"]))
@@ -92,7 +103,7 @@ class ModelMrGatewayTests(unittest.TestCase):
                     connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
                     connection.request(
                         "GET",
-                        f"/api/model-mr/works/{imported['work_id']}/images/1",
+                        f"/media/model-mr/works/{imported['work_id']}/images/1",
                     )
                     response = connection.getresponse()
                     self.assertEqual(response.status, 200)
@@ -707,7 +718,7 @@ class ModelMrGatewayTests(unittest.TestCase):
                 video_path = client.video_path(7)
 
             self.assertEqual(status["mode"], "owner-mobile-library")
-            self.assertEqual(work["video_url"], "/api/model-mr/works/7/video")
+            self.assertEqual(work["video_url"], "/media/model-mr/works/7/video")
             self.assertEqual(video_path[0], media / "sample.mp4")
             self.assertEqual(detail["video_text"]["text"], "正式原文")
             self.assertEqual(detail["comments"][0]["text"], "测试评论")
@@ -721,7 +732,11 @@ class ModelMrGatewayTests(unittest.TestCase):
             root = Path(directory)
             (root / "details").mkdir()
             (root / "media").mkdir()
-            (root / "media" / "sample.mp4").write_bytes(b"video-data")
+            video = root / "media" / "sample.mp4"
+            video.write_bytes(b"video-data")
+            with video.open("ab") as stream:
+                stream.truncate(MEDIA_OPEN_ENDED_RANGE_BYTES + 1024)
+            file_size = video.stat().st_size
             (root / "public-snapshot.json").write_text(
                 json.dumps({"version": 2, "works": [{"id": 9}], "thoughts": []}),
                 encoding="utf-8",
@@ -751,20 +766,36 @@ class ModelMrGatewayTests(unittest.TestCase):
                     connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
                     connection.request(
                         "GET",
-                        "/api/model-mr/works/9/video",
+                        "/media/model-mr/works/9/video",
                         headers={"Range": "bytes=1-3"},
                     )
                     response = connection.getresponse()
                     body = response.read()
                     self.assertEqual(response.status, 206)
-                    self.assertEqual(response.getheader("Content-Range"), "bytes 1-3/10")
+                    self.assertEqual(response.getheader("Content-Range"), f"bytes 1-3/{file_size}")
+                    self.assertEqual(response.getheader("Cache-Control"), "private, max-age=3600")
+                    self.assertEqual(response.getheader("Vary"), "Cookie")
                     self.assertEqual(body, b"ide")
-                    connection.request("HEAD", "/api/model-mr/works/9/video")
+                    connection.request(
+                        "GET",
+                        "/media/model-mr/works/9/video",
+                        headers={"Range": "bytes=0-"},
+                    )
+                    open_range = connection.getresponse()
+                    open_range_body = open_range.read()
+                    self.assertEqual(open_range.status, 206)
+                    self.assertEqual(
+                        open_range.getheader("Content-Range"),
+                        f"bytes 0-{MEDIA_OPEN_ENDED_RANGE_BYTES - 1}/{file_size}",
+                    )
+                    self.assertEqual(open_range.getheader("Content-Length"), str(MEDIA_OPEN_ENDED_RANGE_BYTES))
+                    self.assertEqual(len(open_range_body), MEDIA_OPEN_ENDED_RANGE_BYTES)
+                    connection.request("HEAD", "/media/model-mr/works/9/video")
                     head = connection.getresponse()
                     head_body = head.read()
                     self.assertEqual(head.status, 200)
                     self.assertEqual(head.getheader("Content-Type"), "video/mp4")
-                    self.assertEqual(head.getheader("Content-Length"), "10")
+                    self.assertEqual(head.getheader("Content-Length"), str(file_size))
                     self.assertEqual(head.getheader("Accept-Ranges"), "bytes")
                     self.assertEqual(head_body, b"")
                     connection.request(
@@ -775,13 +806,39 @@ class ModelMrGatewayTests(unittest.TestCase):
                     range_head = connection.getresponse()
                     range_head_body = range_head.read()
                     self.assertEqual(range_head.status, 206)
-                    self.assertEqual(range_head.getheader("Content-Range"), "bytes 0-1/10")
+                    self.assertEqual(range_head.getheader("Content-Range"), f"bytes 0-1/{file_size}")
                     self.assertEqual(range_head.getheader("Content-Length"), "2")
                     self.assertEqual(range_head_body, b"")
                 finally:
                     server.shutdown()
                     server.server_close()
                     thread.join(timeout=5)
+
+    def test_private_media_temporarily_extends_socket_write_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            video = Path(directory) / "sample.mp4"
+            video.write_bytes(b"video-data")
+            handler = InstantAIHandler.__new__(InstantAIHandler)
+            handler.command = "GET"
+            handler.headers = {"Range": "bytes=0-"}
+            handler.connection = Mock()
+            handler.connection.gettimeout.return_value = REQUEST_READ_TIMEOUT_SECONDS
+            handler.wfile = Mock()
+            handler.send_response = Mock()
+            handler.send_header = Mock()
+            handler.end_headers = Mock()
+
+            handler._serve_private_file(
+                video,
+                "video/mp4",
+                max_open_ended_range_bytes=MEDIA_OPEN_ENDED_RANGE_BYTES,
+            )
+
+            self.assertEqual(
+                handler.connection.settimeout.call_args_list,
+                [call(MEDIA_WRITE_TIMEOUT_SECONDS), call(REQUEST_READ_TIMEOUT_SECONDS)],
+            )
+            handler.wfile.write.assert_called_once_with(b"video-data")
 
     def test_owner_library_can_run_live_doubao_asr_with_git_external_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'instant-ai-shell-v0.23.0';
+const SHELL_CACHE = 'instant-ai-shell-v0.23.1';
 const SHELL_ASSETS = [
   '/', '/app.js', '/styles.css', '/manifest.webmanifest',
   '/app-icon-192.png', '/app-icon-512.png', '/apple-touch-icon.png',
@@ -21,7 +21,7 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
+  if (url.origin !== self.location.origin || url.pathname.startsWith('/api/') || url.pathname.startsWith('/media/')) return;
 
   event.respondWith(
     fetch(request)

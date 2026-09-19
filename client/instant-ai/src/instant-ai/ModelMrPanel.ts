@@ -517,12 +517,28 @@ export class ModelMrPanel {
       video.src = detail.work.video_url;
       const note = document.createElement('p');
       note.textContent = '正在读取视频信息…';
+      let playbackStarted = false;
+      const showBuffering = () => {
+        if (!video.paused && !video.ended) {
+          note.textContent = '网络有波动，正在自动续传本地视频…';
+          note.classList.remove('is-error');
+        }
+      };
       video.addEventListener('loadedmetadata', () => {
         const seconds = Number.isFinite(video.duration) ? Math.max(1, Math.round(video.duration)) : 0;
         note.textContent = `本地有声视频已就绪${seconds ? ` · ${Math.floor(seconds / 60)}分${seconds % 60}秒` : ''}，不会跳转抖音。`;
       });
+      video.addEventListener('playing', () => {
+        playbackStarted = true;
+        note.textContent = '本地有声视频正在播放；网络波动时会自动分段续传。';
+        note.classList.remove('is-error');
+      });
+      video.addEventListener('waiting', showBuffering);
+      video.addEventListener('stalled', showBuffering);
       video.addEventListener('error', () => {
-        note.textContent = '本地视频加载失败。请先确认网络正常，再收起后重新打开；错误不会跳转抖音。';
+        note.textContent = playbackStarted
+          ? '本地视频续传失败，请点击播放键重试；会从当前进度继续，不会跳转抖音。'
+          : '本地视频加载失败。请先确认网络正常后点击播放键重试；错误不会跳转抖音。';
         note.classList.add('is-error');
       });
       panel.append(video, note);

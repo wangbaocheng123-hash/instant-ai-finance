@@ -6,6 +6,8 @@ import hmac
 import json
 import os
 import re
+import shutil
+import sqlite3
 import stat
 import tempfile
 import threading
@@ -43,6 +45,13 @@ MAX_NDJSON_LINE_BYTES = 256 * 1024
 STREAM_CHUNK_BYTES = 1024 * 1024
 
 _TRANSFER_ID = r"[0-9a-f]{64}"
+_LEGACY_TRANSFER_DIRECTORY = re.compile(_TRANSFER_ID)
+_LEGACY_MEDIA_FILENAME = re.compile(
+    r"media-(?P<sha>[0-9a-f]{64})(?P<suffix>\.mp4|\.jpg|\.png|\.webp)"
+)
+_LEGACY_COMMENT_FILENAME = re.compile(
+    r"comments-(?P<sha>[0-9a-f]{64})\.ndjson\.gz"
+)
 _MEDIA_PATH = re.compile(
     rf"{re.escape(DEFAULT_MANIFEST_PATH)}/(?P<transfer>{_TRANSFER_ID})/media/(?P<artifact>[^/]+)"
 )
@@ -281,6 +290,11 @@ class BloggerTransferHTTP:
         self.on_complete = on_complete
         self._commit_lock = threading.Lock()
         self._ensure_artifact_layout()
+        # This migration is crash-safe and idempotent.  It preserves every
+        # ledger revision while replacing per-transfer byte copies with one
+        # verified content-addressed object.  Running it before the HTTP server
+        # starts also prevents a new upload from racing the one-time cleanup.
+        self.compaction_report = self.compact_verified_artifacts()
 
     @classmethod
     def from_environment(
@@ -409,9 +423,19 @@ class BloggerTransferHTTP:
             path=DEFAULT_MANIFEST_PATH,
             received_at=received_at,
         )
+        with self._commit_lock:
+            self._reuse_pending_artifacts(receipt.transfer_id)
+        payload = receipt.as_dict()
+        payload["missing_artifacts"] = [
+            {
+                "artifact_id": item["artifact_id"],
+                "artifact_kind": item["artifact_kind"],
+            }
+            for item in self.store.pending_artifacts_for(receipt.transfer_id)
+        ]
         return BloggerHTTPResponse(
             status=202 if receipt.status == "accepted" else 200,
-            payload=receipt.as_dict(),
+            payload=payload,
         )
 
     def _artifact(
@@ -729,24 +753,358 @@ class BloggerTransferHTTP:
         transfer_id: str,
         artifact_kind: str,
     ) -> tuple[Path, str]:
-        if artifact_kind == "comment_bundle":
-            filename = f"comments-{descriptor['expected_sha256']}.ndjson.gz"
-        else:
-            suffix = {
-                "video/mp4": ".mp4",
-                "image/jpeg": ".jpg",
-                "image/png": ".png",
-                "image/webp": ".webp",
-            }.get(str(descriptor["mime_type"]).casefold())
-            if suffix is None:
-                raise BloggerIngestError("unsupported_media_type", "媒体格式不受支持。")
-            filename = f"media-{descriptor['expected_sha256']}{suffix}"
-        relative = f"artifacts/{transfer_id}/{filename}"
+        del transfer_id  # Content identity, not revision identity, owns bytes.
+        relative = self._content_relative_path(descriptor, artifact_kind=artifact_kind)
         destination = self.store.root / Path(relative)
         destination.parent.mkdir(parents=True, exist_ok=True)
         if os.name != "nt":
             os.chmod(destination.parent, 0o750)
         return destination, relative
+
+    @staticmethod
+    def _content_relative_path(
+        descriptor: Mapping[str, Any],
+        *,
+        artifact_kind: str,
+    ) -> str:
+        digest = str(descriptor.get("expected_sha256") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise BloggerIngestError("artifact_storage_error", "artifact 摘要无效。")
+        if artifact_kind == "comment_bundle":
+            return f"artifacts/objects/comments/{digest}.ndjson.gz"
+        suffix = {
+            "video/mp4": ".mp4",
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+        }.get(str(descriptor.get("mime_type") or "").casefold())
+        if suffix is None:
+            raise BloggerIngestError("unsupported_media_type", "媒体格式不受支持。")
+        return f"artifacts/objects/media/{digest}{suffix}"
+
+    def _reuse_pending_artifacts(self, transfer_id: str) -> int:
+        """Satisfy a new revision from an already verified content object.
+
+        A comment-only revision still declares its media so both ends can
+        audit the complete work.  Reusing the media by hash lets the manifest
+        reply omit it from ``missing_artifacts``; Beijing therefore does not
+        upload the same video again.
+        """
+
+        reused = 0
+        for descriptor in self.store.pending_artifacts_for(transfer_id):
+            artifact_kind = str(descriptor.get("artifact_kind") or "")
+            destination, relative = self._destination(
+                descriptor,
+                transfer_id=transfer_id,
+                artifact_kind=artifact_kind,
+            )
+            if destination.exists() or destination.is_symlink():
+                self._require_existing_matches(
+                    destination,
+                    size_bytes=int(descriptor["expected_size_bytes"]),
+                    sha256=str(descriptor["expected_sha256"]),
+                )
+            else:
+                source = self._verified_reuse_source(
+                    descriptor,
+                    transfer_id=transfer_id,
+                )
+                if source is None:
+                    continue
+                self._materialize_content_object(
+                    source,
+                    destination,
+                    size_bytes=int(descriptor["expected_size_bytes"]),
+                    sha256=str(descriptor["expected_sha256"]),
+                )
+            self.store.mark_artifact_verified(
+                transfer_id=transfer_id,
+                artifact_kind=artifact_kind,
+                artifact_id=str(descriptor["artifact_id"]),
+                size_bytes=int(descriptor["expected_size_bytes"]),
+                sha256=str(descriptor["expected_sha256"]),
+                stored_relative_path=relative,
+                verified_at=int(self.clock()),
+            )
+            reused += 1
+        return reused
+
+    def _verified_reuse_source(
+        self,
+        descriptor: Mapping[str, Any],
+        *,
+        transfer_id: str,
+    ) -> Path | None:
+        candidates = self.store.verified_artifact_candidates(
+            artifact_kind=str(descriptor["artifact_kind"]),
+            expected_size_bytes=int(descriptor["expected_size_bytes"]),
+            expected_sha256=str(descriptor["expected_sha256"]),
+            mime_type=str(descriptor["mime_type"]),
+            exclude_transfer_id=transfer_id,
+        )
+        for candidate in candidates:
+            try:
+                self.store._verify_stored_artifact(candidate)
+                _, _, source = self.store._stored_artifact_components(
+                    str(candidate.get("stored_relative_path") or "")
+                )
+                metadata = os.lstat(source)
+                if stat.S_ISREG(metadata.st_mode):
+                    return source
+            except (BloggerIngestError, OSError):
+                continue
+        return None
+
+    def _materialize_content_object(
+        self,
+        source: Path,
+        destination: Path,
+        *,
+        size_bytes: int,
+        sha256: str,
+    ) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.",
+            suffix=".part",
+            dir=destination.parent,
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        temporary.unlink(missing_ok=True)
+        try:
+            try:
+                os.link(source, temporary)
+            except OSError:
+                shutil.copyfile(source, temporary)
+                with temporary.open("rb+") as stream:
+                    os.fsync(stream.fileno())
+            self._require_existing_matches(
+                temporary,
+                size_bytes=size_bytes,
+                sha256=sha256,
+            )
+            if destination.exists() or destination.is_symlink():
+                self._require_existing_matches(
+                    destination,
+                    size_bytes=size_bytes,
+                    sha256=sha256,
+                )
+            else:
+                os.replace(temporary, destination)
+                if os.name != "nt":
+                    os.chmod(destination, 0o600)
+                self._fsync_directory(destination.parent)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def compact_verified_artifacts(self) -> dict[str, int]:
+        """Collapse legacy per-transfer copies without deleting ledger history.
+
+        Each group first gains one fully verified content-addressed object.
+        Ledger rows are then atomically repointed, and only unreferenced files
+        in the old generated transfer layout are unlinked.  A crash at any
+        point is safe: the next run finishes both repointing and orphan cleanup.
+        """
+
+        report = {
+            "rows_scanned": 0,
+            "objects_created": 0,
+            "rows_repointed": 0,
+            "legacy_files_removed": 0,
+            "logical_bytes_unlinked": 0,
+            "errors": 0,
+        }
+        try:
+            rows = self.store.verified_artifacts()
+        except (BloggerIngestError, OSError, sqlite3.Error):
+            report["errors"] += 1
+            return report
+        report["rows_scanned"] = len(rows)
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            try:
+                canonical = self._content_relative_path(
+                    row,
+                    artifact_kind=str(row.get("artifact_kind") or ""),
+                )
+            except BloggerIngestError:
+                report["errors"] += 1
+                continue
+            if str(row.get("stored_relative_path") or "") == canonical:
+                continue
+            grouped.setdefault(canonical, []).append(row)
+
+        for canonical, candidates in grouped.items():
+            representative = candidates[0]
+            # Historical comment bundles are small and usually unique.  Leave
+            # one-off bundles in place instead of turning a one-time cleanup
+            # into thousands of SQLite fsyncs; duplicate comment snapshots and
+            # every media object are still compacted.
+            if (
+                str(representative.get("artifact_kind") or "") == "comment_bundle"
+                and len(candidates) < 2
+                and not (self.store.root / Path(canonical)).exists()
+            ):
+                continue
+            destination = self.store.root / Path(canonical)
+            try:
+                if destination.exists() or destination.is_symlink():
+                    self._require_existing_matches(
+                        destination,
+                        size_bytes=int(representative["expected_size_bytes"]),
+                        sha256=str(representative["expected_sha256"]),
+                    )
+                else:
+                    source = self._first_verified_path(candidates)
+                    if source is None:
+                        report["errors"] += 1
+                        continue
+                    self._materialize_content_object(
+                        source,
+                        destination,
+                        size_bytes=int(representative["expected_size_bytes"]),
+                        sha256=str(representative["expected_sha256"]),
+                    )
+                    report["objects_created"] += 1
+
+                legacy_paths = sorted(
+                    {
+                        str(item.get("stored_relative_path") or "")
+                        for item in candidates
+                        if str(item.get("stored_relative_path") or "") != canonical
+                    }
+                )
+                report["rows_repointed"] += self.store.repoint_verified_artifact_group(
+                    new_relative_path=canonical,
+                    artifact_kind=str(representative["artifact_kind"]),
+                    expected_size_bytes=int(representative["expected_size_bytes"]),
+                    expected_sha256=str(representative["expected_sha256"]),
+                    mime_type=str(representative["mime_type"]),
+                )
+                for old_relative in legacy_paths:
+                    removed = self._remove_unreferenced_legacy_path(old_relative)
+                    if removed:
+                        report["legacy_files_removed"] += 1
+                        report["logical_bytes_unlinked"] += removed
+            except (BloggerIngestError, OSError, sqlite3.Error, ValueError):
+                report["errors"] += 1
+
+        orphan_count, orphan_bytes, orphan_errors = self._cleanup_legacy_orphans()
+        report["legacy_files_removed"] += orphan_count
+        report["logical_bytes_unlinked"] += orphan_bytes
+        report["errors"] += orphan_errors
+        return report
+
+    def _first_verified_path(
+        self,
+        candidates: list[dict[str, Any]],
+    ) -> Path | None:
+        for candidate in candidates:
+            try:
+                self.store._verify_stored_artifact(candidate)
+                _, _, target = self.store._stored_artifact_components(
+                    str(candidate.get("stored_relative_path") or "")
+                )
+                if stat.S_ISREG(os.lstat(target).st_mode):
+                    return target
+            except (BloggerIngestError, OSError):
+                continue
+        return None
+
+    def _remove_unreferenced_legacy_path(self, relative: str) -> int:
+        parts = Path(relative).parts
+        if (
+            len(parts) != 3
+            or parts[0] != "artifacts"
+            or not _LEGACY_TRANSFER_DIRECTORY.fullmatch(parts[1])
+            or self.store.storage_path_reference_count(relative) != 0
+        ):
+            return 0
+        target = self.store.root.joinpath(*parts)
+        try:
+            metadata = os.lstat(target)
+        except FileNotFoundError:
+            return 0
+        if not stat.S_ISREG(metadata.st_mode):
+            return 0
+        size = int(metadata.st_size)
+        target.unlink()
+        try:
+            target.parent.rmdir()
+        except OSError:
+            pass
+        return size
+
+    def _cleanup_legacy_orphans(self) -> tuple[int, int, int]:
+        removed = 0
+        removed_bytes = 0
+        errors = 0
+        try:
+            children = list(self.store.artifact_root.iterdir())
+        except OSError:
+            return 0, 0, 1
+        for directory in children:
+            if not directory.is_dir() or directory.is_symlink():
+                continue
+            if not _LEGACY_TRANSFER_DIRECTORY.fullmatch(directory.name):
+                continue
+            try:
+                files = list(directory.iterdir())
+            except OSError:
+                errors += 1
+                continue
+            for target in files:
+                try:
+                    metadata = os.lstat(target)
+                    if not stat.S_ISREG(metadata.st_mode):
+                        continue
+                    relative = target.relative_to(self.store.root).as_posix()
+                    if self.store.storage_path_reference_count(relative):
+                        continue
+                    canonical = self._canonical_for_legacy_filename(target.name)
+                    if canonical is None:
+                        continue
+                    canonical_target = self.store.root / canonical
+                    digest = (
+                        _LEGACY_COMMENT_FILENAME.fullmatch(target.name)
+                        or _LEGACY_MEDIA_FILENAME.fullmatch(target.name)
+                    )
+                    assert digest is not None
+                    self._require_existing_matches(
+                        target,
+                        size_bytes=int(metadata.st_size),
+                        sha256=str(digest.group("sha")),
+                    )
+                    self._require_existing_matches(
+                        canonical_target,
+                        size_bytes=int(metadata.st_size),
+                        sha256=str(digest.group("sha")),
+                    )
+                    target.unlink()
+                    removed += 1
+                    removed_bytes += int(metadata.st_size)
+                except (BloggerIngestError, OSError, ValueError):
+                    errors += 1
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        return removed, removed_bytes, errors
+
+    @staticmethod
+    def _canonical_for_legacy_filename(filename: str) -> str | None:
+        comment = _LEGACY_COMMENT_FILENAME.fullmatch(filename)
+        if comment:
+            return f"artifacts/objects/comments/{comment.group('sha')}.ndjson.gz"
+        media = _LEGACY_MEDIA_FILENAME.fullmatch(filename)
+        if media:
+            return (
+                f"artifacts/objects/media/{media.group('sha')}"
+                f"{media.group('suffix')}"
+            )
+        return None
 
     def _commit_artifact(
         self,

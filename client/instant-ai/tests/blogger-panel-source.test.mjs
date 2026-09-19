@@ -90,3 +90,11 @@ test('Model Mr loads automatic processing state on entry and describes the two-s
   assert.match(panel, /紧急暂停自动处理/u);
   assert.doesNotMatch(panel, /查看设置与处理状态/u);
 });
+
+test('Model Mr player reports mobile buffering while the browser resumes range playback', async () => {
+  const panel = await readSource('src/instant-ai/ModelMrPanel.ts');
+  assert.match(panel, /video\.addEventListener\('waiting', showBuffering\)/u);
+  assert.match(panel, /video\.addEventListener\('stalled', showBuffering\)/u);
+  assert.match(panel, /正在自动续传本地视频/u);
+  assert.match(panel, /网络波动时会自动分段续传/u);
+});

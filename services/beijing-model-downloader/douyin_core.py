@@ -61,6 +61,9 @@ DECORATION_HOST_PARTS = (
     "pstatp.com",
     "ibytedtos.com",
 )
+MODEL_VIDEO_SCALE_FILTER = (
+    "scale=trunc(max(iw/2\\,240)/2)*2:-2:flags=lanczos"
+)
 
 
 class DownloadCancelled(Exception):
@@ -190,6 +193,65 @@ def inspect_mp4(path: Path) -> dict[str, object]:
         "has_video": has_video,
         "has_audio": has_audio,
     }
+
+
+def compact_video_command(
+    ffmpeg: str,
+    video_input: Path,
+    output: Path,
+    *,
+    audio_input: Path | None = None,
+) -> list[str]:
+    """Build the fixed Model Mr phone-video compression command.
+
+    New Beijing videos keep their aspect ratio while width and height are
+    normally halved (720x1280 becomes 360x640).  The 240-pixel width floor
+    prevents an already-small source from becoming unreadable.  H.264/AAC,
+    yuv420p and fast-start preserve the existing iPhone playback contract.
+    """
+
+    command = [
+        ffmpeg,
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        str(video_input),
+    ]
+    if audio_input is not None:
+        command.extend(["-i", str(audio_input)])
+    command.extend(
+        [
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0" if audio_input is not None else "0:a:0",
+            "-vf",
+            MODEL_VIDEO_SCALE_FILTER,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "27",
+            "-profile:v",
+            "main",
+            "-level:v",
+            "3.1",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "64k",
+            "-ac",
+            "2",
+            "-movflags",
+            "+faststart",
+            str(output),
+        ]
+    )
+    return command
 
 
 @dataclass
@@ -1205,53 +1267,40 @@ def download_video(
         inspection = inspect_mp4(part)
         if not inspection["has_video"]:
             raise ParseError("捕获的资源没有视频画面，已取消保存并等待重试。")
-        if inspection["has_audio"]:
-            os.replace(part, output)
-            return output
-        if not result.audio_url:
-            raise ParseError(
-                "捕获到的是无声视频流，但没有捕获到配套音频，"
-                "已取消保存并等待重试。"
+        separate_audio: Path | None = None
+        if not inspection["has_audio"]:
+            if not result.audio_url:
+                raise ParseError(
+                    "捕获到的是无声视频流，但没有捕获到配套音频，"
+                    "已取消保存并等待重试。"
+                )
+            fetch_resource(
+                result.audio_url,
+                audio_part,
+                result.audio_content_length,
+                report_progress=False,
             )
-        fetch_resource(
-            result.audio_url,
-            audio_part,
-            result.audio_content_length,
-            report_progress=False,
-        )
+            separate_audio = audio_part
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
-            raise ParseError("服务器缺少 ffmpeg，无法把画面和声音合并。")
+            raise ParseError("服务器缺少 ffmpeg，无法生成手机轻量视频。")
         completed = subprocess.run(
-            [
+            compact_video_command(
                 ffmpeg,
-                "-y",
-                "-v",
-                "error",
-                "-i",
-                str(part),
-                "-i",
-                str(audio_part),
-                "-map",
-                "0:v:0",
-                "-map",
-                "1:a:0",
-                "-c",
-                "copy",
-                "-movflags",
-                "+faststart",
-                str(mux_part),
-            ],
+                part,
+                mux_part,
+                audio_input=separate_audio,
+            ),
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=600,
         )
         if completed.returncode != 0:
             detail = (completed.stderr or "未知错误").strip()[-500:]
-            raise ParseError(f"音视频合并失败：{detail}")
+            raise ParseError(f"手机轻量视频生成失败：{detail}")
         merged = inspect_mp4(mux_part)
         if not merged["has_video"] or not merged["has_audio"]:
-            raise ParseError("合并后的 MP4 未同时包含画面和声音。")
+            raise ParseError("轻量 MP4 未同时包含画面和声音。")
         os.replace(mux_part, output)
         return output
     except Exception:

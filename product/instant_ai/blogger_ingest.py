@@ -1239,16 +1239,7 @@ class BloggerIngestStore:
         stored_relative_path: str,
         verified_at: int,
     ) -> str:
-        relative = PurePosixPath(stored_relative_path)
-        if (
-            relative.is_absolute()
-            or str(relative) != stored_relative_path
-            or not relative.parts
-            or relative.parts[0] != "artifacts"
-            or any(part in {"", ".", ".."} for part in relative.parts)
-        ):
-            raise BloggerIngestError("artifact_storage_error", "artifact 保存路径无效。")
-        relative_text = str(relative)
+        relative_text = self._validated_storage_path(stored_relative_path)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -1291,6 +1282,136 @@ class BloggerIngestStore:
             except Exception:
                 connection.rollback()
                 raise
+
+    @staticmethod
+    def _validated_storage_path(stored_relative_path: str) -> str:
+        relative = PurePosixPath(stored_relative_path)
+        if (
+            relative.is_absolute()
+            or str(relative) != stored_relative_path
+            or len(relative.parts) < 3
+            or relative.parts[0] != "artifacts"
+            or any(part in {"", ".", ".."} for part in relative.parts)
+        ):
+            raise BloggerIngestError("artifact_storage_error", "artifact 保存路径无效。")
+        return str(relative)
+
+    def pending_artifacts_for(self, transfer_id: str) -> list[dict[str, Any]]:
+        """Return the current pending descriptors needed by the HTTP receiver."""
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM artifacts
+                WHERE transfer_id=? AND state='pending'
+                ORDER BY CASE artifact_kind WHEN 'media' THEN 0 ELSE 1 END,
+                         artifact_id
+                """,
+                (transfer_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def verified_artifact_candidates(
+        self,
+        *,
+        artifact_kind: str,
+        expected_size_bytes: int,
+        expected_sha256: str,
+        mime_type: str,
+        exclude_transfer_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """Find already verified content that can satisfy a later revision.
+
+        The caller must still re-open and verify a returned file before it is
+        reused.  The ledger lookup only narrows the candidates and never
+        replaces the filesystem integrity check.
+        """
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT a.*, t.is_current, t.completed_at
+                FROM artifacts AS a
+                JOIN transfers AS t ON t.transfer_id=a.transfer_id
+                WHERE a.artifact_kind=? AND a.expected_size_bytes=?
+                  AND a.expected_sha256=? AND a.mime_type=?
+                  AND a.state='verified' AND a.stored_relative_path IS NOT NULL
+                  AND a.transfer_id<>?
+                ORDER BY t.is_current DESC, a.verified_at DESC, a.transfer_id
+                LIMIT 32
+                """,
+                (
+                    artifact_kind,
+                    int(expected_size_bytes),
+                    expected_sha256,
+                    mime_type,
+                    exclude_transfer_id,
+                ),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def verified_artifacts(self) -> list[dict[str, Any]]:
+        """Return verified ledger rows for an idempotent storage compaction."""
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT a.*, t.is_current, t.completed_at
+                FROM artifacts AS a
+                JOIN transfers AS t ON t.transfer_id=a.transfer_id
+                WHERE a.state='verified' AND a.stored_relative_path IS NOT NULL
+                ORDER BY a.artifact_kind, a.expected_sha256, a.transfer_id,
+                         a.artifact_id
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def repoint_verified_artifact_group(
+        self,
+        *,
+        new_relative_path: str,
+        artifact_kind: str,
+        expected_size_bytes: int,
+        expected_sha256: str,
+        mime_type: str,
+    ) -> int:
+        """Repoint every verified row for one immutable content identity."""
+
+        new_path = self._validated_storage_path(new_relative_path)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = connection.execute(
+                    """
+                    UPDATE artifacts
+                    SET stored_relative_path=?
+                    WHERE state='verified' AND artifact_kind=?
+                      AND expected_size_bytes=? AND expected_sha256=?
+                      AND mime_type=? AND stored_relative_path<>?
+                    """,
+                    (
+                        new_path,
+                        artifact_kind,
+                        int(expected_size_bytes),
+                        expected_sha256,
+                        mime_type,
+                        new_path,
+                    ),
+                )
+                connection.commit()
+                return max(0, int(cursor.rowcount))
+            except Exception:
+                connection.rollback()
+                raise
+
+    def storage_path_reference_count(self, stored_relative_path: str) -> int:
+        relative = self._validated_storage_path(stored_relative_path)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT count(*) AS count FROM artifacts WHERE stored_relative_path=?",
+                (relative,),
+            ).fetchone()
+        return int(row["count"] if row is not None else 0)
 
     def complete_transfer(
         self,

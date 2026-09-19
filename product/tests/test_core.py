@@ -978,8 +978,9 @@ class MobileShellTests(unittest.TestCase):
         self.assertEqual(manifest["display"], "browser")
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
+        self.assertIn("url.pathname.startsWith('/media/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.23.0", worker)
+        self.assertIn("instant-ai-shell-v0.23.1", worker)
 
 
 if __name__ == "__main__":

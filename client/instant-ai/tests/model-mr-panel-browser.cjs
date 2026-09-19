@@ -19,7 +19,7 @@ async function main() {
       page.on('pageerror', error => errors.push(error.message));
       const categories = [{ id: 1, name: '行业主题', level: 1, parent_id: null, description: '分类回归样例', video_count: 30 },
         { id: 2, name: '科技总论与自主可控', level: 2, parent_id: 1, description: '已有关键词与关联作品', video_count: 30 }];
-      const works = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, title: `回归样例作品 ${i + 1}`, description: '', url: '', published_at: '2026-09-01', media_available: true, video_url: `/api/model-mr/works/${i + 1}/video`, has_video_text: true, has_interpretation: true, comment_count: 0, keywords: ['科技股', '长期研究'], keyword_revision: 'revision1', keyword_info: { categories: { '行业与板块': ['科技股'], '投资战略、战术与选股方法': ['长期研究'] }, keywords: ['科技股', '长期研究'] } }));
+      const works = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, title: `回归样例作品 ${i + 1}`, description: '', url: '', published_at: '2026-09-01', media_available: true, video_url: `/media/model-mr/works/${i + 1}/video`, has_video_text: true, has_interpretation: true, comment_count: 0, keywords: ['科技股', '长期研究'], keyword_revision: 'revision1', keyword_info: { categories: { '行业与板块': ['科技股'], '投资战略、战术与选股方法': ['长期研究'] }, keywords: ['科技股', '长期研究'] } }));
       let keywordSaves = 0;
       await page.route('http://127.0.0.1:19846/**', async route => {
         const url = new URL(route.request().url());
@@ -78,6 +78,7 @@ async function main() {
       await page.locator('.model-detail-tabs [data-detail-tab="video"]').click();
       assert.equal(await page.locator('video').count(), 1);
       assert.equal(await page.locator('video').getAttribute('preload'), 'metadata');
+      assert.match(await page.locator('video').getAttribute('src'), /^\/media\/model-mr\/works\/\d+\/video$/);
       assert.equal(await page.locator('video').getAttribute('autoplay'), null);
       assert(await page.locator('.model-thought-detail').count(), 'shared player must remain inside selected category');
       await page.locator('.model-detail-tabs [data-detail-tab="keywords"]').click();

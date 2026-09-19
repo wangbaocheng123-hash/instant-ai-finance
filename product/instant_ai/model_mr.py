@@ -1341,7 +1341,7 @@ class ModelMrClient:
             media_file = self._match_media(raw_detail, media_lookup)
             if media_file:
                 detail["work"]["media_file"] = media_file
-                detail["work"]["video_url"] = f"/api/model-mr/works/{work_id}/video"
+                detail["work"]["video_url"] = f"/media/model-mr/works/{work_id}/video"
                 detail["work"]["media_available"] = True
                 media_count += 1
             else:
@@ -1464,7 +1464,7 @@ class ModelMrClient:
             "image_count": 0,
             "image_urls": [],
             "media_files": [],
-            "video_url": f"/api/model-mr/works/{work_id}/video" if media_available and work_id else "",
+            "video_url": f"/media/model-mr/works/{work_id}/video" if media_available and work_id else "",
             "media_file": "",
             "keywords": keyword_info["keywords"],
             "keyword_info": keyword_info,
@@ -1509,12 +1509,12 @@ class ModelMrClient:
             "video_available": video_available,
             "image_count": len(images),
             "image_urls": [
-                f"/api/model-mr/works/{work_id}/images/{media['ordinal']}"
+                f"/media/model-mr/works/{work_id}/images/{media['ordinal']}"
                 for media in images
                 if work_id
             ],
             "media_files": media_files,
-            "video_url": f"/api/model-mr/works/{work_id}/video" if video_available and work_id else "",
+            "video_url": f"/media/model-mr/works/{work_id}/video" if video_available and work_id else "",
             "media_file": media_file,
             "keywords": info["keywords"],
             "keyword_info": info,
@@ -1620,9 +1620,9 @@ class ModelMrClient:
         work = cls._clean_snapshot_work(value.get("work") if isinstance(value.get("work"), dict) else {"id": work_id})
         if work["id"] != work_id:
             work["id"] = work_id
-            work["video_url"] = f"/api/model-mr/works/{work_id}/video" if work["video_available"] else ""
+            work["video_url"] = f"/media/model-mr/works/{work_id}/video" if work["video_available"] else ""
             work["image_urls"] = [
-                f"/api/model-mr/works/{work_id}/images/{media['ordinal']}"
+                f"/media/model-mr/works/{work_id}/images/{media['ordinal']}"
                 for media in work["media_files"]
                 if media["role"] == "image"
             ]

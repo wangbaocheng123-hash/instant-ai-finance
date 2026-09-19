@@ -117,6 +117,31 @@ class OwnerAuthTests(unittest.TestCase):
                     server.server_close()
                     thread.join(timeout=5)
 
+    def test_private_media_route_cannot_fall_through_to_public_static_shell(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "auth.json"
+            configure_owner("owner", "Cloud-owner-password", path)
+            auth = OwnerAuth(required=True, path=path)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), InstantAIHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            with patch("instant_ai.server.AUTH", auth):
+                thread.start()
+                try:
+                    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                    for media_path in (
+                        "/media/model-mr/works/9/video",
+                        "/media/model-mr/works/9/images/0",
+                    ):
+                        connection.request("GET", media_path)
+                        response = connection.getresponse()
+                        payload = json.loads(response.read())
+                        self.assertEqual(response.status, 401)
+                        self.assertEqual(payload["error"], "authentication_required")
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=5)
+
 
 if __name__ == "__main__":
     unittest.main()

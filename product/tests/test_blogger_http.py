@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import sqlite3
 import stat
 import tempfile
@@ -102,6 +103,8 @@ def manifest_for(
     media_mime: str = "video/mp4",
     creator_id: str = CREATOR_ID,
     creator_name: str = "测试博主",
+    work_revision: int = 7,
+    source_sequence: int = 41,
 ) -> dict:
     media_sha = hashlib.sha256(media_body).hexdigest()
     comment_body = gzip_bytes(comment_plain)
@@ -114,7 +117,7 @@ def manifest_for(
             "node_id": NODE_ID,
             "key_id": KEY_ID,
             "version": "0.1.0",
-            "source_sequence": 41,
+            "source_sequence": source_sequence,
         },
         "creator": {
             "creator_id": creator_id,
@@ -125,7 +128,7 @@ def manifest_for(
         "work": {
             "platform": "douyin",
             "source_work_id": "7654321098765432100",
-            "revision": 7,
+            "revision": work_revision,
             "work_type": "video",
             "title": "测试作品",
             "description": "公开描述",
@@ -365,6 +368,185 @@ class BloggerTransferHTTPTests(unittest.TestCase):
         self.assertEqual(response.status, 409)
         self.assertEqual(response.payload["error_code"], "artifacts_missing")
         self.assertEqual(self.application.store.processing_jobs(), [])
+
+    def test_comment_only_revision_reuses_verified_media_without_upload(self) -> None:
+        self.accept_manifest()
+        self.upload_all()
+        first_transfer_id = self.manifest["transfer_id"]
+        first_complete_path = f"{DEFAULT_MANIFEST_PATH}/{first_transfer_id}/complete"
+        first_complete = self.call(
+            "POST",
+            first_complete_path,
+            canonical({"transfer_id": first_transfer_id}),
+            content_type="application/json",
+        )
+        self.assertEqual(first_complete.status, 200, first_complete.payload)
+
+        changed = comment_item()
+        changed["text"] = "评论内容发生变化，但视频没有变化"
+        changed_plain = canonical(changed) + b"\n"
+        second = manifest_for(
+            self.media,
+            changed_plain,
+            work_revision=8,
+            source_sequence=42,
+        )
+        self.manifest = second
+        response = self.call(
+            "POST",
+            DEFAULT_MANIFEST_PATH,
+            canonical(second),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status, 202, response.payload)
+        self.assertEqual(
+            response.payload["missing_artifacts"],
+            [
+                {
+                    "artifact_id": second["comment_snapshot"]["bundle"]["bundle_id"],
+                    "artifact_kind": "comment_bundle",
+                }
+            ],
+        )
+        first_media = next(
+            item
+            for item in self.application.store.get_transfer(first_transfer_id)["artifacts"]
+            if item["artifact_kind"] == "media"
+        )
+        second_media = next(
+            item
+            for item in self.application.store.get_transfer(second["transfer_id"])["artifacts"]
+            if item["artifact_kind"] == "media"
+        )
+        self.assertEqual(first_media["stored_relative_path"], second_media["stored_relative_path"])
+        self.assertEqual(second_media["state"], "verified")
+        self.assertEqual(
+            list((self.root / "artifacts" / "objects" / "media").glob("*.mp4")),
+            [self.root / first_media["stored_relative_path"]],
+        )
+        bundle = second["comment_snapshot"]["bundle"]
+        comments_path = (
+            f"{DEFAULT_MANIFEST_PATH}/{second['transfer_id']}/comments/"
+            f"{bundle['bundle_id']}"
+        )
+        uploaded_comments = self.call(
+            "PUT",
+            comments_path,
+            gzip_bytes(changed_plain),
+            content_type="application/gzip",
+        )
+        self.assertEqual(uploaded_comments.status, 201, uploaded_comments.payload)
+        complete_path = f"{DEFAULT_MANIFEST_PATH}/{second['transfer_id']}/complete"
+        completed = self.call(
+            "POST",
+            complete_path,
+            canonical({"transfer_id": second["transfer_id"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(completed.status, 200, completed.payload)
+
+    def test_startup_compacts_legacy_transfer_copies_without_losing_ledger_rows(self) -> None:
+        self.accept_manifest()
+        self.upload_all()
+        first_transfer_id = self.manifest["transfer_id"]
+        second_manifest = manifest_for(
+            self.media,
+            self.comment_plain,
+            work_revision=8,
+            source_sequence=42,
+        )
+        second_response = self.call(
+            "POST",
+            DEFAULT_MANIFEST_PATH,
+            canonical(second_manifest),
+            content_type="application/json",
+        )
+        self.assertEqual(second_response.status, 202, second_response.payload)
+        self.assertEqual(second_response.payload["missing_artifacts"], [])
+        transfer_ids = [first_transfer_id, second_manifest["transfer_id"]]
+        media = next(
+            item
+            for item in self.application.store.get_transfer(first_transfer_id)["artifacts"]
+            if item["artifact_kind"] == "media"
+        )
+        canonical_relative = str(media["stored_relative_path"])
+        canonical_path = self.root / canonical_relative
+        with sqlite3.connect(self.application.store.database_path) as connection:
+            for transfer_id in transfer_ids:
+                legacy_relative = (
+                    f"artifacts/{transfer_id}/media-{media['expected_sha256']}.mp4"
+                )
+                legacy_path = self.root / legacy_relative
+                legacy_path.parent.mkdir(parents=True)
+                shutil.copyfile(canonical_path, legacy_path)
+                connection.execute(
+                    """
+                    UPDATE artifacts SET stored_relative_path=?
+                    WHERE transfer_id=? AND artifact_kind='media'
+                    """,
+                    (legacy_relative, transfer_id),
+                )
+
+        restarted = BloggerTransferHTTP(
+            root=self.root,
+            secrets={(NODE_ID, KEY_ID): SECRET},
+            clock=lambda: NOW,
+        )
+        for transfer_id in transfer_ids:
+            compacted = next(
+                item
+                for item in restarted.store.get_transfer(transfer_id)["artifacts"]
+                if item["artifact_kind"] == "media"
+            )
+            legacy_path = (
+                self.root
+                / f"artifacts/{transfer_id}/media-{media['expected_sha256']}.mp4"
+            )
+            self.assertEqual(compacted["stored_relative_path"], canonical_relative)
+            self.assertFalse(legacy_path.exists())
+        self.assertTrue(canonical_path.is_file())
+        self.assertEqual(restarted.compaction_report["rows_repointed"], 2)
+        self.assertEqual(restarted.compaction_report["legacy_files_removed"], 2)
+        self.assertEqual(
+            restarted.compaction_report["logical_bytes_unlinked"],
+            len(self.media) * 2,
+        )
+        restarted_again = BloggerTransferHTTP(
+            root=self.root,
+            secrets={(NODE_ID, KEY_ID): SECRET},
+            clock=lambda: NOW,
+        )
+        self.assertEqual(restarted_again.compaction_report["rows_repointed"], 0)
+        self.assertEqual(restarted_again.compaction_report["legacy_files_removed"], 0)
+        self.assertEqual(restarted_again.compaction_report["errors"], 0)
+
+    def test_startup_keeps_unreferenced_legacy_file_when_content_is_corrupt(self) -> None:
+        self.accept_manifest()
+        self.upload_all()
+        media = next(
+            item
+            for item in self.application.store.get_transfer(self.manifest["transfer_id"])["artifacts"]
+            if item["artifact_kind"] == "media"
+        )
+        orphan = (
+            self.root
+            / "artifacts"
+            / ("f" * 64)
+            / f"media-{media['expected_sha256']}.mp4"
+        )
+        orphan.parent.mkdir(parents=True)
+        orphan.write_bytes(b"x" * len(self.media))
+
+        restarted = BloggerTransferHTTP(
+            root=self.root,
+            secrets={(NODE_ID, KEY_ID): SECRET},
+            clock=lambda: NOW,
+        )
+
+        self.assertTrue(orphan.is_file())
+        self.assertEqual(restarted.compaction_report["legacy_files_removed"], 0)
+        self.assertEqual(restarted.compaction_report["errors"], 1)
 
     def test_reserved_model_mr_transfer_projects_verified_video_comments_and_mcp_index(self) -> None:
         model_root = Path(self.temporary.name) / "model-mr"

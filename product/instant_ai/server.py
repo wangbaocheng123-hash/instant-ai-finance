@@ -67,6 +67,8 @@ PORT = 18765
 COLLECTION_LOCK = threading.Lock()
 SCHEDULER_INTERVAL_SECONDS = 5 * 60
 REQUEST_READ_TIMEOUT_SECONDS = 30
+MEDIA_WRITE_TIMEOUT_SECONDS = 5 * 60
+MEDIA_OPEN_ENDED_RANGE_BYTES = 4 * 1024 * 1024
 MAX_CONCURRENT_REQUESTS = 32
 COLLECTION_STATE: dict[str, object] = {
     "running": False,
@@ -626,7 +628,13 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         if self.command != "HEAD":
             self.wfile.write(content)
 
-    def _serve_private_file(self, target: Path, mime_type: str) -> None:
+    def _serve_private_file(
+        self,
+        target: Path,
+        mime_type: str,
+        *,
+        max_open_ended_range_bytes: int | None = None,
+    ) -> None:
         if not target.is_file():
             self._not_found()
             return
@@ -651,6 +659,8 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             if start_text:
                 start = int(start_text)
                 end = min(int(end_text), file_size - 1) if end_text else file_size - 1
+                if not end_text and max_open_ended_range_bytes:
+                    end = min(end, start + max_open_ended_range_bytes - 1)
             else:
                 suffix_length = min(int(end_text), file_size)
                 start = file_size - suffix_length
@@ -667,6 +677,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         self.send_header("Content-Length", str(content_length))
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Cache-Control", "private, max-age=3600")
+        self.send_header("Vary", "Cookie")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         if status == HTTPStatus.PARTIAL_CONTENT:
@@ -674,7 +685,9 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         self.end_headers()
         if self.command == "HEAD":
             return
+        previous_timeout = self.connection.gettimeout()
         try:
+            self.connection.settimeout(MEDIA_WRITE_TIMEOUT_SECONDS)
             with target.open("rb") as stream:
                 stream.seek(start)
                 remaining = content_length
@@ -684,13 +697,21 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                         break
                     self.wfile.write(chunk)
                     remaining -= len(chunk)
-        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, TimeoutError):
             return
+        finally:
+            try:
+                self.connection.settimeout(previous_timeout)
+            except OSError:
+                pass
 
     def _serve_model_mr_video(self, work_id: int) -> None:
         local = MODEL_MR.video_path(work_id)
         if local is not None:
-            self._serve_private_file(*local)
+            self._serve_private_file(
+                *local,
+                max_open_ended_range_bytes=MEDIA_OPEN_ENDED_RANGE_BYTES,
+            )
             return
         try:
             upstream = MODEL_MR.open_live_video(work_id, self.headers.get("Range", ""))
@@ -705,16 +726,25 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                 if value:
                     self.send_header(name, value)
             self.send_header("Cache-Control", "private, max-age=3600")
+            self.send_header("Vary", "Cookie")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
             self.end_headers()
             if self.command != "HEAD":
-                while True:
-                    chunk = upstream.read(256 * 1024)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                previous_timeout = self.connection.gettimeout()
+                try:
+                    self.connection.settimeout(MEDIA_WRITE_TIMEOUT_SECONDS)
+                    while True:
+                        chunk = upstream.read(256 * 1024)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                finally:
+                    try:
+                        self.connection.settimeout(previous_timeout)
+                    except OSError:
+                        pass
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError, TimeoutError):
             return
         finally:
             upstream.close()
@@ -733,6 +763,20 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             return
         self._serve_private_file(*local)
 
+    def _serve_model_mr_media_path(self, path: str) -> bool:
+        video_match = re.fullmatch(r"/media/model-mr/works/(\d+)/video", path)
+        image_match = re.fullmatch(r"/media/model-mr/works/(\d+)/images/(\d+)", path)
+        if video_match is None and image_match is None:
+            return False
+        if not self._require_auth():
+            return True
+        if video_match is not None:
+            self._serve_model_mr_video(int(video_match.group(1)))
+        else:
+            assert image_match is not None
+            self._serve_model_mr_image(int(image_match.group(1)), int(image_match.group(2)))
+        return True
+
     def do_HEAD(self) -> None:
         if self._handle_blogger_transfer():
             return
@@ -744,6 +788,8 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             self._json({"ok": True, "version": __version__, "auth_required": AUTH.required})
         elif path == "/api/auth/status":
             self._json(AUTH.status(self.headers.get("Cookie", "")))
+        elif self._serve_model_mr_media_path(path):
+            return
         elif path.startswith("/api/") and not self._require_auth():
             return
         elif re.fullmatch(r"/api/blogger-library/works/[0-9a-f]{64}/video", path):
@@ -781,6 +827,8 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             self._json({"ok": True, "version": __version__, "auth_required": AUTH.required})
         elif path == "/api/auth/status":
             self._json(AUTH.status(self.headers.get("Cookie", "")))
+        elif self._serve_model_mr_media_path(path):
+            return
         elif path.startswith("/api/") and not self._require_auth():
             return
         elif path == "/api/blogger-library/status":
@@ -1205,6 +1253,17 @@ def create_server() -> BoundedThreadingHTTPServer:
     server.blogger_transfer = BloggerTransferHTTP.from_environment(  # type: ignore[attr-defined]
         on_complete=complete_blogger_transfer,
     )
+    if server.blogger_transfer is not None:  # type: ignore[attr-defined]
+        print(
+            "blogger_artifact_compaction "
+            + json.dumps(
+                server.blogger_transfer.compaction_report,  # type: ignore[attr-defined]
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
     return server
 
 
