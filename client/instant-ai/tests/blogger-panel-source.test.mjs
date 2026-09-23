@@ -98,3 +98,8 @@ test('Model Mr player reports mobile buffering while the browser resumes range p
   assert.match(panel, /正在自动续传本地视频/u);
   assert.match(panel, /网络波动时会自动分段续传/u);
 });
+
+test('Model Mr renders work and comment times in Beijing time', async () => {
+  const panel = await readSource('src/instant-ai/ModelMrPanel.ts');
+  assert.match(panel, /timeZone: 'Asia\/Shanghai'/u);
+});

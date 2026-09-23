@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -12,11 +13,86 @@ from unittest.mock import patch
 from mx_agent.model_downloader_bridge import (
     MODEL_MR_TRANSFER_CREATOR_ID,
     ModelDownloaderBridge,
+    _iso,
 )
 from mx_agent.transfer_outbox import TransferOutbox
 
 
 class ModelDownloaderBridgeTests(unittest.TestCase):
+    def test_naive_downloader_time_is_beijing_not_utc(self) -> None:
+        self.assertEqual(
+            _iso("2026-09-23T17:59:19"),
+            "2026-09-23T17:59:19+08:00",
+        )
+        self.assertEqual(
+            _iso("2026-09-23T09:59:19Z"),
+            "2026-09-23T09:59:19+00:00",
+        )
+
+    def test_naive_time_changes_the_legacy_revision_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact_root = root / "artifacts"
+            artifact_root.mkdir()
+            media = root / "work.mp4"
+            media.write_bytes(b"video")
+            outbox = TransferOutbox(
+                root / "transfer.sqlite3",
+                allowed_artifact_roots=(artifact_root,),
+            )
+            bridge = ModelDownloaderBridge(
+                outbox=outbox,
+                artifact_dir=artifact_root,
+                collector_node_id="beijing-1",
+                collector_key_id="key-1",
+                collector_version="test",
+                database_path=root / "library.sqlite3",
+                media_root=root,
+                state_path=root / "state.json",
+            )
+            row = {
+                "video_id": "7688668173143610297",
+                "title": "新作品",
+                "source_url": "https://www.douyin.com/video/7688668173143610297",
+                "published_at": "2026-09-23T17:59:19",
+                "comment_count": 0,
+                "work_type": "video",
+            }
+            stat = media.stat()
+            legacy_payload = json.dumps(
+                {
+                    "video": [
+                        row["video_id"],
+                        row["title"],
+                        row["source_url"],
+                        row["published_at"],
+                        stat.st_size,
+                        stat.st_mtime_ns,
+                        row["comment_count"],
+                    ],
+                    "comments": [],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            old_signature = hashlib.sha256(legacy_payload).hexdigest()
+
+            new_signature = bridge._signature(
+                row,
+                [],
+                [
+                    {
+                        "path": str(media),
+                        "role": "video",
+                        "mime_type": "video/mp4",
+                        "ordinal": 0,
+                    }
+                ],
+            )
+
+            self.assertNotEqual(new_signature, old_signature)
+
     def test_unreadable_default_database_disables_bridge_without_breaking_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

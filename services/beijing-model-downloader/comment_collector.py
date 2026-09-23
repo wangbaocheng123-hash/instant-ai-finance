@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -25,6 +26,7 @@ DETAIL_API_RE = re.compile(
     r"/aweme/v1/web/aweme/detail",
     re.IGNORECASE,
 )
+BEIJING_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 class CommentCollectError(RuntimeError):
@@ -251,7 +253,8 @@ class CommentCollector:
         if raw.get("create_time"):
             try:
                 created_at = datetime.fromtimestamp(
-                    int(raw["create_time"])
+                    int(raw["create_time"]),
+                    BEIJING_TIMEZONE,
                 ).isoformat(timespec="seconds")
             except (OSError, OverflowError, TypeError, ValueError):
                 created_at = ""

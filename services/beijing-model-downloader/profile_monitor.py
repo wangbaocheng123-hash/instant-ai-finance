@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -22,6 +23,7 @@ PROFILE_WORK_RE = re.compile(
 IMAGE_WORK_PATH_TYPES = frozenset({"note", "article"})
 METRIC_ONLY_RE = re.compile(r"^(?:\d+(?:\.\d+)?(?:万|亿)?|置顶)$")
 MIN_STABLE_PROFILE_CARDS = 3
+BEIJING_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True)
@@ -42,10 +44,10 @@ def video_created_at(video_id: str) -> datetime:
     try:
         timestamp = int(video_id) >> 32
         if 1_500_000_000 <= timestamp <= 2_500_000_000:
-            return datetime.fromtimestamp(timestamp)
+            return datetime.fromtimestamp(timestamp, BEIJING_TIMEZONE)
     except (ValueError, OverflowError, OSError):
         pass
-    return datetime.fromtimestamp(0)
+    return datetime.fromtimestamp(0, BEIJING_TIMEZONE)
 
 
 def launch_dedicated_login_browser(

@@ -12,6 +12,7 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping
+from zoneinfo import ZoneInfo
 
 from .transfer_contract import build_comment_bundle, new_manifest, sha256_file
 from .transfer_outbox import TransferOutbox
@@ -24,6 +25,7 @@ DEFAULT_IMAGE_ROOT = Path("/srv/model-downloader/images")
 WIRE_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]+")
 COMMENT_SIGNATURE_VERSION = 2
 COMMENT_SIGNATURE_REBASE_HOURS = 48
+BEIJING_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 def _enabled(value: str | None, default: bool) -> bool:
@@ -49,7 +51,10 @@ def _iso(value: object, *, fallback: str | None = None) -> str:
         return ""
     parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
+        # The independent Beijing downloader historically persisted local
+        # wall-clock values without an offset.  They are Beijing times, not
+        # UTC.  Treating them as UTC adds another eight hours on China phones.
+        parsed = parsed.replace(tzinfo=BEIJING_TIMEZONE)
     return parsed.isoformat()
 
 
@@ -354,7 +359,7 @@ class ModelDownloaderBridge:
                 row.get("video_id"),
                 row.get("title"),
                 row.get("source_url"),
-                row.get("published_at"),
+                _iso(row.get("published_at")),
                 media_rows[0][3],
                 media_rows[0][4],
                 row.get("comment_count"),
@@ -396,7 +401,7 @@ class ModelDownloaderBridge:
                 row.get("video_id"),
                 row.get("title"),
                 row.get("source_url"),
-                row.get("published_at"),
+                _iso(row.get("published_at")),
                 stat.st_size,
                 stat.st_mtime_ns,
                 row.get("comments_collected_at"),

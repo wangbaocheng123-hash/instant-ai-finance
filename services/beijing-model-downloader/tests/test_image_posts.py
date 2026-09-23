@@ -22,14 +22,44 @@ from douyin_core import (  # noqa: E402
     extract_douyin_url,
     image_mime_type,
 )
+from comment_collector import CommentCollector  # noqa: E402
 from library_store import LibraryStore, SCHEMA_VERSION  # noqa: E402
-from profile_monitor import IMAGE_WORK_PATH_TYPES, PROFILE_WORK_RE  # noqa: E402
+from profile_monitor import (  # noqa: E402
+    IMAGE_WORK_PATH_TYPES,
+    PROFILE_WORK_RE,
+    video_created_at,
+)
 
 
 CHINA = timezone(timedelta(hours=8))
 
 
 class ImagePostTests(unittest.TestCase):
+    def test_aweme_timestamp_is_explicit_beijing_time(self) -> None:
+        timestamp = int(datetime(2026, 9, 23, 9, 59, 19, tzinfo=timezone.utc).timestamp())
+        video_id = str(timestamp << 32)
+
+        created_at = video_created_at(video_id)
+
+        self.assertEqual(
+            created_at.isoformat(timespec="seconds"),
+            "2026-09-23T17:59:19+08:00",
+        )
+
+    def test_comment_timestamp_is_explicit_beijing_time(self) -> None:
+        timestamp = int(datetime(2026, 9, 23, 9, 59, 19, tzinfo=timezone.utc).timestamp())
+
+        rows = CommentCollector._flatten_comment(
+            {
+                "cid": "comment-1",
+                "create_time": timestamp,
+                "user": {"nickname": "读者"},
+                "text": "测试评论",
+            }
+        )
+
+        self.assertEqual(rows[0]["created_at"], "2026-09-23T17:59:19+08:00")
+
     def test_version_four_library_migrates_without_rewriting_video_rows(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
