@@ -1,10 +1,11 @@
 # 项目状态
 
-- 最后更新：2026-09-24 12:33（北京时间）
-- 最新本地检查点：`BLOGGER_PUSH_ONLY_PARITY_0_24_0_LOCAL_VERIFIED`。普通博主已按 ADR-0057 对齐模型先生的标题、图文、移动媒体、原文/关键词和完整只读 MCP，但不增加投资思路或智能问答。北京仍是唯一采集源；新加坡只在签名完成回调后验收、保存、后处理、显示和供 MCP 读取，已删除普通博主到达账本轮询，不实现 3 分钟检查或 15/60 分钟刷评。
-- 即时 AI `0.24.0` 候选新增占位标题的开头帧/同次 AI 原文标题兜底、图文正文与有序私有原图、普通博主 4 MiB Range 续播，以及两个普通博主评论 MCP 工具；旧 `cloud-video:` 编号、旧工具名和旧媒体 API 保持兼容。北京采集器 `1.1.0` 候选支持普通博主 `/article/` 长图文、已有 OCR/人工标题优先导出和后续新视频半尺寸 H.264/AAC 快启保存。
-- 本地验收已通过：即时 AI 210 项 Python、北京采集器 229 项 Python、前端源码契约 10 项和 TypeScript/Vite 生产构建。测试使用合成资料，未读写生产业务数据、未调用真实付费模型、未采集抖音。
-- 当前仍是本地未发布候选：生产即时 AI 仍为 `0.23.2`，北京博主采集器仍为 `1.0.9`。下一项唯一建议任务：所有者确认“正式发布”后，再提交并推送 `main`，分别经新加坡固定发布器和北京 `beijing-production` 统一发布器上线，然后用新自然作品验收图文、标题、评论快照、MCP 分页与手机续播。
+- 最后更新：2026-09-24 13:58（北京时间）
+- 最新检查点：`BLOGGER_PUSH_ONLY_PARITY_0_24_0_RELEASE_LIVE_VERIFIED`。功能提交 `0613c509477e1411ca939c64e6bd7d6c9755ae21` 已进入 GitHub `main` 和 `beijing-production`；新加坡即时 AI `0.24.0` 与北京博主采集器 `1.1.0` 已正式上线。普通博主已按 ADR-0057 对齐标题、图文、移动媒体、原文/关键词和完整只读 MCP，但不增加投资思路或智能问答。
+- 数据方向保持为北京唯一采集、签名推送；新加坡只在 `complete` 回调后验收、保存、后处理、显示和供 MCP 读取。新加坡普通博主到达账本轮询已删除，不实现 3 分钟作品检查或 15/60 分钟刷评；评论只随北京后续推送的新修订变化。
+- 新加坡固定发布器完成服务器 210 项回归并返回 0.24.0；生产仓库精确为 `0613c50`，即时 AI 与 Caddy active，回环/公网健康和 Service Worker 为 0.24.0，未登录普通博主私有媒体为 401。公网 MCP `tools/list` 实测 9 个工具，包含 `get_blogger_comments` 与 `get_blogger_author_replies`，普通博主没有投资思路或智能问答工具。
+- 北京统一发布器返回 `BEIJING_COLLECTION_SUITE_PUBLISH_VERIFIED`，公网版本和北京本机回环均确认采集器 1.1.0 / `0613c50`；blogger/model/model-web 三服务 active，发布结果 success，代码发布 timer disabled/inactive。模型下载器子树未变，因此没有重复部署或改变其既有采集调度。
+- 发布前本地验收为即时 AI 210 项 Python、北京采集器 229 项 Python、前端 10 项源码契约、TypeScript/Vite 生产构建和 npm 0 漏洞；发布没有触发真实抖音采集、付费 ASR/AI、历史批处理，也没有修改域名、Caddy、安全组、凭据或时变罗盘。下一项唯一建议任务：等待北京下一条自然推送，验收标题优先级、长图文原图、评论快照、MCP 分页和手机 Range 续播，并确认新加坡没有主动采集或刷评。
 - 最新检查点：`MODEL_MR_BEIJING_TIME_0_23_2_RELEASE_LIVE_VERIFIED`。所有者明确要求“发布”后，新加坡固定发布器将正式生产上线到 `8a68388381e72056184738f82452498a00bf541e`，服务器 207 项回归通过；公网健康、Service Worker 与 MCP initialize 均为 0.23.2，正式 `app.js` 实测包含 `Asia/Shanghai`。
 - `beijing-production` 已推进到相同提交。北京采集器 1.0.9 与模型下载器 `0.10.3+git.beijing-time` 已正式上线，统一发布器返回 `BEIJING_COLLECTION_SUITE_PUBLISH_VERIFIED`；blogger/model/model-web 三服务 active，发布单元 result success，代码发布 timer disabled/inactive。
 - 发布后的只读账本确认桥接器生成 49 条历史校时修订，涉及 49 个作品，全部携带 `+08:00`、状态 delivered、HTTP 200。最新作品 `7688668173143610297` 的 revision 53 已于新加坡投影确认后送达，时间为 `2026-09-23T17:59:19+08:00`；旧 revision 52 的错误值为 `+00:00`，根因与修复均得到真实生产证据闭环。相同媒体继续复用 SHA-256 内容对象，没有因校时重传 MP4。

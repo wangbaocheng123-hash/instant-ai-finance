@@ -1,7 +1,7 @@
 # ADR-0057：普通博主以北京单一采集源完成接收后能力对齐
 
 - 日期：2026-09-24
-- 状态：`ACCEPTED / IMPLEMENTED_LOCALLY / NOT_RELEASED`
+- 状态：`ACCEPTED / IMPLEMENTED / RELEASED`
 - 目标版本：即时 AI `0.24.0`；北京博主采集器 `1.1.0`
 - 决策者：产品所有者
 
@@ -63,8 +63,22 @@
 - 必须覆盖图文不进入 ASR、占位标题共用一次关键词请求、标题并发优先级、私有媒体
   Range、全部评论/MCP 分页、`/article/` 正文与原图、北京时间以及半尺寸 iPhone 兼容编码。
 - 本地候选已通过即时 AI 210 项 Python、北京采集器 229 项 Python、前端 10 项源码契约和
-  TypeScript/Vite `0.24.0` 生产构建。正式发布前还必须运行两端固定发布门禁、敏感文件检查和
-  实际服务健康验收；未收到本轮“正式发布”指令前不推送、不上线。
+  TypeScript/Vite `0.24.0` 生产构建。正式发布继续要求两端固定发布门禁、敏感文件检查和
+  实际服务健康验收。
+
+## 正式发布结果
+
+- 所有者于 2026-09-24 明确要求“正式发布”。功能提交
+  `0613c509477e1411ca939c64e6bd7d6c9755ae21` 已进入 GitHub `main` 和
+  `beijing-production`。
+- 新加坡固定发布器完成服务器 210 项回归并上线即时 AI `0.24.0`；生产仓库精确指向
+  目标提交，即时 AI 与 Caddy active，回环/公网健康和 Service Worker 版本一致，未登录
+  普通博主私有媒体返回 401。公网 MCP `tools/list` 实测 9 个工具并包含两个新增评论工具。
+- 北京统一发布器返回 `BEIJING_COLLECTION_SUITE_PUBLISH_VERIFIED`；公网与服务器回环均
+  确认采集器 `1.1.0` 和目标提交。blogger/model/model-web 三服务 active，publisher
+  success，代码发布 timer disabled/inactive；模型下载器子树未变，没有重复部署。
+- 发布没有触发真实抖音采集、ASR、AI、历史批处理或新加坡反向采集，也没有修改域名、
+  Caddy、安全组、凭据或时变罗盘。下一条北京自然推送用于最终业务资料验收。
 
 ## 回滚
 
