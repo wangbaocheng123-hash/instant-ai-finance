@@ -295,10 +295,10 @@ export class BloggerPanel {
       section.append(summary);
     }
     const monitor = document.createElement('p'); monitor.className = 'blogger-processing-monitor';
-    monitor.textContent = `${status.worker_running ? '后台执行器运行中' : '后台执行器未运行'} · 语音识别${status.speech_configured ? '已配置' : '未配置'} · 关键词模型${status.keywords_configured ? '已配置' : '未配置'}${status.last_reconciled ? ` · 最近核对 ${this.formatEpoch(status.last_reconciled)}` : ''}`;
+    monitor.textContent = `${status.worker_running ? '接收后处理器运行中' : '接收后处理器未运行'} · 北京推送触发 · 语音识别${status.speech_configured ? '已配置' : '未配置'} · 关键词模型${status.keywords_configured ? '已配置' : '未配置'}`;
     section.append(monitor);
     if (!compact) {
-      section.append(this.message(`只自动处理本次开启时刻之后完成传输的视频；每 4 秒显示进度，并持久补偿漏掉的到达通知。每日最多 ${status.daily_call_limit} 次模型调用，每条最多 ${status.max_video_minutes} 分钟，已有原文或关键词不会覆盖。开启前的个别漏项，请打开作品后点“一键补做”。`));
+      section.append(this.message(`只在北京采集器完成签名推送后处理新视频；页面每 4 秒仅刷新本地任务进度，不会反向查询北京或抖音。每日最多 ${status.daily_call_limit} 次模型调用，每条最多 ${status.max_video_minutes} 分钟，已有原文、有效标题或关键词不会覆盖。历史个别漏项可打开作品后点“一键补做”。`));
       section.append(this.message('自动原文会标记为“尚未人工核对”。手动关闭会暂停尚未发起的自动任务；已经提交给模型的单次调用不会强行中断。'));
     }
     const visibleItems = compact && this.selectedWorkKey
@@ -315,7 +315,7 @@ export class BloggerPanel {
       const steps = document.createElement('div'); steps.className = 'blogger-processing-steps';
       steps.append(
         this.processingStep('视频原文', item.steps.asr.state, item.steps.asr.message),
-        this.processingStep('AI关键词', item.steps.keywords.state, item.steps.keywords.message),
+        this.processingStep('标题与 AI 关键词', item.steps.keywords.state, item.steps.keywords.message),
       );
       row.append(rowHeading, steps);
       if (['review', 'configuration'].includes(item.state)) {
@@ -324,7 +324,7 @@ export class BloggerPanel {
       }
       section.append(row);
     });
-    if (!visibleItems.length) section.append(this.message(compact ? '本作品还没有自动或手动补做任务。' : status.enabled ? '正在监控新视频，目前没有排队任务。' : '当前没有处理记录。'));
+    if (!visibleItems.length) section.append(this.message(compact ? '本作品还没有自动或手动补做任务。' : status.enabled ? '等待北京采集器推送新视频，目前没有排队任务。' : '当前没有处理记录。'));
     return section;
   }
 
@@ -425,7 +425,7 @@ export class BloggerPanel {
     const main = document.createElement('div'); main.className = 'blogger-card-main';
     const title = document.createElement('h3'); title.textContent = work.title || work.description || '未命名作品';
     const meta = document.createElement('p');
-    meta.textContent = `${this.formatDate(work.published_at || work.captured_at)} · ${work.media_available ? '本地视频' : '视频待传'} · ${work.comment_count} 条评论`;
+    meta.textContent = `${this.formatDate(work.published_at || work.captured_at)} · ${this.mediaLabel(work)} · ${work.comment_count} 条评论`;
     main.append(title, meta);
     const keywordMeta = document.createElement('div'); keywordMeta.className = 'model-work-meta';
     if (work.has_video_text) keywordMeta.append(this.pill('有视频原文'));
@@ -451,20 +451,23 @@ export class BloggerPanel {
     const title = document.createElement('h3'); title.textContent = detail.title || detail.description || '未命名作品';
     const headerActions = document.createElement('div'); headerActions.className = 'blogger-workspace-actions';
     headerActions.append(this.actionButton('改标题', 'edit-title'));
-    if (detail.media_available && this.needsPipeline(detail)) {
-      const repair = this.actionButton('一键补做原文 + AI关键词', 'repair-pipeline', true);
+    if (detail.video_available && this.needsPipeline(detail)) {
+      const repair = this.actionButton('一键补做原文 + 标题 + AI关键词', 'repair-pipeline', true);
       repair.disabled = this.busy; headerActions.append(repair);
     }
     header.append(title, headerActions);
     article.append(header);
+    const titleSource = document.createElement('p'); titleSource.className = 'model-text-source';
+    titleSource.textContent = `标题来源：${this.titleSourceLabel(detail.title_source)}${detail.title_confidence !== null ? ` · 置信度 ${Math.round(detail.title_confidence * 100)}%` : ''}`;
+    article.append(titleSource);
     if (this.editingTitle) article.append(this.renderTitleEditor(detail));
     const meta = document.createElement('p'); meta.className = 'blogger-detail-kicker';
-    meta.textContent = `${this.formatDate(detail.published_at || detail.captured_at)} · ${detail.media_available ? '本地视频' : '视频待传'} · ${detail.comment_total} 条评论`;
+    meta.textContent = `${this.formatDate(detail.published_at || detail.captured_at)} · ${this.mediaLabel(detail)} · ${detail.comment_total} 条评论`;
     article.append(meta);
     const tabs = document.createElement('nav'); tabs.className = 'model-detail-tabs';
     ([
-      ['video', '本地视频'],
-      ['text', '视频原文'],
+      ['video', this.isImageWork(detail) ? `原图 ${detail.image_count}` : '本地视频'],
+      ['text', this.isImageWork(detail) ? '图文正文' : '视频原文'],
       ['comments', `评论 ${detail.comment_total}`],
       ['keywords', 'AI关键词'],
       ['interpretation', '解读感悟'],
@@ -494,28 +497,58 @@ export class BloggerPanel {
 
   private renderVideo(detail: BloggerWorkDetail): HTMLElement {
     const panel = document.createElement('div'); panel.className = 'model-video-panel';
-    if (detail.media_available && detail.video_url) {
+    const isImagePost = this.isImageWork(detail);
+    if (isImagePost && detail.image_urls.length) {
+      const gallery = document.createElement('div'); gallery.className = 'model-image-gallery';
+      detail.image_urls.forEach((url, index) => {
+        const link = document.createElement('a'); link.href = url; link.target = '_blank'; link.rel = 'noopener';
+        const image = document.createElement('img'); image.src = url;
+        image.alt = `${detail.title} · 第 ${index + 1} 张原图`; image.loading = 'lazy'; image.decoding = 'async';
+        link.append(image); gallery.append(link);
+      });
+      const note = document.createElement('p'); note.textContent = `已保存 ${detail.image_count} 张北京推送原图；点击可查看原尺寸。`;
+      panel.append(gallery, note);
+    } else if (detail.video_available && detail.video_url) {
       const video = document.createElement('video');
       video.controls = true; video.playsInline = true; video.preload = 'metadata'; video.src = detail.video_url;
       const note = document.createElement('p'); note.textContent = '正在读取视频信息…';
+      let playbackStarted = false;
+      const showBuffering = () => {
+        if (!video.paused && !video.ended) {
+          note.textContent = '网络有波动，正在自动分段续传本地视频…';
+          note.classList.remove('is-error');
+        }
+      };
       video.addEventListener('loadedmetadata', () => {
         const seconds = Number.isFinite(video.duration) ? Math.max(1, Math.round(video.duration)) : 0;
-        note.textContent = `博主本地视频已就绪${seconds ? ` · ${Math.floor(seconds / 60)}分${seconds % 60}秒` : ''}。`;
+        note.textContent = `博主本地有声视频已就绪${seconds ? ` · ${Math.floor(seconds / 60)}分${seconds % 60}秒` : ''}，不会跳转抖音。`;
       });
-      video.addEventListener('error', () => { note.textContent = '本地视频加载失败，请收起后重试。'; note.classList.add('is-error'); });
+      video.addEventListener('playing', () => {
+        playbackStarted = true; note.textContent = '本地有声视频正在播放；网络波动时会自动分段续传。'; note.classList.remove('is-error');
+      });
+      video.addEventListener('waiting', showBuffering);
+      video.addEventListener('stalled', showBuffering);
+      video.addEventListener('error', () => {
+        note.textContent = playbackStarted
+          ? '本地视频续传失败，请点击播放键重试；会从当前进度继续。'
+          : '本地视频加载失败，请确认网络后点击播放键重试。';
+        note.classList.add('is-error');
+      });
       panel.append(video, note);
-    } else panel.append(this.message('这条作品的视频尚未传输完成。'));
+    } else panel.append(this.message(isImagePost ? '这条图文的原图尚未传输完成。' : '这条作品的视频尚未传输完成。'));
     return panel;
   }
 
   private renderVideoText(detail: BloggerWorkDetail): HTMLElement {
     const panel = document.createElement('div'); panel.className = 'model-video-text-panel';
+    const isImagePost = this.isImageWork(detail);
     const text = document.createElement('textarea'); text.id = 'blogger-video-text';
-    text.value = detail.video_text.text || detail.transcripts[0]?.text || '';
-    text.placeholder = '尚无视频原文，可读取现有识别结果或使用豆包识别。'; text.maxLength = 200000;
+    text.value = isImagePost ? detail.description : detail.video_text.text || detail.transcripts[0]?.text || '';
+    text.placeholder = isImagePost ? '这条图文尚未收到正文。' : '尚无视频原文，可读取现有识别结果或使用豆包识别。'; text.maxLength = 200000;
+    text.readOnly = isImagePost;
     const source = document.createElement('p'); source.className = 'model-text-source';
-    source.textContent = detail.video_text.official ? `当前来源：${detail.video_text.source}（正式原文）` : '识别结果请核对后保存为正式原文。';
-    if (detail.video_text.source === 'doubao-auto-unreviewed') source.textContent = '豆包已自动识别并保存，尚未人工核对；您可修改后保存确认。';
+    source.textContent = isImagePost ? '当前来源：北京采集器推送的图文正文。' : detail.video_text.official ? `当前来源：${detail.video_text.source}（正式原文）` : '识别结果请核对后保存为正式原文。';
+    if (!isImagePost && detail.video_text.source === 'doubao-auto-unreviewed') source.textContent = '豆包已自动识别并保存，尚未人工核对；您可修改后保存确认。';
     const actions = document.createElement('div'); actions.className = 'model-text-actions';
     const cached = this.actionButton('识别视频文字', 'transcribe');
     const doubao = this.actionButton('豆包识别文字', 'doubao', true);
@@ -523,7 +556,10 @@ export class BloggerPanel {
     cached.disabled = this.busy || !detail.capabilities.transcribe_video;
     doubao.disabled = this.busy || !detail.capabilities.doubao_asr;
     save.disabled = this.busy || !detail.capabilities.save_video_text;
-    actions.append(cached, doubao, save); panel.append(text, source, actions);
+    if (!isImagePost) {
+      actions.append(cached, doubao, save);
+      panel.append(text, source, actions);
+    } else panel.append(text, source);
     return panel;
   }
 
@@ -651,7 +687,9 @@ export class BloggerPanel {
     try {
       const result = await instantApi.saveBloggerTitle(this.detail.work_key, title);
       this.detail.title = result.title;
-      const work = this.works.find((item) => item.work_key === this.detail?.work_key); if (work) work.title = result.title;
+      this.detail.title_source = 'manual'; this.detail.title_confidence = null;
+      const work = this.works.find((item) => item.work_key === this.detail?.work_key);
+      if (work) { work.title = result.title; work.title_source = 'manual'; work.title_confidence = null; }
       this.editingTitle = false; this.workMessage = { text: '标题已保存。', tone: 'is-done' };
     } catch (error) { this.workMessage = { text: this.errorText(error), tone: 'is-error' }; }
     finally { this.busy = false; this.renderDetail(); }
@@ -683,13 +721,13 @@ export class BloggerPanel {
 
   private async repairPipeline(): Promise<void> {
     if (!this.detail || this.busy || !this.needsPipeline(this.detail)) return;
-    if (!window.confirm('只补做这条作品缺少的步骤：豆包识别视频原文、再提炼 AI 关键词，可能产生费用；已有内容不会覆盖。确认排队？')) return;
+    if (!window.confirm('只补做这条视频缺少的步骤：豆包识别原文，再联合视频开头画面生成缺失标题并提炼 AI 关键词，可能产生费用；已有有效内容不会覆盖。确认排队？')) return;
     this.busy = true; this.setWorkMessage('正在把这条作品加入补做队列…', '');
     try {
       const result = await instantApi.processBloggerWork(this.detail.work_key);
       this.processing = await instantApi.bloggerProcessing();
       this.processingFingerprint = this.processingSignature(this.processing);
-      this.processingMessage = '单条补做已加入后台队列，页面每 4 秒自动显示进度。';
+      this.processingMessage = '单条补做已加入本地后台队列，页面每 4 秒仅刷新处理进度。';
       this.workMessage = { text: result.message || '已加入补做队列。', tone: result.state === 'done' ? 'is-done' : '' };
     } catch (error) { this.workMessage = { text: this.errorText(error), tone: 'is-error' }; }
     finally { this.busy = false; this.renderDetail(); }
@@ -698,7 +736,7 @@ export class BloggerPanel {
   private needsPipeline(detail: BloggerWorkDetail): boolean {
     const keywordInfo = detail.keyword_info;
     const hasKeywords = Boolean(detail.keywords.length || keywordInfo?.confirmed_at || keywordInfo?.schema_version);
-    return !detail.video_text.text.trim() || !hasKeywords;
+    return !detail.video_text.text.trim() || !hasKeywords || detail.title_source === 'source_placeholder';
   }
 
   private renderKeywords(detail: BloggerWorkDetail): HTMLElement {
@@ -733,7 +771,7 @@ export class BloggerPanel {
 
   private async extractKeywords(): Promise<void> {
     if (!this.detail || this.busy) return;
-    if (!window.confirm('只根据已保存的视频原文调用豆包提炼十类关键词，可能产生模型费用。确认继续？')) return;
+    if (!window.confirm('根据已保存的视频原文提炼十类关键词；若原作品没有有效标题，还会读取视频开头画面并在同一次 AI 请求中返回标题。可能产生模型费用，确认继续？')) return;
     this.busy = true; this.setWorkMessage('正在排队提炼关键词…', '');
     try {
       const result = await instantApi.extractBloggerKeywords(this.detail.work_key, this.detail.keyword_revision || '');
@@ -796,7 +834,7 @@ export class BloggerPanel {
   }
 
   private transferPresentation(status: BloggerTransferStatus): StatusPresentation {
-    if (status === 'verified') return { label: '传输已核验', detail: '视频和评论已完成完整性校验。', tone: 'is-ready' };
+    if (status === 'verified') return { label: '传输已核验', detail: '视频或原图、正文与评论已完成完整性校验。', tone: 'is-ready' };
     if (status === 'failed') return { label: '传输异常', detail: '请等待北京采集端安全重试。', tone: 'is-error' };
     if (status === 'transferring' || status === 'verifying') return { label: '传输处理中', detail: '资料正在传输或校验。', tone: 'is-active' };
     return { label: '等待传输', detail: '尚未收到完整作品资料。', tone: 'is-pending' };
@@ -854,9 +892,21 @@ export class BloggerPanel {
   }
   private resetSelection(): void { this.selectedCreatorId = null; this.selectedWorkKey = null; this.works = []; this.detail = null; this.workMessage = null; this.editingKeywords = false; }
   private selectedCreator(): BloggerCreator | null { return this.creators.find((creator) => creator.creator_id === this.selectedCreatorId) || null; }
+  private isImageWork(work: BloggerWork): boolean { return work.work_type === 'image' || work.work_type === 'gallery'; }
+  private mediaLabel(work: BloggerWork): string {
+    if (this.isImageWork(work)) return work.image_count ? `${work.image_count} 张本地原图` : '原图待传';
+    return work.video_available ? '本地视频' : '视频待传';
+  }
+  private titleSourceLabel(source: string): string {
+    if (source === 'manual') return '主人修改';
+    if (source === 'cover_ocr') return '视频开头画面识别';
+    if (source === 'ai_video_original') return 'AI 根据视频原文提炼';
+    if (source === 'source_placeholder') return '原作品暂无有效标题';
+    return '原作品标题';
+  }
   private formatDate(value: string | null): string {
     if (!value) return '时间待确认'; const date = new Date(value); if (Number.isNaN(date.getTime())) return value;
-    return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
+    return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
   }
   private formatEpoch(value: number): string {
     if (!value) return '尚未运行';

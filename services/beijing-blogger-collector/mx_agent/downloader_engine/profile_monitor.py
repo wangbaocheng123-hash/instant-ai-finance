@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -23,9 +24,11 @@ from .douyin_core import (
 )
 
 
-PROFILE_WORK_RE = re.compile(r"/(video|note)/(\d{15,22})(?:[/?#]|$)")
+PROFILE_WORK_RE = re.compile(r"/(video|note|article)/(\d{15,22})(?:[/?#]|$)")
+IMAGE_WORK_PATH_TYPES = frozenset({"note", "article"})
 METRIC_ONLY_RE = re.compile(r"^(?:\d+(?:\.\d+)?(?:万|亿)?|置顶)$")
 MIN_STABLE_PROFILE_CARDS = 1
+BEIJING_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True)
@@ -46,10 +49,10 @@ def video_created_at(video_id: str) -> datetime:
     try:
         timestamp = int(video_id) >> 32
         if 1_500_000_000 <= timestamp <= 2_500_000_000:
-            return datetime.fromtimestamp(timestamp)
+            return datetime.fromtimestamp(timestamp, BEIJING_TIMEZONE)
     except (ValueError, OverflowError, OSError):
         pass
-    return datetime.fromtimestamp(0)
+    return datetime.fromtimestamp(0, BEIJING_TIMEZONE)
 
 
 TITLE_DATE_RE = re.compile(
@@ -72,7 +75,7 @@ def refine_created_at_from_title(created_at: datetime, title: str) -> datetime:
         return created_at
     if abs(candidate.date() - created_at.date()) > timedelta(days=31):
         return created_at
-    if candidate.date() > datetime.now().date() + timedelta(days=1):
+    if candidate.date() > datetime.now(BEIJING_TIMEZONE).date() + timedelta(days=1):
         return created_at
     return candidate
 
@@ -233,7 +236,9 @@ class ProfileScanner:
                       url: location.href,
                       title: document.title || '',
                       text: (document.body && document.body.innerText || '').slice(0, 1600),
-                      cards: [...document.querySelectorAll('a[href*="/video/"],a[href*="/note/"]')]
+                      cards: [...document.querySelectorAll(
+                        'a[href*="/video/"],a[href*="/note/"],a[href*="/article/"]'
+                      )]
                         .map(a => ({
                           href: a.href,
                           classCount: a.classList.length,
@@ -298,11 +303,11 @@ class ProfileScanner:
                     url=f"https://www.douyin.com/{path_type}/{video_id}",
                     title=title or (
                         f"抖音图文_{video_id}"
-                        if path_type == "note"
+                        if path_type in IMAGE_WORK_PATH_TYPES
                         else f"抖音作品_{video_id}"
                     ),
                     created_at=video_created_at(video_id),
-                    work_type="image" if path_type == "note" else "video",
+                    work_type="image" if path_type in IMAGE_WORK_PATH_TYPES else "video",
                 )
             # A single unrelated recommendation can appear during hydration.
             # This dedicated monitor targets a creator with hundreds of works,

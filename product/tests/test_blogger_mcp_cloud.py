@@ -42,18 +42,22 @@ def pkce(value: str) -> str:
 
 
 class FakeLibrary:
-    def search_for_mcp(self, question: str, limit: int):
+    def search_for_mcp(self, question: str, limit: int, offset: int = 0):
+        items = [
+            {
+                "record_id": "cloud-video:" + "a" * 64,
+                "creator": "李爱琳rene",
+                "title": "最新作品",
+                "original_status": "official",
+            }
+        ]
         return {
             "query": question,
-            "count": 1,
-            "items": [
-                {
-                    "record_id": "cloud-video:" + "a" * 64,
-                    "creator": "李爱琳rene",
-                    "title": "最新作品",
-                    "original_status": "official",
-                }
-            ][:limit],
+            "count": len(items[offset:offset + limit]),
+            "total": len(items),
+            "offset": offset,
+            "has_more": offset + limit < len(items),
+            "items": items[offset:offset + limit],
         }
 
     def get_for_mcp(self, record_id: str):
@@ -61,6 +65,32 @@ class FakeLibrary:
             "found": True,
             "record_id": record_id,
             "video_original": {"text": "正式视频原文", "verified": True, "status": "official"},
+        }
+
+    def get_comments_for_mcp(
+        self, record_id: str, limit: int, offset: int, view: str, query: str
+    ):
+        return {
+            "found": True,
+            "record_id": record_id,
+            "view": view,
+            "query": query,
+            "count": 1,
+            "total": 1,
+            "offset": offset,
+            "has_more": False,
+            "items": [{"author_role": "creator", "text": "谢谢关注。"}][:limit],
+        }
+
+    def get_author_replies_for_mcp(self, record_id: str, limit: int, offset: int):
+        return {
+            "found": True,
+            "record_id": record_id,
+            "count": 1,
+            "total": 1,
+            "offset": offset,
+            "has_more": False,
+            "items": [{"creator_reply": {"text": "谢谢关注。"}}][:limit],
         }
 
 
@@ -390,6 +420,8 @@ class BloggerMcpCloudTests(unittest.TestCase):
             {
                 "search_blogger_videos",
                 "get_blogger_video_text",
+                "get_blogger_comments",
+                "get_blogger_author_replies",
                 "search_model_mr_works",
                 "get_model_mr_work_text",
                 "get_model_mr_comments",
@@ -422,7 +454,7 @@ class BloggerMcpCloudTests(unittest.TestCase):
             version="0.18.0",
             authenticated=False,
         )
-        self.assertEqual(len(listed["result"]["tools"]), 7)
+        self.assertEqual(len(listed["result"]["tools"]), 9)
 
         call = {
             "jsonrpc": "2.0",
@@ -471,6 +503,50 @@ class BloggerMcpCloudTests(unittest.TestCase):
             authenticated=True,
         )
         self.assertEqual(detail["result"]["structuredContent"]["video_original"]["text"], "正式视频原文")
+
+        blogger_comments = handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 40,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_blogger_comments",
+                    "arguments": {
+                        "record_id": "cloud-video:" + "a" * 64,
+                        "view": "interactions",
+                        "limit": 50,
+                        "offset": 0,
+                    },
+                },
+            },
+            library=FakeLibrary(),
+            model_mr_library=FakeModelMrLibrary(),
+            version="0.24.0",
+            authenticated=True,
+        )
+        self.assertEqual(
+            blogger_comments["result"]["structuredContent"]["items"][0]["author_role"],
+            "creator",
+        )
+        blogger_replies = handle_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 41,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_blogger_author_replies",
+                    "arguments": {"record_id": "cloud-video:" + "a" * 64},
+                },
+            },
+            library=FakeLibrary(),
+            model_mr_library=FakeModelMrLibrary(),
+            version="0.24.0",
+            authenticated=True,
+        )
+        self.assertEqual(
+            blogger_replies["result"]["structuredContent"]["items"][0]["creator_reply"]["text"],
+            "谢谢关注。",
+        )
 
         model_search = handle_message(
             {

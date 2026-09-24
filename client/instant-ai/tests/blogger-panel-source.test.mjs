@@ -36,9 +36,14 @@ test('blogger panel reuses the owner player and requires explicit paid ASR confi
   assert.match(panel, /视频原文/u);
   assert.match(panel, /豆包识别文字/u);
   assert.match(panel, /window\.confirm\('豆包识别会提取本地视频音频并按音频时长调用付费接口/u);
-  assert.match(panel, /一键补做原文 \+ AI关键词/u);
+  assert.match(panel, /一键补做原文 \+ 标题 \+ AI关键词/u);
   assert.match(panel, /window\.setInterval\(\(\) => void this\.pollProcessing\(\), 4_000\)/u);
   assert.match(panel, /新视频传输完成后，系统会自动识别原文并提炼关键词/u);
+  assert.match(panel, /北京推送触发/u);
+  assert.match(panel, /不会反向查询北京或抖音/u);
+  assert.match(panel, /model-image-gallery/u);
+  assert.match(panel, /video\.addEventListener\('waiting', showBuffering\)/u);
+  assert.match(panel, /timeZone: 'Asia\/Shanghai'/u);
   assert.match(panel, /视频原文.*AI关键词/su);
   assert.match(panel, /作者互动/u);
   assert.match(panel, /粉丝评论/u);

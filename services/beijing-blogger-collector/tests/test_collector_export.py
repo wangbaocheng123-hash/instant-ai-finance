@@ -301,6 +301,19 @@ class CollectorExportTests(unittest.TestCase):
         stored = self.storage.list_comments(video_id, limit=10)
         self.assertEqual(stored[0]["text"], original_text)
 
+    def test_export_prefers_existing_recognized_title(self) -> None:
+        video_id = self.add_video("7000000000000000098")
+        self.storage.save_ocr_title(
+            video_id,
+            "开头画面识别出的正式标题",
+            confidence=0.96,
+            frame_timestamp=0.35,
+        )
+
+        exported = self.adapter().export(video_id, "primary")
+
+        self.assertEqual(exported.work["title"], "开头画面识别出的正式标题")
+
     def test_invalid_export_is_diagnostic_and_does_not_reserve_sequence(self) -> None:
         video_id = self.add_video("7000000000000000003")
         with self.storage.connect() as connection:

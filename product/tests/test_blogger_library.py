@@ -63,6 +63,7 @@ class BloggerLibraryTests(unittest.TestCase):
         processing_status: str | None = None,
         received_at: int = 1_788_000_000,
         source_url: str = "https://example.test/work",
+        title: str | None = None,
     ) -> tuple[str, str]:
         transfer_id = _digest(f"transfer:{name}")
         revision_sha256 = _digest(f"revision:{name}")
@@ -144,7 +145,7 @@ class BloggerLibraryTests(unittest.TestCase):
                 "source_work_id": source_work_id,
                 "revision": revision,
                 "work_type": "video",
-                "title": f"作品 {name}",
+                "title": title if title is not None else f"作品 {name}",
                 "description": "只读详情",
                 "source_url": source_url,
                 "cover_url": r"C:\Users\owner\private-cover.jpg",
@@ -358,8 +359,10 @@ class BloggerLibraryTests(unittest.TestCase):
         self.assertEqual(work["title"], "作品 current")
         self.assertEqual(set(work), {
             "work_key", "creator_id", "source_work_id", "platform", "work_type",
-            "title", "description", "source_url", "published_at", "captured_at",
-            "transfer", "processing_status", "media_available", "video_url",
+            "title", "title_source", "title_confidence", "title_updated_at",
+            "description", "source_url", "published_at", "captured_at",
+            "transfer", "processing_status", "media_available", "video_available",
+            "video_url", "image_count", "image_urls",
             "has_video_text", "has_interpretation", "keywords", "keyword_info",
             "keyword_revision", "comment_count",
         })
@@ -383,6 +386,8 @@ class BloggerLibraryTests(unittest.TestCase):
             "top_level_count", "reply_groups", "missing_replies",
         })
         self.assertTrue(detail["media_available"])
+        self.assertTrue(detail["video_available"])
+        self.assertEqual(detail["image_urls"], [])
         self.assertEqual(detail["comment_total"], 2)
         self.assertEqual(detail["comments"][1]["kind"], "author_reply")
         self.assertEqual(detail["comments"][0]["thread_key"], detail["comments"][1]["thread_key"])
@@ -409,6 +414,59 @@ class BloggerLibraryTests(unittest.TestCase):
         self.assertTrue(cached["cached"])
         self.assertEqual(cached["text"], "正式视频原文")
         self.assertTrue(self.library.owner_database_path.is_file())
+
+    def test_pushed_image_work_exposes_original_gallery_without_entering_asr(self) -> None:
+        transfer_id, work_key = self._insert_work(
+            "image-work",
+            source_work_id="7788990011223344557",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+            processing_status="awaiting_asr_approval",
+            title="图文作品标题",
+        )
+        image_bytes = b"\x89PNG\r\n\x1a\n" + b"x" * 64
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        with closing(sqlite3.connect(self.store.database_path)) as connection, connection:
+            manifest = json.loads(connection.execute(
+                "SELECT manifest_json FROM transfers WHERE transfer_id=?", (transfer_id,)
+            ).fetchone()[0])
+            manifest["work"]["work_type"] = "image"
+            manifest["work"]["description"] = "北京采集器推送的完整图文正文。"
+            connection.execute(
+                "UPDATE transfers SET manifest_json=? WHERE transfer_id=?",
+                (json.dumps(manifest, ensure_ascii=False), transfer_id),
+            )
+            connection.execute(
+                """
+                UPDATE artifacts SET expected_size_bytes=?, expected_sha256=?, mime_type='image/png',
+                    source_filename='image.png', media_role='image', stored_relative_path=?
+                WHERE transfer_id=? AND artifact_kind='media'
+                """,
+                (len(image_bytes), image_hash, f"artifacts/{transfer_id}/image.png", transfer_id),
+            )
+        artifact_root = self.root / "artifacts" / transfer_id
+        (artifact_root / "private.mp4").unlink()
+        (artifact_root / "image.png").write_bytes(image_bytes)
+
+        detail = self.library.work_detail(work_key)
+        self.assertTrue(detail["media_available"])
+        self.assertFalse(detail["video_available"])
+        self.assertEqual(detail["image_count"], 1)
+        self.assertEqual(
+            detail["image_urls"],
+            [f"/media/blogger/works/{work_key}/images/0"],
+        )
+        self.assertEqual(detail["description"], "北京采集器推送的完整图文正文。")
+        self.assertEqual(detail["processing_status"], "ready")
+        self.assertEqual(self.library.status()["counts"]["awaiting_asr_approval"], 0)
+        self.assertEqual(self.library.status()["counts"]["ready"], 1)
+        self.assertIsNone(self.library.processing_arrival(transfer_id))
+        image = self.library.image_path(work_key, 0)
+        self.assertIsNotNone(image)
+        self.assertEqual(image[0].read_bytes(), image_bytes)
+        self.assertEqual(image[1], "image/png")
 
     def test_owner_keywords_interpretation_auto_text_and_stock_report_are_preserved(self) -> None:
         transfer_id, work_key = self._insert_work(
@@ -491,6 +549,7 @@ class BloggerLibraryTests(unittest.TestCase):
             columns = {row[1] for row in connection.execute("PRAGMA table_info(work_content)")}
         self.assertIn("keyword_info_json", columns)
         self.assertIn("stock_mentions_json", columns)
+        self.assertTrue({"title_source", "title_confidence", "title_updated_at"}.issubset(columns))
 
     def test_blogger_keyword_processor_is_explicit_deduplicated_and_saves_result(self) -> None:
         _, work_key = self._insert_work(
@@ -503,7 +562,8 @@ class BloggerLibraryTests(unittest.TestCase):
         )
         self.library.save_video_text(work_key, "黄金与美联储降息预期。")
         processor = BloggerProcessor(self.library)
-        self.assertFalse(processor.status()["enabled"])
+        self.assertTrue(processor.status()["enabled"])
+        self.assertEqual(processor.status()["arrival_mode"], "push_callback_only")
         revision = self.library.work_detail(work_key)["keyword_revision"]
         first = processor.request_keywords(work_key, revision)
         second = processor.request_keywords(work_key, revision)
@@ -527,6 +587,90 @@ class BloggerLibraryTests(unittest.TestCase):
         self.assertEqual(detail["keywords"], ["美联储", "降息"])
         self.assertFalse(detail["keyword_info"]["edited_by_owner"])
         self.assertEqual(processor.status()["items"][0]["state"], "done")
+
+    def test_missing_source_title_uses_early_frames_then_ai_original_in_same_request(self) -> None:
+        _, work_key = self._insert_work(
+            "title-fallback",
+            source_work_id="7788990011223344556",
+            revision=1,
+            transport_status="transport_completed",
+            media_state="verified",
+            comments_state="verified",
+            title="抖音作品_7788990011223344556",
+        )
+        original = "双重政策信号正在改变黄金和利率市场的定价。"
+        self.library.save_video_text(work_key, original)
+        processor = BloggerProcessor(self.library)
+        revision = self.library.work_detail(work_key)["keyword_revision"]
+        categories = {name: [] for name in KEYWORD_CATEGORIES}
+        categories["宏观、政策与事件"] = ["政策信号"]
+        result = {
+            "categories": categories,
+            "keywords": ["政策信号", "黄金"],
+            "model": "doubao:test",
+            "schema_version": model_mr_keywords.SCHEMA_VERSION,
+            "source_hash": model_mr_keywords.source_hash(original),
+            "edited_by_owner": False,
+            "title": "双重政策信号如何影响黄金定价",
+            "title_source": "ai_video_original",
+            "title_confidence": 0.91,
+        }
+        with patch(
+            "instant_ai.blogger_processing.model_mr_keywords.is_configured",
+            return_value=True,
+        ), patch(
+            "instant_ai.blogger_processing.model_mr_titles.extract_cover_frame_data_urls",
+            return_value=["data:image/jpeg;base64,AAAA"],
+        ) as frames, patch(
+            "instant_ai.blogger_processing.model_mr_keywords.extract_keywords",
+            return_value=result,
+        ) as extract:
+            processor.request_keywords(work_key, revision)
+            self.assertTrue(processor.process_one())
+        frames.assert_called_once()
+        extract.assert_called_once_with(
+            original,
+            need_title=True,
+            cover_images=["data:image/jpeg;base64,AAAA"],
+        )
+        detail = self.library.work_detail(work_key)
+        self.assertEqual(detail["title"], "双重政策信号如何影响黄金定价")
+        self.assertEqual(detail["title_source"], "ai_video_original")
+        self.assertEqual(detail["keywords"], ["政策信号", "黄金"])
+
+    def test_later_meaningful_source_title_replaces_ai_fallback_but_not_manual_title(self) -> None:
+        first_transfer, work_key = self._insert_work(
+            "title-source-first",
+            source_work_id="7788990011223344557",
+            revision=1,
+            title="抖音作品_7788990011223344557",
+        )
+        self.library.save_generated_title(
+            work_key,
+            "AI 临时标题",
+            source="ai_video_original",
+            confidence=0.9,
+            expected_title="抖音作品_7788990011223344557",
+        )
+        with closing(sqlite3.connect(self.store.database_path)) as connection, connection:
+            connection.execute(
+                "UPDATE transfers SET is_current=0 WHERE transfer_id=?",
+                (first_transfer,),
+            )
+        self._insert_work(
+            "title-source-second",
+            source_work_id="7788990011223344557",
+            revision=2,
+            title="北京后续推送的真实原标题",
+        )
+        detail = self.library.work_detail(work_key)
+        self.assertEqual(detail["title"], "北京后续推送的真实原标题")
+        self.assertEqual(detail["title_source"], "source")
+
+        self.library.save_title(work_key, "主人确认标题")
+        detail = self.library.work_detail(work_key)
+        self.assertEqual(detail["title"], "主人确认标题")
+        self.assertEqual(detail["title_source"], "manual")
 
     def test_blogger_manual_keyword_click_resumes_pre_call_configuration_after_recovery(self) -> None:
         _, work_key = self._insert_work(
@@ -589,7 +733,7 @@ class BloggerLibraryTests(unittest.TestCase):
             self.assertFalse(processor.process_one())
         extract.assert_called_once_with("黄金与就业数据。")
 
-    def test_blogger_automatic_queue_only_records_completed_arrival_while_enabled(self) -> None:
+    def test_blogger_automatic_queue_records_only_explicit_completed_callbacks(self) -> None:
         transfer_id, work_key = self._insert_work(
             "automatic-arrival",
             source_work_id="work-automatic-arrival",
@@ -600,21 +744,18 @@ class BloggerLibraryTests(unittest.TestCase):
         )
         processor = BloggerProcessor(self.library)
         processor.enqueue_transfer(transfer_id)
-        self.assertEqual(processor.status()["items"], [])
-        processor.set_enabled(True)
-        processor.enqueue_transfer(transfer_id)
         processor.enqueue_transfer(transfer_id)
         status = processor.status()
+        self.assertTrue(status["enabled"])
+        self.assertEqual(status["arrival_mode"], "push_callback_only")
         self.assertEqual(len(status["items"]), 1)
         self.assertEqual(status["items"][0]["work_key"], work_key)
         processor.set_enabled(False)
         self.assertFalse(processor.process_one())
 
-    def test_blogger_worker_reconciles_only_verified_arrivals_after_activation(self) -> None:
+    def test_blogger_worker_never_scans_ingest_ledger_for_arrivals(self) -> None:
         processor = BloggerProcessor(self.library)
-        with patch("instant_ai.blogger_processing.time.time", return_value=1_000):
-            processor.set_enabled(True)
-        _, old_work_key = self._insert_work(
+        old_transfer, old_work_key = self._insert_work(
             "before-automatic-activation",
             source_work_id="work-before-automatic-activation",
             revision=1,
@@ -623,7 +764,7 @@ class BloggerLibraryTests(unittest.TestCase):
             comments_state="verified",
             received_at=999,
         )
-        _, new_work_key = self._insert_work(
+        new_transfer, new_work_key = self._insert_work(
             "after-automatic-activation",
             source_work_id="work-after-automatic-activation",
             revision=1,
@@ -633,10 +774,9 @@ class BloggerLibraryTests(unittest.TestCase):
             received_at=1_001,
         )
 
-        with patch("instant_ai.blogger_processing.time.time", return_value=1_002):
-            self.assertEqual(processor.reconcile_new_arrivals(), 1)
-            self.assertEqual(processor.reconcile_new_arrivals(), 1)
-
+        self.assertFalse(hasattr(processor, "reconcile_new_arrivals"))
+        self.assertFalse(hasattr(self.library, "processing_arrivals_since"))
+        processor.enqueue_transfer(new_transfer)
         status = processor.status()
         self.assertEqual(len(status["items"]), 1)
         self.assertEqual(status["items"][0]["work_key"], new_work_key)
@@ -646,19 +786,14 @@ class BloggerLibraryTests(unittest.TestCase):
         self.assertEqual(status["items"][0]["steps"]["asr"]["state"], "queued")
         self.assertEqual(status["items"][0]["steps"]["keywords"]["state"], "waiting")
         self.assertEqual(status["summary"]["queued"], 1)
-        self.assertEqual(status["last_reconciled"], 1_002)
+        self.assertEqual(status["arrival_mode"], "push_callback_only")
+        self.assertNotEqual(old_transfer, new_transfer)
 
-    def test_blogger_reconciliation_outage_does_not_advance_past_missed_arrivals(self) -> None:
+    def test_blogger_status_does_not_create_a_polling_watermark(self) -> None:
         processor = BloggerProcessor(self.library)
-        with patch("instant_ai.blogger_processing.time.time", return_value=2_000):
-            processor.set_enabled(True)
-        with patch.object(
-            self.library,
-            "processing_arrivals_since",
-            side_effect=BloggerLibraryUnavailable("temporary read outage"),
-        ), self.assertRaises(BloggerLibraryUnavailable):
-            processor.reconcile_new_arrivals()
-        self.assertEqual(processor.status()["last_reconciled"], 0)
+        status = processor.status()
+        self.assertEqual(status["arrival_mode"], "push_callback_only")
+        self.assertFalse(processor.path.exists())
 
     def test_manual_pipeline_repairs_one_old_work_while_global_switch_is_off(self) -> None:
         _, work_key = self._insert_work(
@@ -670,6 +805,7 @@ class BloggerLibraryTests(unittest.TestCase):
             comments_state="verified",
         )
         processor = BloggerProcessor(self.library)
+        processor.set_enabled(False)
         queued = processor.request_pipeline(work_key)
         self.assertEqual(queued["state"], "queued")
         original = "贵金属与就业数据影响市场。"
@@ -759,7 +895,7 @@ class BloggerLibraryTests(unittest.TestCase):
             setting = connection.execute(
                 "SELECT enabled,failures,enabled_since,last_reconciled FROM settings WHERE id=1"
             ).fetchone()
-        self.assertTrue({"enabled_since", "last_reconciled"}.issubset(columns))
+        self.assertTrue({"enabled_since", "last_reconciled", "policy_version"}.issubset(columns))
         self.assertEqual(setting[0], 1)
         self.assertEqual(setting[1], 0)
         self.assertGreater(setting[2], 0)
@@ -900,12 +1036,26 @@ class BloggerLibraryTests(unittest.TestCase):
         )
         self.library.save_title(work_key, "全球债市与华尔街交易员")
         self.library.save_video_text(work_key, "债市再掀抛售，加息预期升温，华尔街交易员保持冷静。")
+        keyword_categories = {name: [] for name in KEYWORD_CATEGORIES}
+        keyword_categories["市场、指数与资金"] = ["期限溢价"]
+        self.library.save_keywords(
+            work_key,
+            keyword_categories,
+            ["期限溢价"],
+            self.library.work_detail(work_key)["keyword_revision"],
+        )
 
         result = self.library.search_for_mcp("测试博主最新的视频文字", limit=3)
         self.assertEqual(result["query_mode"], "latest")
         self.assertEqual(result["count"], 1)
         self.assertEqual(result["items"][0]["record_id"], f"cloud-video:{work_key}")
         self.assertEqual(result["items"][0]["original_status"], "official")
+        keyword_result = self.library.search_for_mcp("期限溢价", limit=3)
+        self.assertEqual(keyword_result["count"], 1)
+        self.assertIn("keywords", keyword_result["items"][0]["matched_in"])
+        all_result = self.library.search_for_mcp("列出全部作品", limit=3)
+        self.assertEqual(all_result["query_mode"], "all")
+        self.assertEqual(all_result["count"], 1)
 
         complete = self.library.get_for_mcp(f"cloud-video:{work_key}")
         self.assertTrue(complete["found"])
@@ -913,10 +1063,20 @@ class BloggerLibraryTests(unittest.TestCase):
         self.assertIn("债市再掀抛售", complete["video_original"]["text"])
         encoded = json.dumps(complete, ensure_ascii=False)
         for forbidden in (
-            "comments", "manifest", "collector_node_id", "collector_key_id",
+            "manifest", "collector_node_id", "collector_key_id",
             "stored_relative_path", "source_filename", str(self.root), "C:\\Users",
         ):
             self.assertNotIn(forbidden, encoded)
+        self.assertEqual(complete["comment_summary"]["total"], 2)
+        comments = self.library.get_comments_for_mcp(
+            f"cloud-video:{work_key}", limit=1, offset=0, view="all"
+        )
+        self.assertEqual(comments["count"], 1)
+        self.assertTrue(comments["has_more"])
+        self.assertNotIn("thread_key", json.dumps(comments, ensure_ascii=False))
+        replies = self.library.get_author_replies_for_mcp(f"cloud-video:{work_key}")
+        self.assertEqual(replies["total"], 1)
+        self.assertEqual(replies["items"][0]["creator_reply"]["text"], "谢谢关注。")
 
     def test_mcp_creator_search_accepts_li_ailin_name_variant_without_rene_suffix(self) -> None:
         transfer_id, work_key = self._insert_work(
@@ -1145,7 +1305,7 @@ class BloggerLibraryTests(unittest.TestCase):
         ), patch("instant_ai.server.queue_analysis", Mock(side_effect=AssertionError("AI called"))):
             thread.start()
             try:
-                media_path = f"/api/blogger-library/works/{work_key}/video"
+                media_path = f"/media/blogger/works/{work_key}/video"
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
                 connection.request("HEAD", media_path)
                 response = connection.getresponse()

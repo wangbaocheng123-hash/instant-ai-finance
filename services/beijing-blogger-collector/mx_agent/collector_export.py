@@ -363,6 +363,10 @@ class CollectorContentReadyAdapter:
             raise CollectorExportError("博主缺少已持久化的 platform_user_id。")
 
         video_raw = _raw_mapping(video.get("raw_json"))
+        title_record = self.storage.get_video_title(int(video_id)) or {}
+        exported_title = str(
+            title_record.get("active_title") or video.get("title") or ""
+        ).strip()
         source_work_id = str(
             video_raw.get("douyin_aweme_id")
             or video_raw.get("aweme_id")
@@ -452,7 +456,7 @@ class CollectorContentReadyAdapter:
                 "platform": platform,
                 "source_work_id": source_work_id,
                 "work_type": work_type,
-                "title": _bounded_text(video.get("title"), 1000),
+                "title": _bounded_text(exported_title, 1000),
                 "description": _bounded_text(video.get("description"), 20_000),
                 "source_url": _bounded_text(video.get("url"), 4000),
                 "cover_url": _bounded_text(video.get("cover_url"), 4000),

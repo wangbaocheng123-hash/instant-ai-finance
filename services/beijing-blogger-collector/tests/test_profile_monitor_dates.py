@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from mx_agent.downloader_engine.douyin_core import chromium_runtime_flags
 from mx_agent.downloader_engine.profile_monitor import (
+    PROFILE_WORK_RE,
     refine_created_at_from_title,
+    video_created_at,
 )
 
 
@@ -37,6 +40,16 @@ class ProfileMonitorDateTests(unittest.TestCase):
             ),
             draft_time,
         )
+
+    def test_aweme_timestamp_is_explicit_beijing_time_and_article_is_supported(self):
+        timestamp = int(datetime(2026, 9, 24, 1, 59, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp())
+        work_id = str(timestamp << 32)
+        created = video_created_at(work_id)
+        self.assertEqual(created.tzinfo, ZoneInfo("Asia/Shanghai"))
+        self.assertEqual((created.hour, created.minute), (1, 59))
+        match = PROFILE_WORK_RE.search(f"https://www.douyin.com/article/{work_id}")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "article")
 
 
 if __name__ == "__main__":

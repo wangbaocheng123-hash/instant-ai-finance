@@ -1,10 +1,8 @@
-"""Durable, sequential, owner-controlled processing for ordinary bloggers.
+"""Push-triggered post-processing for ordinary blogger transfers.
 
-The queue mirrors the Model Mr safety contract: it is off by default, only
-handles arrivals completed after it is enabled, never starts a historical
-batch and never automatically retries an ambiguous paid request.  A persisted
-activation boundary lets the worker reconcile completion callbacks that were
-missed during a restart without widening that paid-work boundary.
+Beijing remains the only collector.  A verified transfer-complete callback may
+enqueue local ASR/title/keyword work; this worker never polls Beijing, Douyin,
+or the Singapore ingest ledger for new source content.
 """
 from __future__ import annotations
 
@@ -17,7 +15,7 @@ from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from . import doubao_asr, model_mr_keywords
+from . import doubao_asr, model_mr_keywords, model_mr_titles
 from .blogger_library import BLOGGER_LIBRARY, BloggerLibrary
 from .model_mr_metadata import clean_keyword_info, keyword_revision
 from .model_mr_processing import PROVIDER_LOCK
@@ -25,6 +23,7 @@ from .model_mr_processing import PROVIDER_LOCK
 
 DAILY_CALL_LIMIT = 20
 MAX_VIDEO_SECONDS = 1200
+AUTO_POLICY_VERSION = 1
 MESSAGES = {
     "queued": "等待串行处理",
     "running": "处理中",
@@ -57,9 +56,10 @@ class BloggerProcessor:
                     id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL,
                     failures INTEGER NOT NULL DEFAULT 0,
                     enabled_since INTEGER NOT NULL DEFAULT 0,
-                    last_reconciled INTEGER NOT NULL DEFAULT 0
+                    last_reconciled INTEGER NOT NULL DEFAULT 0,
+                    policy_version INTEGER NOT NULL DEFAULT 0
                 );
-                INSERT OR IGNORE INTO settings(id,enabled) VALUES(1,0);
+                INSERT OR IGNORE INTO settings(id,enabled) VALUES(1,1);
                 CREATE TABLE IF NOT EXISTS jobs(
                     id INTEGER PRIMARY KEY, dedupe TEXT UNIQUE NOT NULL,
                     work_key TEXT NOT NULL, kind TEXT NOT NULL,
@@ -76,8 +76,7 @@ class BloggerProcessor:
             setting_columns = {
                 str(row[1]) for row in connection.execute("PRAGMA table_info(settings)")
             }
-            added_enabled_since = "enabled_since" not in setting_columns
-            if added_enabled_since:
+            if "enabled_since" not in setting_columns:
                 connection.execute(
                     "ALTER TABLE settings ADD COLUMN enabled_since INTEGER NOT NULL DEFAULT 0"
                 )
@@ -85,15 +84,32 @@ class BloggerProcessor:
                 connection.execute(
                     "ALTER TABLE settings ADD COLUMN last_reconciled INTEGER NOT NULL DEFAULT 0"
                 )
-            if added_enabled_since:
-                # Legacy queues did not persist their activation time.  Starting
-                # the new boundary at migration is the only safe choice: future
-                # callbacks gain durable recovery without silently billing an
-                # unknown amount of older content.
+            if "policy_version" not in setting_columns:
                 connection.execute(
-                    "UPDATE settings SET enabled_since=? WHERE enabled=1 AND enabled_since=0",
-                    (int(time.time()),),
+                    "ALTER TABLE settings ADD COLUMN policy_version INTEGER NOT NULL DEFAULT 0"
                 )
+            # v1 makes post-processing the default for future pushed arrivals.
+            # The migration boundary is "now", so no historical transfer is
+            # silently billed. Once migrated, an owner's pause remains intact.
+            migration_boundary = int(time.time())
+            migrating = bool(
+                connection.execute(
+                    "SELECT policy_version<? FROM settings WHERE id=1",
+                    (AUTO_POLICY_VERSION,),
+                ).fetchone()[0]
+            )
+            connection.execute(
+                "UPDATE settings SET enabled=1,enabled_since=?,last_reconciled=0,policy_version=? "
+                "WHERE policy_version<?",
+                (migration_boundary, AUTO_POLICY_VERSION, AUTO_POLICY_VERSION),
+            )
+            if migrating:
+                connection.execute(
+                    "UPDATE jobs SET state='review',updated=? WHERE automatic=1 "
+                    "AND state IN ('queued','quota','configuration') AND updated<?",
+                    (migration_boundary, migration_boundary),
+                )
+            connection.commit()
             with connection:
                 yield connection
         finally:
@@ -102,7 +118,7 @@ class BloggerProcessor:
     def status(self) -> dict[str, Any]:
         # Merely opening the page must not create queue state.
         if not self.path.exists():
-            enabled, failures, enabled_since, last_reconciled, items = False, 0, 0, 0, []
+            enabled, failures, enabled_since, items = True, 0, 0, []
             persisted_counts: dict[str, int] = {}
         else:
             with closing(sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)) as connection:
@@ -119,7 +135,6 @@ class BloggerProcessor:
                 ).fetchone()
                 enabled, failures = bool(setting["enabled"]), int(setting["failures"])
                 enabled_since = int(setting["enabled_since"]) if "enabled_since" in setting.keys() else 0
-                last_reconciled = int(setting["last_reconciled"]) if "last_reconciled" in setting.keys() else 0
                 rows = connection.execute(
                     "SELECT id,work_key,kind,automatic,state,phase,updated "
                     "FROM jobs ORDER BY id DESC LIMIT 30"
@@ -148,7 +163,7 @@ class BloggerProcessor:
             "enabled": enabled,
             "failures": failures,
             "enabled_since": enabled_since,
-            "last_reconciled": last_reconciled,
+            "arrival_mode": "push_callback_only",
             "worker_running": self._worker_active,
             "worker_last_seen": self._worker_last_seen,
             "daily_call_limit": DAILY_CALL_LIMIT,
@@ -214,9 +229,11 @@ class BloggerProcessor:
         return self.status()
 
     def enqueue_transfer(self, transfer_id: str) -> None:
-        # The persisted activation boundary is enforced again by reconciliation.
-        if not self.status()["enabled"]:
-            return
+        # A real signed transfer callback initializes/migrates policy state.
+        # Merely opening the status page still performs no write.
+        with self.db() as connection:
+            if not bool(connection.execute("SELECT enabled FROM settings WHERE id=1").fetchone()[0]):
+                return
         arrival = self.library.processing_arrival(transfer_id)
         if not arrival:
             return
@@ -229,38 +246,6 @@ class BloggerProcessor:
             "",
         )
 
-    def reconcile_new_arrivals(self) -> int:
-        """Idempotently repair missed callbacks inside the enabled time window."""
-        if not self.path.exists():
-            return 0
-        with self.db() as connection:
-            setting = connection.execute(
-                "SELECT enabled,enabled_since,last_reconciled FROM settings WHERE id=1"
-            ).fetchone()
-            if setting is None or not bool(setting["enabled"]) or int(setting["enabled_since"]) <= 0:
-                return 0
-            enabled_since = int(setting["enabled_since"])
-            # Keep a one-second overlap because transfer timestamps have second
-            # precision. Queue dedupe makes this overlap safe and prevents a
-            # completion exactly on the scan boundary from being missed.
-            scan_since = max(enabled_since, int(setting["last_reconciled"]) - 1)
-        arrivals = self.library.processing_arrivals_since(scan_since)
-        for arrival in arrivals:
-            work_key = arrival["work_key"]
-            self._enqueue(
-                work_key,
-                f"arrival:{work_key}:{arrival['media_hash']}",
-                "arrival",
-                True,
-                "",
-            )
-        with self.db() as connection:
-            connection.execute(
-                "UPDATE settings SET last_reconciled=? WHERE id=1",
-                (int(time.time()),),
-            )
-        return len(arrivals)
-
     def request_pipeline(self, work_key: str) -> dict[str, Any]:
         """Explicitly repair ASR and keyword extraction for one selected work."""
         detail = self.library.processing_detail(work_key)
@@ -269,7 +254,12 @@ class BloggerProcessor:
             raise ValueError("这条作品没有已完成传输的可识别视频。")
         text = str(detail.get("video_text", {}).get("text") or "").strip()
         info = clean_keyword_info(detail.get("keyword_info"), detail.get("keywords"))
-        if text and (info["keywords"] or info["confirmed_at"] or info["schema_version"]):
+        title_context = self.library.title_generation_context(work_key)
+        if (
+            text
+            and (info["keywords"] or info["confirmed_at"] or info["schema_version"])
+            and not title_context["needs_title"]
+        ):
             return {"ok": True, "state": "done", "message": "原文和关键词均已存在，没有调用 API"}
         return self._enqueue(
             work_key,
@@ -291,14 +281,17 @@ class BloggerProcessor:
         if revision != current_revision:
             raise ValueError("关键词已变化，请刷新详情后重试。")
         info = clean_keyword_info(detail.get("keyword_info"), detail.get("keywords"))
+        title_context = self.library.title_generation_context(work_key)
         if (
             info.get("source_hash") == model_mr_keywords.source_hash(text)
             and info["schema_version"] == model_mr_keywords.SCHEMA_VERSION
+            and not title_context["needs_title"]
         ):
             return {"ok": True, "state": "done", "message": "原文未变化，沿用已保存关键词，没有调用 API"}
         return self._enqueue(
             work_key,
-            f"keywords:{work_key}:{model_mr_keywords.source_hash(text)}:{revision}",
+            f"keywords:{work_key}:{model_mr_keywords.source_hash(text)}:"
+            f"{model_mr_keywords.SCHEMA_VERSION}:{int(title_context['needs_title'])}:{revision}",
             "keywords",
             False,
             revision,
@@ -359,6 +352,21 @@ class BloggerProcessor:
                 (int(time.time()), job_id),
             )
         return {"ok": True, "message": "已按主人确认重新排队；已缓存的结果不会重复调用。"}
+
+    def resume_configured_jobs(self) -> int:
+        """Resume only known pre-call automatic stops after provider recovery."""
+        if not (doubao_asr.is_configured() and model_mr_keywords.is_configured()):
+            return 0
+        with self.db() as connection:
+            enabled = bool(connection.execute("SELECT enabled FROM settings WHERE id=1").fetchone()[0])
+            if not enabled:
+                return 0
+            cursor = connection.execute(
+                "UPDATE jobs SET state='queued',updated=? WHERE automatic=1 AND state='configuration' "
+                "AND updated>=(SELECT enabled_since FROM settings WHERE id=1)",
+                (int(time.time()),),
+            )
+            return max(0, int(cursor.rowcount))
 
     def _update(
         self,
@@ -471,7 +479,12 @@ class BloggerProcessor:
             text = str(detail.get("video_text", {}).get("text") or "")
             info = clean_keyword_info(detail.get("keyword_info"), detail.get("keywords"))
             has_keywords = bool(info["keywords"] or info["confirmed_at"] or info["schema_version"])
-            if job["kind"] in {"arrival", "pipeline"} and has_keywords:
+            title_context = self.library.title_generation_context(work_key)
+            if (
+                job["kind"] in {"arrival", "pipeline"}
+                and has_keywords
+                and not title_context["needs_title"]
+            ):
                 self._finish(job_id)
                 return
             current_revision = keyword_revision(info)
@@ -485,6 +498,7 @@ class BloggerProcessor:
                     info.get(key) == saved_result.get(key)
                     for key in ("categories", "keywords", "model", "schema_version", "source_hash")
                 )
+                and not title_context["needs_title"]
             ):
                 self._finish(job_id)
                 return
@@ -503,10 +517,36 @@ class BloggerProcessor:
                 self._update(job_id, "running", "keywords")
                 if not self._reserve_call(job_id, "keywords"):
                     return
-                result = model_mr_keywords.extract_keywords(text)
+                if title_context["needs_title"]:
+                    cover_images: list[str] = []
+                    local = self.library.video_path(work_key)
+                    if local is not None:
+                        try:
+                            cover_images = model_mr_titles.extract_cover_frame_data_urls(
+                                local[0],
+                                int(work_key[:12], 16),
+                            )
+                        except (model_mr_titles.CoverFrameUnavailable, OSError):
+                            cover_images = []
+                    result = model_mr_keywords.extract_keywords(
+                        text,
+                        need_title=True,
+                        cover_images=cover_images,
+                    )
+                    cached["title_expected"] = title_context["title"]
+                else:
+                    result = model_mr_keywords.extract_keywords(text)
                 cached["keywords"] = result
                 cached["keyword_revision"] = current_revision
                 self._update(job_id, "running", result=cached)
+            if result.get("title") and result.get("title_source") in {"cover_ocr", "ai_video_original"}:
+                self.library.save_generated_title(
+                    work_key,
+                    str(result["title"]),
+                    source=str(result["title_source"]),
+                    confidence=result.get("title_confidence"),
+                    expected_title=str(cached.get("title_expected") or ""),
+                )
             try:
                 self.library.save_keywords(
                     work_key,
@@ -549,7 +589,7 @@ class BloggerProcessor:
                 while not stop.is_set():
                     self._worker_last_seen = int(time.time())
                     try:
-                        self.reconcile_new_arrivals()
+                        self.resume_configured_jobs()
                         self.process_one()
                     except Exception:
                         pass

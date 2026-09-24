@@ -948,6 +948,8 @@ class CreatorSyncService:
         entry = (self._state.get("videos") or {}).get(work.video_id) or {}
         expected_count = int(entry.get("image_file_count") or 0)
         title = work.title
+        existing_video = self._find_video_by_aweme(work.video_id)
+        description = str((existing_video or {}).get("description") or "")
         downloaded = False
         if not outputs or not expected_count or len(outputs) < expected_count:
             self._event(f"发现图文作品 {work.video_id}，正在读取并下载全部原图。")
@@ -956,9 +958,14 @@ class CreatorSyncService:
                 result = resolver.resolve_images(work.url, timeout=45)
             finally:
                 resolver.close()
-            if work.title and not work.title.startswith("抖音图文_"):
+            if (
+                work.title
+                and not work.title.startswith("抖音图文_")
+                and (not result.title or result.title.startswith("抖音图文_"))
+            ):
                 result.title = work.title
             title = result.title or work.title
+            description = str(result.description or "").strip()
             refined_created_at = refine_created_at_from_title(
                 work.created_at,
                 title,
@@ -985,6 +992,7 @@ class CreatorSyncService:
             outputs=outputs,
             creator=creator,
             title=title,
+            description=description,
         )
         state_entry = self._state.setdefault("videos", {}).setdefault(
             work.video_id, {}
@@ -1009,6 +1017,7 @@ class CreatorSyncService:
         outputs: list[Path],
         creator: str,
         title: str,
+        description: str = "",
     ) -> int:
         # The tab name is the stable account key used by the UI and database
         # filters. Douyin display names may contain changing suffixes or emoji.
@@ -1065,7 +1074,9 @@ class CreatorSyncService:
                 ),
                 "author": author,
                 "title": resolved_title,
-                "description": f"由智能体自动下载并归档的图文作品，共 {len(outputs)} 张原图。",
+                "description": description or (
+                    f"由智能体自动下载并归档的图文作品，共 {len(outputs)} 张原图。"
+                ),
                 "url": work.url,
                 "cover_url": "",
                 "published_at": published_at,

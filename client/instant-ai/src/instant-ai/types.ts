@@ -153,6 +153,9 @@ export interface BloggerWork {
   platform: string;
   work_type: string;
   title: string;
+  title_source: 'source' | 'source_placeholder' | 'cover_ocr' | 'ai_video_original' | 'manual' | string;
+  title_confidence: number | null;
+  title_updated_at: string;
   description: string;
   source_url: string;
   published_at: string | null;
@@ -160,7 +163,10 @@ export interface BloggerWork {
   transfer: BloggerTransferSummary;
   processing_status: BloggerProcessingStatus;
   media_available: boolean;
+  video_available: boolean;
   video_url: string;
+  image_count: number;
+  image_urls: string[];
   has_video_text: boolean;
   has_interpretation: boolean;
   keywords: string[];
@@ -195,6 +201,7 @@ export interface BloggerWorkDetail extends BloggerWork {
   comment_total: number;
   capabilities: {
     video: boolean;
+    images: boolean;
     save_title: boolean;
     save_video_text: boolean;
     transcribe_video: boolean;
@@ -207,7 +214,7 @@ export interface BloggerProcessing {
   enabled: boolean;
   failures: number;
   enabled_since: number;
-  last_reconciled: number;
+  arrival_mode: 'push_callback_only';
   worker_running: boolean;
   worker_last_seen: number;
   daily_call_limit: number;

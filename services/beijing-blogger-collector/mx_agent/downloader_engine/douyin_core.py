@@ -64,7 +64,7 @@ ANY_DOUYIN_RE = re.compile(
     r"|www\.iesdouyin\.com/share/video/\d+/?[A-Za-z0-9_?&=./%-]*)",
     re.I,
 )
-VIDEO_ID_RE = re.compile(r"/(?:video|note)/(\d{15,22})(?:[/?#]|$)", re.I)
+VIDEO_ID_RE = re.compile(r"/(?:video|note|article)/(\d{15,22})(?:[/?#]|$)", re.I)
 IES_SHARE_ID_RE = re.compile(r"/share/video/(\d{15,22})(?:[/?#]|$)", re.I)
 INVALID_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 DECORATION_HOST_PARTS = (
@@ -73,6 +73,9 @@ DECORATION_HOST_PARTS = (
     "byteimg.com",
     "pstatp.com",
     "ibytedtos.com",
+)
+BLOGGER_VIDEO_SCALE_FILTER = (
+    "scale=trunc(max(iw/2\\,240)/2)*2:-2:flags=lanczos"
 )
 
 
@@ -205,6 +208,38 @@ def inspect_mp4(path: Path) -> dict[str, object]:
     }
 
 
+def compact_video_command(
+    ffmpeg: str,
+    video_input: Path,
+    output: Path,
+    *,
+    audio_input: Path | None = None,
+) -> list[str]:
+    """Build the fixed half-resolution, iPhone-compatible video command."""
+    command = [ffmpeg, "-y", "-v", "error", "-i", str(video_input)]
+    if audio_input is not None:
+        command.extend(["-i", str(audio_input)])
+    command.extend(
+        [
+            "-map", "0:v:0",
+            "-map", "1:a:0" if audio_input is not None else "0:a:0",
+            "-vf", BLOGGER_VIDEO_SCALE_FILTER,
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "27",
+            "-profile:v", "main",
+            "-level:v", "3.1",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "64k",
+            "-ac", "2",
+            "-movflags", "+faststart",
+            str(output),
+        ]
+    )
+    return command
+
+
 @dataclass
 class VideoCandidate:
     url: str
@@ -254,6 +289,7 @@ class ImageParseResult:
     final_page_url: str
     work_id: str
     title: str
+    description: str
     image_urls: list[str]
     referer: str
     user_agent: str
@@ -725,12 +761,14 @@ class DouyinResolver:
         self.cdp.call("Page.enable")
         self.cdp.call("Runtime.enable")
         self.cdp.call("Page.navigate", {"url": share_url})
-        self.log("正在打开公开图文页并读取原图列表…")
+        self.log("正在打开公开图文页并读取正文和原图列表…")
 
         deadline = time.monotonic() + timeout
         response_requests: set[str] = set()
         image_urls: list[str] = []
-        title = ""
+        description = ""
+        resolved_title = ""
+        article_seen = False
         final_url = share_url
         last_page_probe = 0.0
         while time.monotonic() < deadline:
@@ -739,13 +777,11 @@ class DouyinResolver:
                 last_page_probe = time.monotonic()
                 page_result = self._image_meta_from_page(work_id)
                 if page_result:
-                    title = str(
-                        page_result.get("desc")
-                        or page_result.get("title")
-                        or title
-                    )
+                    description = _image_description_from_aweme(page_result) or description
+                    resolved_title = _image_title_from_aweme(page_result) or resolved_title
+                    article_seen = article_seen or bool(_article_info_from_aweme(page_result))
                     image_urls = _image_urls_from_aweme(page_result) or image_urls
-            if image_urls:
+            if image_urls and (description or not article_seen):
                 break
             try:
                 event = self.cdp.events.get(timeout=0.25)
@@ -787,11 +823,13 @@ class DouyinResolver:
                     continue
                 aweme = _find_aweme_with_images(payload, work_id)
                 if aweme:
-                    title = str(aweme.get("desc") or aweme.get("title") or title)
-                    image_urls = _image_urls_from_aweme(aweme)
+                    description = _image_description_from_aweme(aweme) or description
+                    resolved_title = _image_title_from_aweme(aweme) or resolved_title
+                    article_seen = article_seen or bool(_article_info_from_aweme(aweme))
+                    image_urls = _image_urls_from_aweme(aweme) or image_urls
 
-        if not image_urls:
-            raise ParseError("图文解析超时：没有取得作品原图，请稍后重试。")
+        if not image_urls or (article_seen and not description):
+            raise ParseError("图文解析超时：没有取得作品正文和原图，请稍后重试。")
         cookie_rows = self.cdp.call("Network.getAllCookies").get("cookies", [])
         cookies = {row["name"]: row["value"] for row in cookie_rows if row.get("name")}
         user_agent = str(self._evaluate("navigator.userAgent") or "Mozilla/5.0")
@@ -799,13 +837,15 @@ class DouyinResolver:
             page_title = str(self._evaluate("document.title") or "")
         except Exception:
             page_title = ""
-        title = (title or page_title or f"抖音图文_{work_id}").split(" - 抖音")[0].strip()
-        self.log(f"图文作品 {work_id} 已识别 {len(image_urls)} 张原图。")
+        fallback = page_title.split(" - 抖音")[0].strip() or f"抖音图文_{work_id}"
+        title = resolved_title or _image_title(description, fallback)
+        self.log(f"图文作品 {work_id} 已识别正文和 {len(image_urls)} 张原图。")
         return ImageParseResult(
             share_url=share_url,
             final_page_url=final_url,
             work_id=work_id,
             title=title,
+            description=description,
             image_urls=image_urls,
             referer=final_url,
             user_agent=user_agent,
@@ -823,8 +863,16 @@ class DouyinResolver:
             seen.add(value);
             const id=String(value.aweme_id||value.awemeId||value.item_id||value.itemId||'');
             const images=value.images || value.image_list || (value.image_post_info&&value.image_post_info.images);
-            if(id===target && Array.isArray(images) && images.length){{
-              return JSON.stringify({{aweme_id:id,desc:value.desc||value.title||'',images}});
+            const article=value.article_info;
+            if(id===target && ((Array.isArray(images) && images.length) || article)){{
+              const video=value.video||{{}};
+              return JSON.stringify({{
+                aweme_id:id,
+                desc:value.desc||value.title||'',
+                images,
+                article_info:article||null,
+                video:{{origin_cover:video.origin_cover||null,cover:video.cover||null}}
+              }});
             }}
             for(const child of Object.values(value)){{
               if(child && typeof child==='object') queue.push(child);
@@ -958,53 +1006,40 @@ def download_video(
         inspection = inspect_mp4(part)
         if not inspection["has_video"]:
             raise ParseError("捕获的资源没有视频画面，已取消保存并等待重试。")
-        if inspection["has_audio"]:
-            os.replace(part, output)
-            return output
-        if not result.audio_url:
-            raise ParseError(
-                "捕获到的是无声视频流，但没有捕获到配套音频，"
-                "已取消保存并等待重试。"
+        separate_audio: Path | None = None
+        if not inspection["has_audio"]:
+            if not result.audio_url:
+                raise ParseError(
+                    "捕获到的是无声视频流，但没有捕获到配套音频，"
+                    "已取消保存并等待重试。"
+                )
+            fetch_resource(
+                result.audio_url,
+                audio_part,
+                result.audio_content_length,
+                report_progress=False,
             )
-        fetch_resource(
-            result.audio_url,
-            audio_part,
-            result.audio_content_length,
-            report_progress=False,
-        )
+            separate_audio = audio_part
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
-            raise ParseError("服务器缺少 ffmpeg，无法把画面和声音合并。")
+            raise ParseError("服务器缺少 ffmpeg，无法生成手机轻量视频。")
         completed = subprocess.run(
-            [
+            compact_video_command(
                 ffmpeg,
-                "-y",
-                "-v",
-                "error",
-                "-i",
-                str(part),
-                "-i",
-                str(audio_part),
-                "-map",
-                "0:v:0",
-                "-map",
-                "1:a:0",
-                "-c",
-                "copy",
-                "-movflags",
-                "+faststart",
-                str(mux_part),
-            ],
+                part,
+                mux_part,
+                audio_input=separate_audio,
+            ),
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=600,
         )
         if completed.returncode != 0:
             detail = (completed.stderr or "未知错误").strip()[-500:]
-            raise ParseError(f"音视频合并失败：{detail}")
+            raise ParseError(f"手机轻量视频生成失败：{detail}")
         merged = inspect_mp4(mux_part)
         if not merged["has_video"] or not merged["has_audio"]:
-            raise ParseError("合并后的 MP4 未同时包含画面和声音。")
+            raise ParseError("轻量 MP4 未同时包含画面和声音。")
         os.replace(mux_part, output)
         return output
     except Exception:
@@ -1015,6 +1050,137 @@ def download_video(
                 temporary.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+def _image_title(description: str, fallback: str) -> str:
+    for line in str(description or "").splitlines():
+        cleaned = " ".join(line.split()).strip()
+        if cleaned:
+            return cleaned[:120]
+    return str(fallback or "抖音图文").strip()[:120]
+
+
+def _json_mapping(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _article_info_from_aweme(aweme: dict) -> dict:
+    value = aweme.get("article_info") or aweme.get("articleInfo") or {}
+    return value if isinstance(value, dict) else {}
+
+
+def _article_content_from_aweme(aweme: dict) -> dict:
+    article_info = _article_info_from_aweme(aweme)
+    return _json_mapping(
+        article_info.get("article_content") or article_info.get("articleContent")
+    )
+
+
+def _image_description_from_aweme(aweme: dict) -> str:
+    article_info = _article_info_from_aweme(aweme)
+    if article_info:
+        content = _article_content_from_aweme(aweme)
+        fe_data = _json_mapping(article_info.get("fe_data"))
+        raw_content = article_info.get("article_content")
+        values = (
+            content.get("markdown"),
+            content.get("long_article_abstract"),
+            fe_data.get("description"),
+            raw_content if isinstance(raw_content, str) and not content else "",
+            aweme.get("desc"),
+            aweme.get("title"),
+        )
+    else:
+        values = (aweme.get("desc"), aweme.get("title"))
+    return next(
+        (
+            str(value).strip()
+            for value in values
+            if isinstance(value, (str, int, float)) and str(value).strip()
+        ),
+        "",
+    )
+
+
+def _image_title_from_aweme(aweme: dict) -> str:
+    article_info = _article_info_from_aweme(aweme)
+    values = (
+        article_info.get("article_title"),
+        article_info.get("articleTitle"),
+        aweme.get("item_title"),
+        aweme.get("title"),
+    )
+    return next(
+        (
+            " ".join(str(value).split()).strip()[:120]
+            for value in values
+            if isinstance(value, (str, int, float)) and str(value).strip()
+        ),
+        "",
+    )
+
+
+def _article_image_entries(aweme: dict) -> list[object]:
+    article_info = _article_info_from_aweme(aweme)
+    if not article_info:
+        return []
+    content = _article_content_from_aweme(aweme)
+    fe_data = _json_mapping(article_info.get("fe_data"))
+    for container in (article_info, content, fe_data):
+        for key in ("images", "image_list", "imageList"):
+            values = container.get(key)
+            if isinstance(values, list) and values:
+                return list(values)
+    markdown = str(content.get("markdown") or "")
+    markdown_urls = re.findall(
+        r"!\[[^\]]*\]\(\s*<?(https?://[^\s)>]+)>?(?:\s+[^)]*)?\)",
+        markdown,
+        flags=re.I,
+    )
+    if markdown_urls:
+        return [{"url_list": [url]} for url in markdown_urls]
+    video = aweme.get("video") or {}
+    if isinstance(video, dict):
+        for key in ("origin_cover", "cover"):
+            cover = video.get(key)
+            if isinstance(cover, dict) and _image_urls_from_entry(cover):
+                return [cover]
+    return []
+
+
+def _image_urls_from_entry(image: object) -> list[str]:
+    if isinstance(image, str):
+        return [image] if image.startswith(("http://", "https://")) else []
+    if not isinstance(image, dict):
+        return []
+    candidates: list[str] = []
+    for key in ("download_url_list", "url_list"):
+        values = image.get(key) or []
+        if isinstance(values, list):
+            candidates.extend(
+                str(item)
+                for item in values
+                if str(item).startswith(("http://", "https://"))
+            )
+    for key in ("download_url", "url", "src", "image_url"):
+        value = str(image.get(key) or "")
+        if value.startswith(("http://", "https://")):
+            candidates.append(value)
+    for nested_key in (
+        "display_image", "owner_watermark_image", "thumbnail", "origin_image"
+    ):
+        nested = image.get(nested_key)
+        if isinstance(nested, dict) and nested:
+            candidates.extend(_image_urls_from_entry(nested))
+    return list(dict.fromkeys(candidates))
 
 
 def _find_aweme_with_images(value: object, work_id: str) -> dict | None:
@@ -1031,17 +1197,13 @@ def _find_aweme_with_images(value: object, work_id: str) -> dict | None:
                 or current.get("itemId")
                 or ""
             )
-            image_post_info = current.get("image_post_info") or {}
-            images = (
-                current.get("images")
-                or current.get("image_list")
+            if current_id == work_id and (
+                _image_urls_from_aweme(current)
                 or (
-                    image_post_info.get("images")
-                    if isinstance(image_post_info, dict)
-                    else None
+                    _article_info_from_aweme(current)
+                    and _image_description_from_aweme(current)
                 )
-            )
-            if current_id == work_id and isinstance(images, list) and images:
+            ):
                 return current
             queue_values.extend(current.values())
         elif isinstance(current, list):
@@ -1059,31 +1221,14 @@ def _image_urls_from_aweme(aweme: dict) -> list[str]:
             if isinstance(image_post_info, dict)
             else None
         )
+        or _article_image_entries(aweme)
         or []
     )
     urls: list[str] = []
     for image in images:
-        if not isinstance(image, dict):
-            continue
-        candidates: list[str] = []
-        for key in ("download_url_list", "url_list"):
-            values = image.get(key) or []
-            if isinstance(values, list):
-                candidates.extend(
-                    str(item) for item in values if str(item).startswith("http")
-                )
-        for nested_key in ("display_image", "owner_watermark_image", "thumbnail"):
-            nested = image.get(nested_key) or {}
-            if isinstance(nested, dict):
-                values = nested.get("url_list") or []
-                if isinstance(values, list):
-                    candidates.extend(
-                        str(item) for item in values if str(item).startswith("http")
-                    )
-        if candidates:
-            url = candidates[0]
-            if url not in urls:
-                urls.append(url)
+        candidates = _image_urls_from_entry(image)
+        if candidates and candidates[0] not in urls:
+            urls.append(candidates[0])
     return urls
 
 

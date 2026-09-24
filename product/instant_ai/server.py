@@ -761,7 +761,31 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         if local is None:
             self._not_found()
             return
+        self._serve_private_file(
+            *local,
+            max_open_ended_range_bytes=MEDIA_OPEN_ENDED_RANGE_BYTES,
+        )
+
+    def _serve_blogger_image(self, work_key: str, image_index: int) -> None:
+        local = BLOGGER_LIBRARY.image_path(work_key, image_index)
+        if local is None:
+            self._json({"error": "图文原图不存在。"}, HTTPStatus.NOT_FOUND)
+            return
         self._serve_private_file(*local)
+
+    def _serve_blogger_media_path(self, path: str) -> bool:
+        video_match = re.fullmatch(r"/media/blogger/works/([0-9a-f]{64})/video", path)
+        image_match = re.fullmatch(r"/media/blogger/works/([0-9a-f]{64})/images/(\d+)", path)
+        if video_match is None and image_match is None:
+            return False
+        if not self._require_auth():
+            return True
+        if video_match is not None:
+            self._serve_blogger_video(video_match.group(1))
+        else:
+            assert image_match is not None
+            self._serve_blogger_image(image_match.group(1), int(image_match.group(2)))
+        return True
 
     def _serve_model_mr_media_path(self, path: str) -> bool:
         video_match = re.fullmatch(r"/media/model-mr/works/(\d+)/video", path)
@@ -788,7 +812,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             self._json({"ok": True, "version": __version__, "auth_required": AUTH.required})
         elif path == "/api/auth/status":
             self._json(AUTH.status(self.headers.get("Cookie", "")))
-        elif self._serve_model_mr_media_path(path):
+        elif self._serve_model_mr_media_path(path) or self._serve_blogger_media_path(path):
             return
         elif path.startswith("/api/") and not self._require_auth():
             return
@@ -827,7 +851,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             self._json({"ok": True, "version": __version__, "auth_required": AUTH.required})
         elif path == "/api/auth/status":
             self._json(AUTH.status(self.headers.get("Cookie", "")))
-        elif self._serve_model_mr_media_path(path):
+        elif self._serve_model_mr_media_path(path) or self._serve_blogger_media_path(path):
             return
         elif path.startswith("/api/") and not self._require_auth():
             return

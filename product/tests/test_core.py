@@ -980,7 +980,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("url.pathname.startsWith('/media/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.23.2", worker)
+        self.assertIn("instant-ai-shell-v0.24.0", worker)
 
 
 if __name__ == "__main__":
