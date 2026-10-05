@@ -7,6 +7,7 @@ database access, Codex session or automatic retry of ambiguous paid calls.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -40,15 +41,20 @@ class ModelMrProcessor:
         self,
         client: ModelMrClient = MODEL_MR,
         arrival_source: Callable[[int, int], list[dict[str, Any]]] | None = None,
+        original_ready_sink: Callable[[int, str], object] | None = None,
     ):
         self.client = client
         self.path = client.snapshot_path.parent / "processing.sqlite3"
         self.arrival_source = arrival_source
+        self.original_ready_sink = original_ready_sink
         self._worker_active = False
         self._worker_last_seen = 0
 
     def set_arrival_source(self, source: Callable[[int, int], list[dict[str, Any]]]) -> None:
         self.arrival_source = source
+
+    def set_original_ready_sink(self, sink: Callable[[int, str], object]) -> None:
+        self.original_ready_sink = sink
 
     @contextmanager
     def db(self):
@@ -65,13 +71,29 @@ class ModelMrProcessor:
                 CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY, dedupe TEXT UNIQUE NOT NULL,
                     work_id INTEGER NOT NULL, kind TEXT NOT NULL, automatic INTEGER NOT NULL,
                     state TEXT NOT NULL DEFAULT 'queued', phase TEXT NOT NULL DEFAULT 'asr',
-                    revision TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '{}', updated INTEGER NOT NULL);
+                    revision TEXT NOT NULL DEFAULT '', result TEXT NOT NULL DEFAULT '{}',
+                    original_event_state INTEGER NOT NULL DEFAULT 0,
+                    original_event_hash TEXT NOT NULL DEFAULT '', updated INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS calls (id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL,
                     phase TEXT NOT NULL, day TEXT NOT NULL);
             """)
             setting_columns = {
                 str(row[1]) for row in conn.execute("PRAGMA table_info(settings)")
             }
+            job_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(jobs)")}
+            event_state_missing = "original_event_state" not in job_columns
+            if event_state_missing:
+                conn.execute(
+                    "ALTER TABLE jobs ADD COLUMN original_event_state INTEGER NOT NULL DEFAULT 0"
+                )
+            if "original_event_hash" not in job_columns:
+                conn.execute(
+                    "ALTER TABLE jobs ADD COLUMN original_event_hash TEXT NOT NULL DEFAULT ''"
+                )
+            if event_state_missing:
+                # Do not turn completed pre-feature history into a first-deploy
+                # event burst. Only jobs inserted after this migration start at 0.
+                conn.execute("UPDATE jobs SET original_event_state=1")
             policy_missing = "policy_version" not in setting_columns
             for column in ("enabled_since", "last_reconciled", "policy_version"):
                 if column not in setting_columns:
@@ -202,6 +224,30 @@ class ModelMrProcessor:
                 (int(time.time()),),
             )
             return max(0, int(cursor.rowcount))
+
+    def reconcile_original_ready_events(self, limit: int = 100) -> int:
+        """Retry the local durable handoff without re-running ASR or keywords."""
+
+        if self.original_ready_sink is None:
+            return 0
+        with self.db() as conn:
+            rows = conn.execute(
+                "SELECT id,work_id FROM jobs WHERE kind='arrival' AND original_event_state=0 "
+                "ORDER BY id LIMIT ?",
+                (max(1, min(int(limit), 500)),),
+            ).fetchall()
+        recorded = 0
+        for row in rows:
+            try:
+                detail = self.client.processing_detail(int(row["work_id"]))
+                text = str(detail.get("video_text", {}).get("text") or "").strip()
+                if text and self._handoff_original_ready(
+                    int(row["id"]), int(row["work_id"]), text
+                ):
+                    recorded += 1
+            except Exception:
+                continue
+        return recorded
 
     def request_keywords(self, work_id: int, revision: str) -> dict[str, Any]:
         detail = self.client.processing_detail(work_id)
@@ -334,6 +380,11 @@ class ModelMrProcessor:
                 text = self.client.save_auto_video_text(work_id, text)
             detail = self.client.processing_detail(work_id)
             text = str(detail.get("video_text", {}).get("text") or "")
+            if job["kind"] == "arrival" and text.strip():
+                # This handoff is deliberately before keyword generation: the
+                # ChatGPT event means the original is ready, not that optional
+                # metadata enrichment has finished.
+                self._handoff_original_ready(job_id, work_id, text)
             work = detail["work"]
             info = clean_keyword_info(work.get("keyword_info"), work.get("keywords"))
             has_keywords = bool(info["keywords"] or info["confirmed_at"] or info["schema_version"])
@@ -412,6 +463,32 @@ class ModelMrProcessor:
         with self.db() as conn:
             conn.execute("UPDATE settings SET failures=0 WHERE id=1")
 
+    def _handoff_original_ready(self, job_id: int, work_id: int, text: str) -> bool:
+        if self.original_ready_sink is None:
+            return False
+        original = str(text or "").strip()
+        if not original:
+            return False
+        with self.db() as conn:
+            row = conn.execute(
+                "SELECT original_event_state FROM jobs WHERE id=?", (job_id,)
+            ).fetchone()
+            if row is None or bool(row["original_event_state"]):
+                return row is not None
+        content_hash = hashlib.sha256(original.encode("utf-8")).hexdigest()
+        try:
+            self.original_ready_sink(work_id, original)
+        except Exception:
+            # Event delivery has its own durable retry path. A local handoff
+            # failure must not repeat paid ASR or block keyword persistence.
+            return False
+        with self.db() as conn:
+            conn.execute(
+                "UPDATE jobs SET original_event_state=1,original_event_hash=?,updated=? WHERE id=?",
+                (content_hash, int(time.time()), job_id),
+            )
+        return True
+
     def _media_path(self, detail: dict[str, Any]) -> Path | None:
         relative = str(detail.get("work", {}).get("media_file") or "").strip()
         if not relative:
@@ -442,6 +519,7 @@ class ModelMrProcessor:
                     self._worker_last_seen = int(time.time())
                     try:
                         self.reconcile_new_arrivals()
+                        self.reconcile_original_ready_events()
                         self.resume_configured_jobs()
                         self.process_one()
                     except Exception:

@@ -59,6 +59,7 @@ from .blogger_mcp_oauth import (
 )
 from .blogger_mcp_protocol import attach_oauth_challenge, handle_message as handle_mcp_message
 from .model_mr_mcp import MODEL_MR_MCP
+from .model_mr_mcp_events import MODEL_MR_MCP_EVENTS
 from .oauth_diagnostics import oauth_diagnostic_snapshot, record_oauth_event
 
 
@@ -299,7 +300,7 @@ input[readonly]{{background:#f8fafc;color:#475569}}small{{display:block;margin:-
 button{{width:100%;border:0;border-radius:11px;padding:13px;background:#2563eb;color:white;font-size:16px;font-weight:700}}
 .scope{{background:#eff6ff;border-radius:10px;padding:12px;color:#1e40af}}.error{{border:1px solid #fecaca;border-radius:10px;background:#fef2f2;padding:12px;color:#b91c1c;font-weight:700}}
 </style></head><body><main><h1>授权即时 AI 资料智能体（云端）</h1>
-<p>{identity}</p><p class="scope">只读权限：查询新加坡即时 AI 中的博主资料，以及模型先生的作品文字和投资思路，并读取来源明确的作者本人回复。不会采集、转写、调用 AI、修改资料、读取整片评论区或视频文件。</p>
+<p>{identity}</p><p class="scope">资料权限：只读查询新加坡即时 AI 中的博主与模型先生作品、原文、投资思路和已保存评论。在主人主动订阅后，可向 ChatGPT 回调发送模型先生新原文就绪的最小作品索引。不会由 MCP 采集、转写、调用 AI、修改作品、回填报告或传输视频文件。</p>
 {error_html}<form method="post" action="{AUTHORIZE_PATH}">{hidden_html}{credentials}<button type="submit">确认授权</button></form>
 </main></body></html>"""
 
@@ -490,13 +491,16 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         if not isinstance(message, dict):
             self._json({"error": "json_object_required"}, HTTPStatus.BAD_REQUEST)
             return True
-        authenticated = BLOGGER_MCP_OAUTH.bearer_session(self.headers.get("Authorization", "")) is not None
+        session = BLOGGER_MCP_OAUTH.bearer_session(self.headers.get("Authorization", ""))
+        authenticated = session is not None
         response = handle_mcp_message(
             message,
             library=BLOGGER_LIBRARY,
             model_mr_library=MODEL_MR_MCP,
             version=__version__,
             authenticated=authenticated,
+            events=MODEL_MR_MCP_EVENTS,
+            principal=session.username if session is not None else "",
         )
         if response is None:
             self.send_response(HTTPStatus.ACCEPTED)
@@ -1295,7 +1299,9 @@ def run_server(collect_on_start: bool = True) -> None:
     server = create_server()
     if os.name == "posix":
         MODEL_MR_PROCESSOR.set_arrival_source(MODEL_MR_TRANSFER_PROJECTOR.processing_arrivals_since)
+        MODEL_MR_PROCESSOR.set_original_ready_sink(MODEL_MR_MCP_EVENTS.record_original_ready)
         threading.Thread(target=MODEL_MR_PROCESSOR.run, name="model-mr-processing", daemon=True).start()
+        threading.Thread(target=MODEL_MR_MCP_EVENTS.run, name="model-mr-mcp-events", daemon=True).start()
         threading.Thread(target=BLOGGER_PROCESSOR.run, name="blogger-processing", daemon=True).start()
         threading.Thread(
             target=MODEL_MR_TRANSFER_PROJECTOR.repair_pending_comment_threads,

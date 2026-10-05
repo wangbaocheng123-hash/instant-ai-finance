@@ -567,6 +567,81 @@ class ProcessingTests(unittest.TestCase):
         self.assertEqual(self.state(), 'review')
         self.kw.assert_not_called()
 
+    def test_original_ready_handoff_is_once_and_precedes_keywords(self):
+        received = []
+        self.processor.set_original_ready_sink(
+            lambda work_id, text: received.append((work_id, text))
+        )
+        self.enqueue()
+        with patch('instant_ai.model_mr_processing.model_mr_keywords.is_configured', return_value=False):
+            self.processor.process_one()
+        self.assertEqual(self.state(), 'configuration')
+        self.assertEqual(received, [(1, '科技股原文')])
+        self.assertEqual(self.processor.reconcile_original_ready_events(), 0)
+        self.processor.enqueue_arrival(1, 'a' * 64)
+        self.assertEqual(received, [(1, '科技股原文')])
+        self.asr.assert_called_once()
+        with self.processor.db() as connection:
+            state, content_hash = connection.execute(
+                'SELECT original_event_state,original_event_hash FROM jobs'
+            ).fetchone()
+        self.assertEqual(state, 1)
+        self.assertEqual(content_hash, source_hash('科技股原文'))
+
+    def test_failed_event_handoff_recovers_without_repeating_paid_work(self):
+        failed = []
+
+        def unavailable(work_id, text):
+            failed.append((work_id, text))
+            raise OSError('event store temporarily unavailable')
+
+        self.processor.set_original_ready_sink(unavailable)
+        self.enqueue()
+        self.processor.process_one()
+        self.assertEqual(self.state(), 'done')
+        self.assertEqual(len(failed), 1)
+        recovered = []
+        self.processor.set_original_ready_sink(
+            lambda work_id, text: recovered.append((work_id, text))
+        )
+        self.assertEqual(self.processor.reconcile_original_ready_events(), 1)
+        self.assertEqual(self.processor.reconcile_original_ready_events(), 0)
+        self.assertEqual(recovered, [(1, '科技股原文')])
+        self.asr.assert_called_once()
+        self.kw.assert_called_once()
+
+    def test_event_schema_migration_does_not_emit_historical_jobs(self):
+        legacy = self.root / 'legacy.sqlite3'
+        self.processor.path = legacy
+        with sqlite3.connect(legacy) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE settings (
+                    id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL,
+                    failures INTEGER NOT NULL DEFAULT 0, enabled_since INTEGER NOT NULL DEFAULT 0,
+                    last_reconciled INTEGER NOT NULL DEFAULT 0, policy_version INTEGER NOT NULL DEFAULT 1
+                );
+                INSERT INTO settings VALUES(1,1,0,1,1,1);
+                CREATE TABLE jobs (
+                    id INTEGER PRIMARY KEY, dedupe TEXT UNIQUE NOT NULL, work_id INTEGER NOT NULL,
+                    kind TEXT NOT NULL, automatic INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'done',
+                    phase TEXT NOT NULL DEFAULT 'keywords', revision TEXT NOT NULL DEFAULT '',
+                    result TEXT NOT NULL DEFAULT '{}', updated INTEGER NOT NULL
+                );
+                INSERT INTO jobs(dedupe,work_id,kind,automatic,updated)
+                    VALUES('historical',1,'arrival',1,1);
+                """
+            )
+        with self.processor.db() as connection:
+            state = connection.execute(
+                'SELECT original_event_state FROM jobs WHERE dedupe=?', ('historical',)
+            ).fetchone()[0]
+        self.assertEqual(state, 1)
+        seen = []
+        self.processor.set_original_ready_sink(lambda work_id, text: seen.append(text))
+        self.assertEqual(self.processor.reconcile_original_ready_events(), 0)
+        self.assertEqual(seen, [])
+
 
 class KeywordAdapterTests(unittest.TestCase):
     def test_long_audio_is_rejected_before_submit(self):

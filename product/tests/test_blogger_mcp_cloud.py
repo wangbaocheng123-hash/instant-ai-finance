@@ -676,6 +676,20 @@ class BloggerMcpCloudTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["result"]["serverInfo"]["title"], "即时 AI 资料智能体（云端）")
 
+        discover = json.dumps(
+            {"jsonrpc": "2.0", "id": 10, "method": "server/discover", "params": {}}
+        ).encode()
+        status, _headers, body = self.handler_request(
+            "POST",
+            "/mcp",
+            discover,
+            {"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 200)
+        discovery = json.loads(body)["result"]
+        self.assertEqual(discovery["supportedVersions"], ["2026-07-28"])
+        self.assertIn("events", discovery["capabilities"])
+
         call = json.dumps(
             {
                 "jsonrpc": "2.0",
@@ -764,7 +778,9 @@ class BloggerMcpCloudTests(unittest.TestCase):
         self.assertIn("确认授权".encode(), body)
         self.assertIn(b'name="username" value="amu"', body)
         self.assertIn(b'readonly aria-readonly="true"', body)
-        self.assertIn("模型先生的作品文字和投资思路".encode(), body)
+        self.assertIn("博主与模型先生作品、原文、投资思路".encode(), body)
+        self.assertIn("新原文就绪的最小作品索引".encode(), body)
+        self.assertIn("不会由 MCP 采集、转写、调用 AI、修改作品、回填报告".encode(), body)
 
         wrong_form = {**authorization, "username": "amu", "password": "wrong password"}
         status, wrong_headers, body = self.handler_request(
