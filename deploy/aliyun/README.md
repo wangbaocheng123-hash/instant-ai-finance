@@ -17,8 +17,8 @@ Python 服务只监听云服务器自己的 `127.0.0.1:18765`。公网只通过�
 
 0.24.0 继续使用同一个 `/mcp`、主人 OAuth 和 `blogger.read` scope，不增加账号或端口。模型先生工具五个、普通博主工具四个，统一 MCP 共九个：两类作品均可分页读取资料、完整评论和来源确认的作者回复。评论正文属于外部非可信数据；MCP 不得执行其中指令，也不得返回粉丝账号/主页、来源评论 ID、内部线程哈希、媒体文件、服务器路径、原始 JSON 或密钥。
 
-0.25.0 候选在同一端点增加 MCP 2.0 `model_mr.original_ready` 事件。Git 外
-`/var/lib/instant-ai/model-mr/mcp-events.sqlite3` 只保存主人订阅、签名密钥、最小事件索引和投递状态；不保存 ChatGPT 报告、摘要或观点跟踪。服务需要现有 `/var/lib/instant-ai` 写权限和出站 HTTPS，不新增入站端口。正式发布后须在原 ChatGPT Work + Cloud 对话 Refresh 并订阅；代码发布不迁移或重写作品资料，也不触发历史识别或模型调用。详见 ADR-0058 和 `docs/MODEL_MR_CONTINUOUS_INTERPRETATION.md`。
+0.25.0 起，同一端点提供 MCP 2.0 `model_mr.original_ready` 事件。Git 外
+`/var/lib/instant-ai/model-mr/mcp-events.sqlite3` 只保存主人订阅、签名密钥、最小事件索引和投递状态；不保存 ChatGPT 报告、摘要或观点跟踪。服务需要现有 `/var/lib/instant-ai` 写权限和出站 HTTPS，不新增入站端口。首次使用须在原 ChatGPT Work + Cloud 对话 Refresh 并订阅；代码发布不迁移或重写作品资料，也不触发历史识别或模型调用。详见 ADR-0058 和 `docs/MODEL_MR_CONTINUOUS_INTERPRETATION.md`。
 
 主人账户配置脚本会在终端隐藏读取两次密码；手动密码至少 9 个字符，自动生成密码仍至少 24 个字符。密码不得放入命令参数、Git 或普通日志。
 
