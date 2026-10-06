@@ -13,12 +13,14 @@ import http.client
 import ipaddress
 import json
 import os
+import re
 import secrets
 import socket
 import sqlite3
 import ssl
 import threading
 import time
+from collections import deque
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +39,8 @@ VERIFICATION_CACHE_SECONDS = 10 * 60
 MAX_DELIVERY_ATTEMPTS = 8
 MAX_RESPONSE_BYTES = 64 * 1024
 MAX_EVENT_BYTES = 256 * 1024
+MAX_DIAGNOSTIC_EVENTS = 64
+_DIAGNOSTIC_LABEL = re.compile(r"[a-z0-9_-]{1,64}")
 
 
 class CallbackEndpointError(RuntimeError):
@@ -165,6 +169,92 @@ class ModelMrMcpEvents:
         self._sender = sender
         self._clock = clock
         self._worker_active = False
+        self._diagnostic_events: deque[dict[str, Any]] = deque(
+            maxlen=MAX_DIAGNOSTIC_EVENTS
+        )
+        self._diagnostic_lock = threading.Lock()
+
+    @staticmethod
+    def _diagnostic_label(value: str, fallback: str) -> str:
+        candidate = str(value or "").strip().casefold()
+        return candidate if _DIAGNOSTIC_LABEL.fullmatch(candidate) else fallback
+
+    def record_diagnostic(self, stage: str, outcome: str) -> None:
+        """Keep a bounded, credential-free marker for live subscription checks."""
+
+        event = {
+            "at": int(self._clock()),
+            "stage": self._diagnostic_label(stage, "unknown"),
+            "outcome": self._diagnostic_label(outcome, "unknown"),
+        }
+        with self._diagnostic_lock:
+            self._diagnostic_events.append(event)
+
+    def diagnostic_snapshot(self) -> dict[str, Any]:
+        """Return loopback-safe stages and aggregate store counts only.
+
+        Callback URLs, signing secrets, principals, event payloads and record IDs
+        are deliberately excluded. The database is opened read-only and is not
+        created by a diagnostic request.
+        """
+
+        with self._diagnostic_lock:
+            events = [dict(event) for event in self._diagnostic_events]
+        store: dict[str, Any] = {
+            "status": "missing",
+            "total_subscriptions": 0,
+            "active_subscriptions": 0,
+            "verified_callbacks": 0,
+            "pending_deliveries": 0,
+            "total_events": 0,
+        }
+        if self.path.exists():
+            try:
+                database_uri = self.path.resolve().as_uri() + "?mode=ro"
+                with sqlite3.connect(database_uri, uri=True, timeout=2) as connection:
+                    now = self._clock()
+                    store = {
+                        "status": "ready",
+                        "total_subscriptions": int(
+                            connection.execute(
+                                "SELECT COUNT(*) FROM subscriptions"
+                            ).fetchone()[0]
+                        ),
+                        "active_subscriptions": int(
+                            connection.execute(
+                                "SELECT COUNT(*) FROM subscriptions "
+                                "WHERE active=1 AND expires_at>?",
+                                (now,),
+                            ).fetchone()[0]
+                        ),
+                        "verified_callbacks": int(
+                            connection.execute(
+                                "SELECT COUNT(*) FROM callback_verifications "
+                                "WHERE verified_until>?",
+                                (now,),
+                            ).fetchone()[0]
+                        ),
+                        "pending_deliveries": int(
+                            connection.execute(
+                                "SELECT COUNT(*) FROM deliveries "
+                                "WHERE state IN ('pending','retry','sending')"
+                            ).fetchone()[0]
+                        ),
+                        "total_events": int(
+                            connection.execute(
+                                "SELECT COUNT(*) FROM events"
+                            ).fetchone()[0]
+                        ),
+                    }
+            except (OSError, sqlite3.Error):
+                store["status"] = "unavailable"
+        return {
+            "schema": "instant-ai-mcp-event-diagnostics/v1",
+            "retention": "memory_only",
+            "events": events,
+            "store": store,
+            "worker_active": self._worker_active,
+        }
 
     @contextmanager
     def db(self):
@@ -227,12 +317,15 @@ class ModelMrMcpEvents:
             connection.close()
 
     def list_events(self, params: Mapping[str, Any]) -> dict[str, Any]:
+        self.record_diagnostic("events_list", "received")
         cursor = params.get("cursor")
         if cursor not in (None, ""):
             raise ValueError("cursor_invalid")
+        self.record_diagnostic("events_list", "success")
         return {"events": event_definitions(), "nextCursor": None}
 
     def subscribe(self, principal: str, params: Mapping[str, Any]) -> dict[str, Any]:
+        self.record_diagnostic("events_subscribe", "received")
         owner = str(principal or "").strip()
         if not owner:
             raise ValueError("principal_required")
@@ -267,13 +360,23 @@ class ModelMrMcpEvents:
         subscription_id = _subscription_id(owner, url, name, arguments)
         now = self._clock()
         if not self._verification_is_fresh(owner, url, now):
-            self._verify_callback(subscription_id, url, secret)
+            self.record_diagnostic("callback_verification", "started")
+            try:
+                self._verify_callback(subscription_id, url, secret)
+            except CallbackEndpointError as error:
+                self.record_diagnostic(
+                    "callback_verification", f"error_{error.reason}"
+                )
+                raise
+            self.record_diagnostic("callback_verification", "success")
             with self.db() as connection:
                 connection.execute(
                     "INSERT INTO callback_verifications(principal,url,verified_until) VALUES(?,?,?) "
                     "ON CONFLICT(principal,url) DO UPDATE SET verified_until=excluded.verified_until",
                     (owner, url, now + VERIFICATION_CACHE_SECONDS),
                 )
+        else:
+            self.record_diagnostic("callback_verification", "cached")
 
         expires_at = now + (ttl_ms / 1000)
         with self.db() as connection:
@@ -313,6 +416,7 @@ class ModelMrMcpEvents:
                     now,
                 ),
             )
+        self.record_diagnostic("subscription_store", "success")
         return {
             "id": subscription_id,
             "refreshBefore": _iso_timestamp(expires_at),
@@ -321,6 +425,7 @@ class ModelMrMcpEvents:
         }
 
     def unsubscribe(self, principal: str, params: Mapping[str, Any]) -> dict[str, Any]:
+        self.record_diagnostic("events_unsubscribe", "received")
         owner = str(principal or "").strip()
         if not owner:
             raise ValueError("principal_required")
@@ -344,6 +449,7 @@ class ModelMrMcpEvents:
                     "WHERE subscription_id=? AND state IN ('pending','retry','sending')",
                     (self._clock(), subscription_id),
                 )
+        self.record_diagnostic("events_unsubscribe", "success")
         return {}
 
     def record_original_ready(self, work_id: int, text: str) -> dict[str, Any]:
@@ -669,6 +775,7 @@ MODEL_MR_MCP_EVENTS = ModelMrMcpEvents()
 __all__ = [
     "CallbackEndpointError",
     "EVENT_NAME",
+    "MAX_DIAGNOSTIC_EVENTS",
     "MODEL_MR_MCP_EVENTS",
     "ModelMrMcpEvents",
     "PROTOCOL_VERSION",

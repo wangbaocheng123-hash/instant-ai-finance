@@ -11,7 +11,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from instant_ai.blogger_mcp_protocol import handle_message
-from instant_ai.model_mr_mcp_events import EVENT_NAME, ModelMrMcpEvents
+from instant_ai.model_mr_mcp_events import (
+    EVENT_NAME,
+    MAX_DIAGNOSTIC_EVENTS,
+    ModelMrMcpEvents,
+)
 
 
 SECRET = "whsec_" + base64.b64encode(b"s" * 32).decode("ascii")
@@ -144,6 +148,27 @@ class EventTests(unittest.TestCase):
         )
         self.manager.record_original_ready(1, "本次完整原文")
         self.assertFalse(self.manager.dispatch_one())
+
+    def test_subscription_diagnostics_are_bounded_sanitized_and_read_only(self):
+        result = self.subscribe()
+        for _index in range(MAX_DIAGNOSTIC_EVENTS + 8):
+            self.manager.record_diagnostic("events_subscribe", "synthetic")
+
+        snapshot = self.manager.diagnostic_snapshot()
+        self.assertEqual(snapshot["schema"], "instant-ai-mcp-event-diagnostics/v1")
+        self.assertEqual(snapshot["retention"], "memory_only")
+        self.assertEqual(len(snapshot["events"]), MAX_DIAGNOSTIC_EVENTS)
+        self.assertEqual(
+            set(snapshot["events"][0]), {"at", "stage", "outcome"}
+        )
+        self.assertEqual(snapshot["store"]["status"], "ready")
+        self.assertEqual(snapshot["store"]["total_subscriptions"], 1)
+        self.assertEqual(snapshot["store"]["active_subscriptions"], 1)
+        self.assertEqual(snapshot["store"]["verified_callbacks"], 1)
+        serialized = json.dumps(snapshot)
+        self.assertNotIn(CALLBACK, serialized)
+        self.assertNotIn(SECRET, serialized)
+        self.assertNotIn(result["id"], serialized)
 
     def test_duplicate_original_delivers_once_with_standard_signature(self):
         subscription = self.subscribe()
@@ -355,6 +380,23 @@ class EventTests(unittest.TestCase):
         )
         self.assertEqual(response["error"]["code"], -32015)
         self.assertEqual(response["error"]["data"]["reason"], "challenge_failed")
+        diagnostics = bad.diagnostic_snapshot()["events"]
+        self.assertIn(
+            {
+                "at": int(self.now),
+                "stage": "callback_verification",
+                "outcome": "error_challenge_failed",
+            },
+            diagnostics,
+        )
+        self.assertIn(
+            {
+                "at": int(self.now),
+                "stage": "events_subscribe",
+                "outcome": "error_challenge_failed",
+            },
+            diagnostics,
+        )
 
 
 if __name__ == "__main__":

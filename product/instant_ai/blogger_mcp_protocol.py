@@ -373,6 +373,7 @@ def handle_message(
         capabilities: dict[str, Any] = {"tools": {}}
         if events is not None:
             capabilities["events"] = {}
+            events.record_diagnostic("server_discover", "success")
         return _result(
             request_id,
             {
@@ -387,6 +388,7 @@ def handle_message(
         capabilities: dict[str, Any] = {"tools": {"listChanged": False}}
         if events is not None and protocol == EVENTS_PROTOCOL_VERSION:
             capabilities["events"] = {}
+            events.record_diagnostic("initialize_events", "success")
         return _result(
             request_id,
             {
@@ -411,6 +413,8 @@ def handle_message(
         return _result(request_id, {"tools": tool_definitions()})
     if method in {"events/list", "events/subscribe", "events/unsubscribe"}:
         if not authenticated:
+            if events is not None:
+                events.record_diagnostic(method.replace("/", "_"), "auth_required")
             return _error(
                 request_id,
                 -32001,
@@ -427,6 +431,9 @@ def handle_message(
             else:
                 result = events.unsubscribe(principal, params)
         except CallbackEndpointError as error:
+            events.record_diagnostic(
+                method.replace("/", "_"), f"error_{error.reason}"
+            )
             return _error(
                 request_id,
                 -32015,
@@ -434,6 +441,9 @@ def handle_message(
                 data={"reason": error.reason},
             )
         except ValueError as error:
+            events.record_diagnostic(
+                method.replace("/", "_"), f"error_{str(error)}"
+            )
             return _error(
                 request_id,
                 -32602,
@@ -441,12 +451,16 @@ def handle_message(
                 data={"reason": str(error)},
             )
         except (OSError, sqlite3.Error):
+            events.record_diagnostic(
+                method.replace("/", "_"), "error_event_store_unavailable"
+            )
             return _error(
                 request_id,
                 -32603,
                 "Internal error",
                 data={"reason": "event_store_unavailable"},
             )
+        events.record_diagnostic(method.replace("/", "_"), "success")
         return _result(request_id, result)
     if method != "tools/call":
         return _error(request_id, -32601, "Method not found")

@@ -79,6 +79,7 @@ COLLECTION_STATE: dict[str, object] = {
 }
 BLOGGER_MCP_OAUTH = BloggerMcpOAuth(AUTH)
 LOCAL_OAUTH_DIAGNOSTICS_PATH = "/api/internal/oauth-diagnostics"
+LOCAL_MCP_EVENT_DIAGNOSTICS_PATH = "/api/internal/mcp-event-diagnostics"
 
 
 class BoundedThreadingHTTPServer(ThreadingHTTPServer):
@@ -851,6 +852,11 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                 self._not_found()
                 return
             self._json(oauth_diagnostic_snapshot())
+        elif path == LOCAL_MCP_EVENT_DIAGNOSTICS_PATH:
+            if not self._strictly_local_request():
+                self._not_found()
+                return
+            self._json(MODEL_MR_MCP_EVENTS.diagnostic_snapshot())
         elif path == "/api/health":
             self._json({"ok": True, "version": __version__, "auth_required": AUTH.required})
         elif path == "/api/auth/status":

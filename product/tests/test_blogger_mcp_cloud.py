@@ -748,6 +748,38 @@ class BloggerMcpCloudTests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(json.loads(body)["error"], "not_found")
 
+    def test_mcp_event_diagnostics_are_loopback_only_and_credential_free(self) -> None:
+        status, _headers, body = self.handler_request(
+            "GET", "/api/internal/mcp-event-diagnostics"
+        )
+        self.assertEqual(status, 200)
+        snapshot = json.loads(body)
+        self.assertEqual(
+            snapshot["schema"], "instant-ai-mcp-event-diagnostics/v1"
+        )
+        self.assertEqual(snapshot["retention"], "memory_only")
+        self.assertEqual(
+            set(snapshot["store"]),
+            {
+                "status",
+                "total_subscriptions",
+                "active_subscriptions",
+                "verified_callbacks",
+                "pending_deliveries",
+                "total_events",
+            },
+        )
+        self.assertNotIn("secret", body.decode().casefold())
+        self.assertNotIn("callback_url", body.decode().casefold())
+
+        status, _headers, body = self.handler_request(
+            "GET",
+            "/api/internal/mcp-event-diagnostics",
+            headers={"X-Forwarded-For": "203.0.113.7", "X-Forwarded-Proto": "https"},
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(json.loads(body)["error"], "not_found")
+
     def test_http_oauth_flow_unlocks_cloud_tool_call(self) -> None:
         registration_body = json.dumps(
             {"redirect_uris": [CALLBACK_ID], "token_endpoint_auth_method": "none"}

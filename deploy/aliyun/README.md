@@ -20,6 +20,8 @@ Python 服务只监听云服务器自己的 `127.0.0.1:18765`。公网只通过�
 0.25.0 起，同一端点提供 MCP 2.0 `model_mr.original_ready` 事件。Git 外
 `/var/lib/instant-ai/model-mr/mcp-events.sqlite3` 只保存主人订阅、签名密钥、最小事件索引和投递状态；不保存 ChatGPT 报告、摘要或观点跟踪。服务需要现有 `/var/lib/instant-ai` 写权限和出站 HTTPS，不新增入站端口。首次使用须在原 ChatGPT Work + Cloud 对话 Refresh 并订阅；代码发布不迁移或重写作品资料，也不触发历史识别或模型调用。详见 ADR-0058 和 `docs/MODEL_MR_CONTINUOUS_INTERPRETATION.md`。
 
+0.25.1 起，服务器回环地址可只读访问 `/api/internal/mcp-event-diagnostics`，用于区分事件发现、`events/subscribe`、回调挑战和订阅落库阶段。该接口拒绝代理转发和公网请求，只返回内存中的有界阶段标记及数据库聚合计数，不返回主人身份、回调地址、签名密钥、订阅编号、作品索引或正文。
+
 主人账户配置脚本会在终端隐藏读取两次密码；手动密码至少 9 个字符，自动生成密码仍至少 24 个字符。密码不得放入命令参数、Git 或普通日志。
 
 正式手机入口为 `https://grandpaamu.com/`；`https://www.grandpaamu.com/` 永久跳转到根域名。原 `sslip.io` 地址继续作为服务器公网 IP 不变时的应急入口。`grandpaamu.com` 的根记录与 `www` 记录都必须指向当前即时 AI 云服务器公网 IP。
