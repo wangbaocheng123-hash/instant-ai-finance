@@ -170,6 +170,112 @@ class EventTests(unittest.TestCase):
         self.assertNotIn(SECRET, serialized)
         self.assertNotIn(result["id"], serialized)
 
+    def event_message(self, method, params, *, authenticated=True, principal="owner"):
+        return handle_message(
+            {"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+            library=FakeBloggerLibrary(),
+            model_mr_library=FakeModelMrLibrary(self.root),
+            version="test",
+            authenticated=authenticated,
+            events=self.manager,
+            principal=principal,
+        )
+
+    def event_params(self, method, metadata):
+        delivery = {"mode": "webhook", "url": CALLBACK}
+        if method == "events/subscribe":
+            delivery["secret"] = SECRET
+        return {
+            "name": EVENT_NAME,
+            "arguments": {},
+            "delivery": delivery,
+            "_meta": metadata,
+        }
+
+    def test_metadata_subscribe_refresh_and_unsubscribe_keep_one_identity(self):
+        first = self.event_message(
+            "events/subscribe",
+            self.event_params("events/subscribe", {"progressToken": "synthetic-progress-one"}),
+        )["result"]
+        self.assertEqual(self.subscribe()["id"], first["id"])
+        for metadata in ({}, {"progressToken": "synthetic-progress-one"},
+                         {"openai/session": "synthetic-session-two"}):
+            result = self.event_message(
+                "events/subscribe", self.event_params("events/subscribe", metadata)
+            )
+            self.assertEqual(result["result"]["id"], first["id"])
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(self.manager.diagnostic_snapshot()["store"]["total_subscriptions"], 1)
+        with self.manager.db() as connection:
+            persisted = "\n".join(connection.iterdump())
+        self.assertNotIn("synthetic-progress-one", persisted)
+        self.assertNotIn("synthetic-session-two", persisted)
+        self.assertNotIn("_meta", persisted)
+
+        self.manager.record_original_ready(1, "完整原文")
+        params = self.event_params("events/unsubscribe", {"progressToken": "changed"})
+        result = self.event_message("events/unsubscribe", params)
+        self.assertEqual(result["result"], {})
+        self.assertEqual(self.event_message("events/unsubscribe", params)["result"], {})
+        self.assertFalse(self.manager.dispatch_one())
+        self.assertEqual(self.manager.diagnostic_snapshot()["store"]["active_subscriptions"], 0)
+
+    def test_invalid_metadata_and_extra_parameters_fail_before_callback(self):
+        for method in ("events/subscribe", "events/unsubscribe"):
+            for metadata in (None, [], "invalid", True, 1):
+                with self.subTest(method=method, metadata=metadata):
+                    result = self.event_message(method, self.event_params(method, metadata))
+                    self.assertEqual(result["error"]["code"], -32602)
+                    self.assertEqual(result["error"]["data"]["reason"], "metadata_invalid")
+            for changes, reason in (
+                ({"unexpected": "value"}, "params_invalid"),
+                ({"arguments": {"unexpected": True}}, "arguments_invalid"),
+                ({"name": "not_an_event"}, "event_not_found"),
+            ):
+                with self.subTest(method=method, changes=changes):
+                    params = {**self.event_params(method, {}), **changes}
+                    result = self.event_message(method, params)
+                    self.assertEqual(result["error"]["code"], -32602)
+                    self.assertEqual(result["error"]["data"]["reason"], reason)
+        self.assertFalse(self.requests)
+        self.assertFalse(self.manager.path.exists())
+
+    def test_metadata_cannot_grant_auth_or_change_subscription_owner(self):
+        self.subscribe()
+        metadata = {"principal": "owner", "authenticated": True, "skipVerification": True}
+        for method in ("events/subscribe", "events/unsubscribe"):
+            params = self.event_params(method, metadata)
+            denied = self.event_message(method, params, authenticated=False)
+            self.assertEqual(denied["error"]["code"], -32001)
+        stopped = self.event_message(
+            "events/unsubscribe", self.event_params("events/unsubscribe", metadata),
+            principal="different-principal",
+        )
+        self.assertEqual(stopped["result"], {})
+        self.assertEqual(self.manager.diagnostic_snapshot()["store"]["active_subscriptions"], 1)
+        self.assertEqual(len(self.requests), 1)
+
+    def test_parameter_diagnostics_never_retain_metadata_or_unknown_field_names(self):
+        params = self.event_params("events/subscribe", {"private-key-name": SECRET})
+        params[CALLBACK] = {"private-value": "sensitive-value"}
+        result = self.event_message("events/subscribe", params)
+        self.assertEqual(result["error"]["data"]["reason"], "params_invalid")
+        snapshot = self.manager.diagnostic_snapshot()
+        shape = snapshot["events"][0]["parameter_shape"]
+        self.assertEqual(shape, {
+            "metadata_type": "object", "arguments_type": "object",
+            "delivery_type": "object", "extra_field_count": 1,
+        })
+        serialized = json.dumps(snapshot)
+        for private in (CALLBACK, SECRET, "private-key-name", "sensitive-value"):
+            self.assertNotIn(private, serialized)
+        shape["metadata_type"] = "tampered"
+        self.assertEqual(
+            self.manager.diagnostic_snapshot()["events"][0]["parameter_shape"]["metadata_type"],
+            "object",
+        )
+        self.assertFalse(self.manager.path.exists())
+
     def test_duplicate_original_delivers_once_with_standard_signature(self):
         subscription = self.subscribe()
         created = self.manager.record_original_ready(1, "本次完整原文")

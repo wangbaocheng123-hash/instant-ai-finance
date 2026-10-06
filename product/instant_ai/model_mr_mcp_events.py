@@ -41,6 +41,30 @@ MAX_RESPONSE_BYTES = 64 * 1024
 MAX_EVENT_BYTES = 256 * 1024
 MAX_DIAGNOSTIC_EVENTS = 64
 _DIAGNOSTIC_LABEL = re.compile(r"[a-z0-9_-]{1,64}")
+_EVENT_PARAM_FIELDS = frozenset(
+    {"name", "arguments", "delivery", "cursor", "ttlMs", "_meta"}
+)
+
+
+def _field_type(params: Mapping[str, Any], name: str) -> str:
+    """Describe a known protocol field without retaining its contents."""
+
+    if name not in params:
+        return "absent"
+    value = params[name]
+    if value is None:
+        return "null"
+    if isinstance(value, Mapping):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return "other"
 
 
 class CallbackEndpointError(RuntimeError):
@@ -179,14 +203,25 @@ class ModelMrMcpEvents:
         candidate = str(value or "").strip().casefold()
         return candidate if _DIAGNOSTIC_LABEL.fullmatch(candidate) else fallback
 
-    def record_diagnostic(self, stage: str, outcome: str) -> None:
+    def record_diagnostic(
+        self, stage: str, outcome: str, *, params: Mapping[str, Any] | None = None
+    ) -> None:
         """Keep a bounded, credential-free marker for live subscription checks."""
 
-        event = {
+        event: dict[str, Any] = {
             "at": int(self._clock()),
             "stage": self._diagnostic_label(stage, "unknown"),
             "outcome": self._diagnostic_label(outcome, "unknown"),
         }
+        if params is not None:
+            # Only fixed field names, type labels and counts. Even unknown field
+            # names can contain credentials, so never retain those names/values.
+            event["parameter_shape"] = {
+                "metadata_type": _field_type(params, "_meta"),
+                "arguments_type": _field_type(params, "arguments"),
+                "delivery_type": _field_type(params, "delivery"),
+                "extra_field_count": len(set(params) - _EVENT_PARAM_FIELDS),
+            }
         with self._diagnostic_lock:
             self._diagnostic_events.append(event)
 
@@ -199,7 +234,12 @@ class ModelMrMcpEvents:
         """
 
         with self._diagnostic_lock:
-            events = [dict(event) for event in self._diagnostic_events]
+            events = []
+            for event in self._diagnostic_events:
+                copied = dict(event)
+                if "parameter_shape" in event:
+                    copied["parameter_shape"] = dict(event["parameter_shape"])
+                events.append(copied)
         store: dict[str, Any] = {
             "status": "missing",
             "total_subscriptions": 0,
@@ -325,7 +365,7 @@ class ModelMrMcpEvents:
         return {"events": event_definitions(), "nextCursor": None}
 
     def subscribe(self, principal: str, params: Mapping[str, Any]) -> dict[str, Any]:
-        self.record_diagnostic("events_subscribe", "received")
+        self.record_diagnostic("events_subscribe", "received", params=params)
         owner = str(principal or "").strip()
         if not owner:
             raise ValueError("principal_required")
@@ -425,7 +465,7 @@ class ModelMrMcpEvents:
         }
 
     def unsubscribe(self, principal: str, params: Mapping[str, Any]) -> dict[str, Any]:
-        self.record_diagnostic("events_unsubscribe", "received")
+        self.record_diagnostic("events_unsubscribe", "received", params=params)
         owner = str(principal or "").strip()
         if not owner:
             raise ValueError("principal_required")
@@ -631,9 +671,12 @@ class ModelMrMcpEvents:
             )
 
     def _event_identity(self, params: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]]:
-        allowed = {"name", "arguments", "delivery", "cursor", "ttlMs"}
-        if set(params) - allowed:
+        if set(params) - _EVENT_PARAM_FIELDS:
             raise ValueError("params_invalid")
+        # MCP request metadata belongs to the protocol envelope, not the event
+        # filter. It must not affect authorization, identity or persisted state.
+        if "_meta" in params and not isinstance(params["_meta"], Mapping):
+            raise ValueError("metadata_invalid")
         name = str(params.get("name") or "")
         if name != EVENT_NAME:
             raise ValueError("event_not_found")
