@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO, Mapping
+from typing import Any, BinaryIO, Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -663,6 +663,7 @@ class ModelMrClient:
         media_sha256: str = "",
         work_type: str = "video",
         media_items: list[Mapping[str, Any]] | None = None,
+        comments_observer: Callable[[str, int, list[dict[str, Any]]], Any] | None = None,
     ) -> dict[str, Any]:
         """Idempotently import one verified Beijing model-downloader work."""
 
@@ -901,6 +902,12 @@ class ModelMrClient:
                 "comment_total": len(clean_comments),
                 "capabilities": {},
             }
+            # Seed the existing comments before replacing them. On a retry the
+            # observer also recovers a previously saved but unhanded-off revision.
+            # Both phases run under _DETAIL_LOCK; concurrent revisions cannot
+            # overtake each other. Failures propagate so signed complete retries.
+            if comments_observer is not None:
+                comments_observer("before", work_id, previous.get("comments", []))
             self._write_json(detail_path, self._clean_snapshot_detail(detail, work_id))
 
             works = [
@@ -941,6 +948,8 @@ class ModelMrClient:
             }
             self._write_json(self.snapshot_path, snapshot)
             self._write_json(self.transfer_map_path, mapping)
+            if comments_observer is not None:
+                comments_observer("saved", work_id, clean_comments)
             return {"ok": True, "work_id": work_id, "status": "imported"}
 
     def pending_beijing_comment_projection_sources(self) -> list[str]:

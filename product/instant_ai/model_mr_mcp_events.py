@@ -1,4 +1,4 @@
-"""Durable MCP Events handoff for newly ready Model Mr originals.
+"""Durable MCP Events handoff for Model Mr originals and author replies.
 
 Only subscription metadata, minimal event indexes and delivery state are kept.
 Interpretations, summaries and point tracking remain exclusively in the
@@ -27,11 +27,13 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import SplitResult, urlsplit
 
-from .model_mr_mcp import MODEL_MR_MCP, ModelMrMcpLibrary
+from .model_mr_mcp import AUTHOR_KINDS, MODEL_MR_MCP, ModelMrMcpLibrary, author_reply_ref
 
 
 PROTOCOL_VERSION = "2026-07-28"
 EVENT_NAME = "model_mr.original_ready"
+AUTHOR_REPLIES_EVENT = "model_mr.author_replies_updated"
+MAX_REPLIES_PER_EVENT = 100
 DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000
 MAX_TTL_MS = DEFAULT_TTL_MS
 SECRET_ROTATION_SECONDS = 10 * 60
@@ -109,6 +111,30 @@ def event_definitions() -> list[dict[str, Any]]:
                     "original_status",
                     "original_sha256",
                 ],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": AUTHOR_REPLIES_EVENT,
+            "description": (
+                "模型先生本人评论或回复的新正文已同步。只提供作品和回复证据索引；"
+                "可用 get_model_mr_author_replies 的 reply_refs 精确读取新增回复及原提问，"
+                "结合对应作品原文连续解读。不是普通粉丝评论或点赞数变化。"
+            ),
+            "delivery": ["webhook"],
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+            "payloadSchema": {
+                "type": "object",
+                "properties": {
+                    "record_id": {"type": "string", "pattern": "^model-mr-work:[1-9][0-9]{0,11}$"},
+                    "reply_refs": {
+                        "type": "array", "minItems": 1, "maxItems": MAX_REPLIES_PER_EVENT,
+                        "uniqueItems": True,
+                        "items": {"type": "string", "pattern": "^reply-[0-9a-f]{64}$"},
+                    },
+                    "reply_count": {"type": "integer", "minimum": 1, "maximum": MAX_REPLIES_PER_EVENT},
+                },
+                "required": ["record_id", "reply_refs", "reply_count"],
                 "additionalProperties": False,
             },
         }
@@ -349,6 +375,15 @@ class ModelMrMcpEvents:
                 );
                 CREATE INDEX IF NOT EXISTS deliveries_due
                     ON deliveries(state,next_attempt);
+                CREATE TABLE IF NOT EXISTS author_reply_baselines (
+                    work_id INTEGER PRIMARY KEY,
+                    created_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS author_reply_seen (
+                    work_id INTEGER NOT NULL,
+                    reply_ref TEXT NOT NULL,
+                    PRIMARY KEY(work_id,reply_ref)
+                );
                 """
             )
             with connection:
@@ -516,30 +551,91 @@ class ModelMrMcpEvents:
             "original_sha256": content_hash,
         }
         dedupe = f"{EVENT_NAME}:{identifier}:{content_hash}"
-        event_id = "evt_" + hashlib.sha256(dedupe.encode("utf-8")).hexdigest()[:40]
         now = self._clock()
-        serialized = _canonical(data)
         with self.db() as connection:
-            connection.execute(
-                "UPDATE subscriptions SET active=0,updated_at=? "
-                "WHERE active=1 AND expires_at<=?",
-                (now, now),
-            )
-            cursor = connection.execute(
-                "INSERT OR IGNORE INTO events(id,dedupe,name,occurred_at,data) VALUES(?,?,?,?,?)",
-                (event_id, dedupe, EVENT_NAME, now, serialized),
-            )
-            created = cursor.rowcount > 0
-            if created:
-                subscriptions = connection.execute(
-                    "SELECT id FROM subscriptions WHERE active=1 AND name=? AND expires_at>?",
-                    (EVENT_NAME, now),
-                ).fetchall()
-                connection.executemany(
-                    "INSERT OR IGNORE INTO deliveries(subscription_id,event_id,next_attempt,updated_at) "
-                    "VALUES(?,?,?,?)",
-                    [(str(row["id"]), event_id, now, now) for row in subscriptions],
+            return self._record_event(connection, EVENT_NAME, dedupe, data, now)
+
+    def observe_author_replies(
+        self, stage: str, work_id: int, comments: list[dict[str, Any]]
+    ) -> dict[str, int]:
+        """Record minimal indexes after projection, never reports or comment bodies.
+
+        The first 'before' call seeds a lazy per-work baseline from already saved
+        comments. Later 'before' calls recover an interrupted saved handoff before
+        another revision replaces that evidence. Fingerprints survive disappear /
+        reappear, restarts and changes to likes, display names or row positions.
+        """
+        if stage not in {"before", "saved"} or not 0 < int(work_id) < 10**12:
+            raise ValueError("author_reply_observation_invalid")
+        identifier = int(work_id)
+        refs = sorted({author_reply_ref(item) for item in comments
+                       if isinstance(item, dict) and item.get("kind") in AUTHOR_KINDS
+                       and str(item.get("text") or "").strip()})
+        now = self._clock()
+        with self.db() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            baseline = connection.execute(
+                "SELECT work_id FROM author_reply_baselines WHERE work_id=?", (identifier,)
+            ).fetchone()
+            if baseline is None:
+                if stage != "before":
+                    raise ValueError("author_reply_baseline_required")
+                connection.execute(
+                    "INSERT INTO author_reply_baselines(work_id,created_at) VALUES(?,?)", (identifier, now)
                 )
+                connection.executemany(
+                    "INSERT INTO author_reply_seen(work_id,reply_ref) VALUES(?,?)",
+                    [(identifier, ref) for ref in refs],
+                )
+                return {"new_replies": 0, "events": 0}
+            seen = {str(row[0]) for row in connection.execute(
+                "SELECT reply_ref FROM author_reply_seen WHERE work_id=?", (identifier,)
+            )}
+            added = [ref for ref in refs if ref not in seen]
+            count = 0
+            for offset in range(0, len(added), MAX_REPLIES_PER_EVENT):
+                batch = added[offset:offset + MAX_REPLIES_PER_EVENT]
+                data = {"record_id": f"model-mr-work:{identifier}",
+                        "reply_refs": batch, "reply_count": len(batch)}
+                digest = hashlib.sha256(_canonical(data).encode("utf-8")).hexdigest()
+                result = self._record_event(
+                    connection, AUTHOR_REPLIES_EVENT,
+                    f"{AUTHOR_REPLIES_EVENT}:{identifier}:{digest}", data, now,
+                )
+                count += int(result["created"])
+            # Atomic with events + delivery rows: a failed handoff cannot consume
+            # the reply fingerprint without its durable notification index.
+            connection.executemany(
+                "INSERT INTO author_reply_seen(work_id,reply_ref) VALUES(?,?)",
+                [(identifier, ref) for ref in added],
+            )
+        return {"new_replies": len(added), "events": count}
+
+    @staticmethod
+    def _record_event(
+        connection: sqlite3.Connection, name: str, dedupe: str,
+        data: Mapping[str, Any], now: float,
+    ) -> dict[str, Any]:
+        event_id = "evt_" + hashlib.sha256(dedupe.encode("utf-8")).hexdigest()[:40]
+        serialized = _canonical(data)
+        connection.execute(
+            "UPDATE subscriptions SET active=0,updated_at=? WHERE active=1 AND expires_at<=?",
+            (now, now),
+        )
+        cursor = connection.execute(
+            "INSERT OR IGNORE INTO events(id,dedupe,name,occurred_at,data) VALUES(?,?,?,?,?)",
+            (event_id, dedupe, name, now, serialized),
+        )
+        created = cursor.rowcount > 0
+        if created:
+            subscriptions = connection.execute(
+                "SELECT id FROM subscriptions WHERE active=1 AND name=? AND expires_at>?", (name, now)
+            ).fetchall()
+            connection.executemany(
+                "INSERT OR IGNORE INTO deliveries(subscription_id,event_id,next_attempt,updated_at) "
+                "VALUES(?,?,?,?)",
+                [(str(row["id"]), event_id, now, now) for row in subscriptions],
+            )
         return {"event_id": event_id, "created": created}
 
     def dispatch_one(self) -> bool:
@@ -678,7 +774,7 @@ class ModelMrMcpEvents:
         if "_meta" in params and not isinstance(params["_meta"], Mapping):
             raise ValueError("metadata_invalid")
         name = str(params.get("name") or "")
-        if name != EVENT_NAME:
+        if name not in {EVENT_NAME, AUTHOR_REPLIES_EVENT}:
             raise ValueError("event_not_found")
         arguments = params.get("arguments") or {}
         if not isinstance(arguments, Mapping) or arguments:
@@ -818,6 +914,7 @@ MODEL_MR_MCP_EVENTS = ModelMrMcpEvents()
 __all__ = [
     "CallbackEndpointError",
     "EVENT_NAME",
+    "AUTHOR_REPLIES_EVENT",
     "MAX_DIAGNOSTIC_EVENTS",
     "MODEL_MR_MCP_EVENTS",
     "ModelMrMcpEvents",

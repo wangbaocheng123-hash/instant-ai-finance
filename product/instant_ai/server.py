@@ -1280,6 +1280,7 @@ def create_server() -> BoundedThreadingHTTPServer:
     backfill_thumbnail_candidates()
     backfill_notifications()
     server = BoundedThreadingHTTPServer((HOST, PORT), InstantAIHandler)
+    MODEL_MR_TRANSFER_PROJECTOR.comments_observer = MODEL_MR_MCP_EVENTS.observe_author_replies
     def complete_blogger_transfer(transfer_id: str) -> None:
         MODEL_MR_TRANSFER_PROJECTOR.project(transfer_id)
         BLOGGER_PROCESSOR.enqueue_transfer(transfer_id)

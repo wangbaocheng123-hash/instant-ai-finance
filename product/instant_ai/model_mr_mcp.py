@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -24,6 +25,18 @@ MAX_COMMENT_PAGE = 100
 MAX_COMMENT_OFFSET = 100_000
 AUTHOR_KINDS = {"author", "author_comment", "author_reply"}
 COMMENT_VIEWS = {"all", "interactions", "model_mr", "fans", "model_mr_liked"}
+
+
+def author_reply_ref(comment: dict[str, Any]) -> str:
+    """Opaque evidence reference, independent of row order and engagement counts.
+
+    This is not a source comment/account identifier. Identical text at the same
+    publication time in a work is intentionally consumed once.
+    """
+    text = str(comment.get("text") or "").strip()[:20_000]
+    published_at = str(comment.get("published_at") or "").strip()[:80]
+    identity = json.dumps([text, published_at], ensure_ascii=False, separators=(",", ":"))
+    return "reply-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
 class ModelMrMcpUnavailable(RuntimeError):
@@ -489,6 +502,7 @@ class ModelMrMcpLibrary:
         record_id: str,
         limit: int = 30,
         offset: int = 0,
+        reply_refs: list[str] | None = None,
     ) -> dict[str, Any]:
         """Return only source-marked Model Mr messages with their root question.
 
@@ -502,6 +516,14 @@ class ModelMrMcpLibrary:
             return {"found": False, "record_id": value}
         safe_limit = max(1, min(int(limit), MAX_AUTHOR_REPLY_THREADS))
         safe_offset = max(0, min(int(offset), 100_000))
+        if reply_refs is not None and (
+            not isinstance(reply_refs, list)
+            or not 1 <= len(reply_refs) <= 100
+            or any(not isinstance(ref, str) or re.fullmatch(r"reply-[0-9a-f]{64}", ref) is None
+                   for ref in reply_refs)
+        ):
+            raise ValueError("reply_refs_invalid")
+        requested = set(reply_refs or [])
         work_id = int(match.group(1))
         snapshot = self._snapshot()
         raw_work = next(
@@ -518,6 +540,7 @@ class ModelMrMcpLibrary:
         detail = self._detail(work_id)
         source = detail.get("comments") if isinstance(detail.get("comments"), list) else []
         grouped: dict[str, dict[str, Any]] = {}
+        matched_refs: set[str] = set()
         for index, raw in enumerate(source, start=1):
             if not isinstance(raw, dict):
                 continue
@@ -541,6 +564,11 @@ class ModelMrMcpLibrary:
                 thread["root"] = cleaned
             if kind in AUTHOR_KINDS:
                 author_message = dict(cleaned)
+                author_message["reply_ref"] = author_reply_ref(cleaned)
+                if requested:
+                    if author_message["reply_ref"] not in requested or author_message["reply_ref"] in matched_refs:
+                        continue
+                    matched_refs.add(author_message["reply_ref"])
                 author_message["author"] = _text(raw.get("author")).strip()[:80] or "模型先生"
                 thread["author_messages"].append(author_message)
 
@@ -561,7 +589,7 @@ class ModelMrMcpLibrary:
             threads.append(
                 {
                     "question": question,
-                    "author_messages": messages[:MAX_AUTHOR_MESSAGES_PER_THREAD],
+                    "author_messages": messages if requested else messages[:MAX_AUTHOR_MESSAGES_PER_THREAD],
                     "author_message_count": len(messages),
                     "context_status": "root_question_included" if question else "root_question_unavailable",
                 }
@@ -582,7 +610,12 @@ class ModelMrMcpLibrary:
             "total": total,
             "offset": safe_offset,
             "has_more": safe_offset + len(page) < total,
+            "next_offset": safe_offset + len(page) if safe_offset + len(page) < total else None,
             "items": page,
+            "requested_reply_refs": sorted(requested),
+            "unavailable_reply_refs": sorted(requested - {
+                message["reply_ref"] for thread in threads for message in thread["author_messages"]
+            }),
             "evidence_note": (
                 "只返回来源明确标记为 author、author_comment 或 author_reply 的模型先生本人发言；"
                 "昵称相同不作为作者身份依据。原提问仅保留正文、时间和计数，不返回粉丝账号或主页。"

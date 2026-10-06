@@ -283,6 +283,8 @@ def tool_definitions() -> list[dict[str, Any]]:
                 "根据 model-mr-work: 编号，只读返回来源明确标记的模型先生本人评论或回复，"
                 "并保留对应原提问正文作为上下文。不会按昵称猜测作者，不返回整片评论区、"
                 "粉丝账号或主页，也不会触发 AI、采集或写入。"
+                "收到本人回复更新事件时，传入 reply_refs 精确读取该批回复；"
+                "原文缺失或回复已删除时如实说明，不重新识别视频。"
             ),
             "inputSchema": {
                 "type": "object",
@@ -298,6 +300,14 @@ def tool_definitions() -> list[dict[str, Any]]:
                         "maximum": 100,
                         "default": 30,
                         "description": "本次最多读取的作者互动线程数。",
+                    },
+                    "reply_refs": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "uniqueItems": True,
+                        "items": {"type": "string", "pattern": "^reply-[0-9a-f]{64}$"},
+                        "description": "可选，事件给出的回复证据索引；不传则分页读取全部本人回复。",
                     },
                     "offset": {
                         "type": "integer",
@@ -576,7 +586,20 @@ def handle_message(
                 raise ValueError("pagination_invalid") from error
             if limit < 1 or limit > 100 or offset < 0 or offset > 100_000:
                 raise ValueError("pagination_invalid")
-            result = model_mr_library.get_author_replies_for_mcp(record_id, limit, offset)
+            if "reply_refs" in arguments:
+                reply_refs = arguments["reply_refs"]
+                if (
+                    not isinstance(reply_refs, list) or not 1 <= len(reply_refs) <= 100
+                    or any(not isinstance(ref, str) or re.fullmatch(r"reply-[0-9a-f]{64}", ref) is None
+                           for ref in reply_refs)
+                    or len(set(reply_refs)) != len(reply_refs)
+                ):
+                    raise ValueError("reply_refs_invalid")
+                result = model_mr_library.get_author_replies_for_mcp(
+                    record_id, limit, offset, reply_refs=reply_refs
+                )
+            else:
+                result = model_mr_library.get_author_replies_for_mcp(record_id, limit, offset)
         elif name == "list_model_mr_investment_thoughts":
             query = str(arguments.get("query") or "").strip()
             if len(query) > 2000:

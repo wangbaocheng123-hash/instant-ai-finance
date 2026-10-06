@@ -6,7 +6,7 @@ import json
 import os
 import threading
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .blogger_ingest import BloggerIngestStore, DEFAULT_BLOGGER_AGENT_ROOT
 from .blogger_library import MODEL_MR_TRANSFER_CREATOR_ID
@@ -25,9 +25,11 @@ class ModelMrTransferProjector:
         *,
         blogger_root: Path = DEFAULT_BLOGGER_AGENT_ROOT,
         model_mr: ModelMrClient = MODEL_MR,
+        comments_observer: Callable[[str, int, list[dict[str, Any]]], Any] | None = None,
     ) -> None:
         self.blogger_root = Path(blogger_root)
         self.model_mr = model_mr
+        self.comments_observer = comments_observer
         self._store_instance: BloggerIngestStore | None = None
         self._store_lock = threading.Lock()
 
@@ -114,6 +116,7 @@ class ModelMrTransferProjector:
                 bundle_descriptor,
             ),
             media_items=resolved_media,
+            comments_observer=self.comments_observer,
         )
         if imported.get("status") == "imported" and expected_role == "video":
             from .model_mr_processing import ModelMrProcessor
