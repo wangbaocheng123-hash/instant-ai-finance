@@ -53,7 +53,7 @@ export interface AppStatus {
   items: { total: number; unread: number; saved: number; last_seen: string | null };
   sources: { total: number; enabled: number; errors: number };
   collection: { running: boolean; last_result: unknown; mode: 'automatic'; interval_seconds: number };
-  notifications: { pending: number };
+  notifications: { pending: number; mobile_subscriptions: number };
   database_path: string;
   library_path: string;
   latest_backup: string | null;
@@ -63,6 +63,13 @@ export interface AppStatus {
     critical_days: number;
     archive_enabled: boolean;
   };
+}
+
+export interface WebPushStatus {
+  available: boolean;
+  active_subscriptions: number;
+  public_key: string;
+  message: string;
 }
 
 export interface AuthStatus {

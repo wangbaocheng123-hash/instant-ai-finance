@@ -116,6 +116,14 @@ BING_KOREAN_NEWS_SAMPLE = """<?xml version="1.0" encoding="utf-8"?>
   <guid>bing-result-2</guid><pubDate>Mon, 07 Sep 2026 09:45:00 GMT</pubDate>
 </item></channel></rss>""".encode("utf-8")
 
+THE_ELEC_RSS_SAMPLE = """<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0"><channel><title>디일렉(THE ELEC) - 반도체</title><item>
+  <title>ASML, 유지보수용 노광장비 부품값 10% 일괄 인상</title>
+  <link>https://www.thelec.kr/news/articleView.html?idxno=63515</link>
+  <guid>the-elec-63515</guid><pubDate>2026-10-10 09:37:29</pubDate>
+  <description>기사 본문은 저장하지 않아야 합니다.</description>
+</item></channel></rss>""".encode("utf-8")
+
 
 class RuleTests(unittest.TestCase):
     def test_tracking_parameters_are_removed(self) -> None:
@@ -159,6 +167,17 @@ class RuleTests(unittest.TestCase):
         self.assertIn("SK海力士", result.entities)
         self.assertEqual(result.event_type, "产量/库存")
 
+    def test_asml_korean_price_increase_is_an_important_tracked_event(self) -> None:
+        result = analyze(
+            "ASML, 유지보수용 노광장비 부품값 10% 일괄 인상",
+            "",
+            4,
+            ["全球财经", "亚洲市场", "AI产业链"],
+        )
+        self.assertIn("阿斯麦", result.entities)
+        self.assertEqual(result.event_type, "价格/宏观")
+        self.assertGreaterEqual(result.importance_score, 75)
+
     def test_desktop_client_window_has_a_bounded_size(self) -> None:
         width, height, left, top = client_window_bounds()
         self.assertGreaterEqual(width, 760)
@@ -191,6 +210,40 @@ class FeedTests(unittest.TestCase):
         entry = parse_feed(GOOGLE_NEWS_RSS_SAMPLE)[0]
         self.assertEqual(entry.publisher, "Reuters")
         self.assertEqual(entry.publisher_url, "https://www.reuters.com")
+
+    def test_the_elec_naive_korean_time_is_normalized_to_utc(self) -> None:
+        entry = parse_feed(
+            THE_ELEC_RSS_SAMPLE,
+            naive_timezone_offset_minutes=9 * 60,
+        )[0]
+        self.assertEqual(entry.published_at, "2026-10-10T00:37:29+00:00")
+
+    def test_the_elec_collection_keeps_only_title_date_link_and_publisher(self) -> None:
+        source = Source(
+            1,
+            "the-elec-semiconductor",
+            "THE ELEC 半导体专业报道（韩国）",
+            "rss",
+            "https://www.thelec.kr/rss/S1N2.xml",
+            4,
+            ["全球财经", "亚洲市场", "AI产业链"],
+            {
+                "max_entries": 60,
+                "title_link_only": True,
+                "publisher": "디일렉(THE ELEC)",
+                "publisher_url": "https://www.thelec.kr/",
+                "published_utc_offset_minutes": 540,
+            },
+        )
+        response = FetchResult(200, "application/xml", THE_ELEC_RSS_SAMPLE, None, None)
+        with patch("instant_ai.collectors.fetch", return_value=response), patch(
+            "instant_ai.collectors.store_raw", return_value=("feed-hash", "/tmp/the-elec.xml")
+        ):
+            _result, entries, _digest, _path = collect_source(source)
+        self.assertEqual(entries[0].summary, "")
+        self.assertEqual(entries[0].publisher, "디일렉(THE ELEC)")
+        self.assertEqual(entries[0].publisher_url, "https://www.thelec.kr/")
+        self.assertEqual(entries[0].published_at, "2026-10-10T00:37:29+00:00")
 
     def test_collection_enriches_feed_publisher_before_evidence_storage(self) -> None:
         source = Source(
@@ -427,6 +480,7 @@ class DatabaseTests(unittest.TestCase):
         hankyung = sources["hankyung-korea-finance"]
         sedaily = sources["seoul-economic-daily-korea"]
         stockplus = sources["stockplus-korea-newsroom"]
+        the_elec = sources["the-elec-semiconductor"]
         self.assertEqual(kb["kind"], "kb_research_today")
         self.assertEqual(kb["config"]["evidence_role"], "broker_research_primary")
         self.assertTrue(kb["config"]["not_company_disclosure"])
@@ -436,6 +490,12 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(stockplus["trust_level"], 2)
         self.assertEqual(stockplus["kind"], "stockplus_breaking_json")
         self.assertEqual(stockplus["config"]["evidence_role"], "early_discovery_only")
+        self.assertEqual(the_elec["url"], "https://www.thelec.kr/rss/S1N2.xml")
+        self.assertEqual(the_elec["trust_level"], 4)
+        self.assertEqual(the_elec["config"]["published_utc_offset_minutes"], 540)
+        self.assertEqual(the_elec["config"]["evidence_role"], "specialist_media_original_report")
+        self.assertTrue(the_elec["config"]["not_company_disclosure"])
+        self.assertTrue(the_elec["config"]["title_link_only"])
         for source in (hankyung, sedaily):
             self.assertEqual(source["kind"], "bing_news_rss")
             self.assertIn("format=rss&setlang=ko-kr", source["url"])
@@ -455,7 +515,7 @@ class DatabaseTests(unittest.TestCase):
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             self.assertEqual(source_count, len(DEFAULT_SOURCES))
-            self.assertEqual(version, "11")
+            self.assertEqual(version, "12")
             with connect(path) as connection:
                 tables = {
                     row[0]
@@ -465,6 +525,8 @@ class DatabaseTests(unittest.TestCase):
                 }
             self.assertIn("ai_jobs", tables)
             self.assertIn("notification_outbox", tables)
+            self.assertIn("web_push_subscriptions", tables)
+            self.assertIn("web_push_deliveries", tables)
             self.assertIn("item_translations", tables)
             self.assertIn("reader_translations", tables)
             self.assertIn("translation_usage", tables)
@@ -975,12 +1037,16 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("online", app)
         self.assertNotIn("全球热点", app)
         self.assertNotIn("hotspotTrack", app)
-        self.assertEqual(manifest["display"], "browser")
+        self.assertEqual(manifest["display"], "standalone")
+        self.assertEqual(manifest["id"], "/")
         self.assertEqual(manifest["orientation"], "portrait-primary")
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("url.pathname.startsWith('/media/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.26.0", worker)
+        self.assertIn("instant-ai-shell-v0.27.0", worker)
+        self.assertIn("showNotification", worker)
+        self.assertIn("notificationclick", worker)
+        self.assertIn("手机通知", app)
 
 
 if __name__ == "__main__":

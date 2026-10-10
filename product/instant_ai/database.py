@@ -13,7 +13,7 @@ from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensur
 from .publishers import resolve_publisher_identity
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -227,6 +227,32 @@ DEFAULT_SOURCES = (
             "evidence_role": "broker_research_primary",
             "not_company_disclosure": True,
             "rights_scope": "title_date_link_only",
+        },
+    },
+    {
+        "key": "the-elec-semiconductor",
+        "name": "THE ELEC 半导体专业报道（韩国）",
+        "kind": "rss",
+        "url": "https://www.thelec.kr/rss/S1N2.xml",
+        "trust_level": 4,
+        "topic_hints": ["全球财经", "亚洲市场", "AI产业链"],
+        "config": {
+            "max_entries": 60,
+            "discovery_only": True,
+            "title_link_only": True,
+            "publisher": "디일렉(THE ELEC)",
+            "publisher_url": "https://www.thelec.kr/",
+            "language": "ko",
+            "published_utc_offset_minutes": 540,
+            "evidence_role": "specialist_media_original_report",
+            "not_company_disclosure": True,
+            "rights_scope": "title_date_link_only",
+            "notification_min_score": 75,
+            "notification_require_entity": True,
+            "notification_event_types": [
+                "事故/中断", "监管/政策", "业绩/财报", "并购/投资", "产量/库存", "价格/宏观"
+            ],
+            "notification_reason": "高相关半导体专业媒体原始报道（非公司公告）",
         },
     },
     {
@@ -490,6 +516,32 @@ def initialize(path: Path | str | None = None) -> None:
                 UNIQUE(item_id, channel)
             );
 
+            CREATE TABLE IF NOT EXISTS web_push_subscriptions (
+                id TEXT PRIMARY KEY,
+                endpoint TEXT NOT NULL,
+                p256dh TEXT NOT NULL,
+                auth_secret TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_success_at TEXT,
+                last_error TEXT,
+                failure_count INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS web_push_deliveries (
+                notification_id INTEGER NOT NULL REFERENCES notification_outbox(id) ON DELETE CASCADE,
+                subscription_id TEXT NOT NULL REFERENCES web_push_subscriptions(id) ON DELETE CASCADE,
+                state TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at TEXT,
+                last_status INTEGER,
+                last_error TEXT,
+                updated_at TEXT NOT NULL,
+                delivered_at TEXT,
+                PRIMARY KEY (notification_id, subscription_id)
+            );
+
             CREATE TABLE IF NOT EXISTS item_translations (
                 item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
                 target_language TEXT NOT NULL DEFAULT 'zh-CN',
@@ -637,6 +689,8 @@ def initialize(path: Path | str | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_runs_started ON collection_runs(started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_ai_jobs_item ON ai_jobs(item_id, id DESC);
             CREATE INDEX IF NOT EXISTS idx_outbox_status ON notification_outbox(status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_web_push_subscriptions_enabled ON web_push_subscriptions(enabled, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_web_push_deliveries_due ON web_push_deliveries(state, next_attempt_at, updated_at);
             CREATE INDEX IF NOT EXISTS idx_item_translations_provider ON item_translations(provider, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_reader_translations_provider ON reader_translations(provider, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_item_thumbnails_status ON item_thumbnails(status, checked_at DESC);

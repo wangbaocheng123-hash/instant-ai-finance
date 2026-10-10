@@ -60,6 +60,7 @@ export class InstantFinanceApp {
   private lastRefreshStartedAt = 0;
   private authRequired = false;
   private refreshTimer: number | null = null;
+  private pushBusy = false;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -89,6 +90,11 @@ export class InstantFinanceApp {
     this.selectSection(this.activeSectionId, false);
     this.bindEvents();
     await this.refresh();
+    void this.refreshPushButton();
+    const requestedItem = Number(new URLSearchParams(window.location.search).get('item') || '0');
+    if (Number.isInteger(requestedItem) && requestedItem > 0) {
+      void this.openItem(requestedItem);
+    }
     this.refreshTimer = window.setInterval(() => void this.refresh(false), 60_000);
   }
 
@@ -101,6 +107,7 @@ export class InstantFinanceApp {
           <div class="header-actions">
             <div class="header-tools" role="group" aria-label="客户端状态工具">
                <button type="button" class="translate-button" data-action="translate" title="把英文财经标题翻译成中文，并保留英文原题">汉化开启</button>
+               <button type="button" class="push-button" data-action="push" title="把高相关重要新消息通知到这部手机">手机通知</button>
                <button type="button" data-action="sources" title="查看内部采集通道状态">采集</button>
               ${this.authRequired ? '<button type="button" data-action="logout" title="退出主人账户">退出</button>' : ''}
               <div class="auto-collection" title="客户端启动后立即更新一轮，之后每 5 分钟自动采集全球财经文字来源">
@@ -190,6 +197,7 @@ export class InstantFinanceApp {
       }
       const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
       if (action === 'translate') void this.toggleTranslation();
+      if (action === 'push') void this.togglePushNotifications();
       if (action === 'sources') void this.openSources();
       if (action === 'logout') void this.logout();
       if (action === 'close-overlay') this.closeOverlay();
@@ -706,6 +714,94 @@ export class InstantFinanceApp {
     } else {
       this.toast('标题汉化已关闭，当前显示英文原题。');
     }
+  }
+
+  private async pushRegistration(): Promise<ServiceWorkerRegistration> {
+    if (!('serviceWorker' in navigator)) throw new Error('当前浏览器不支持手机通知。');
+    return navigator.serviceWorker.register('/sw.js');
+  }
+
+  private async refreshPushButton(): Promise<void> {
+    const button = this.root.querySelector<HTMLButtonElement>('[data-action="push"]');
+    if (!button || this.pushBusy) return;
+    if (!window.isSecureContext || !('PushManager' in window) || !('Notification' in window)) {
+      button.textContent = '通知设置';
+      button.title = '请用 HTTPS 打开，并在 iPhone 上先“添加到主屏幕”。';
+      return;
+    }
+    try {
+      const registration = await this.pushRegistration();
+      const subscription = await registration.pushManager.getSubscription();
+      button.classList.toggle('is-active', Boolean(subscription));
+      button.textContent = subscription ? '通知已开' : '手机通知';
+      button.title = subscription
+        ? '已在这部设备接收重要消息；点击可关闭。'
+        : '把高相关重要新消息通知到这部手机。';
+    } catch {
+      button.textContent = '通知设置';
+    }
+  }
+
+  private async togglePushNotifications(): Promise<void> {
+    if (this.pushBusy) return;
+    const button = this.required<HTMLButtonElement>('[data-action="push"]');
+    const ios = /iPad|iPhone|iPod/u.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
+    const standalone = window.matchMedia('(display-mode: standalone)').matches
+      || navigatorWithStandalone.standalone === true;
+    if (ios && !standalone) {
+      this.toast('iPhone 请先点 Safari“分享”→“添加到主屏幕”，再从桌面打开即时 AI 开启通知。', true);
+      return;
+    }
+    if (!window.isSecureContext || !('PushManager' in window) || !('Notification' in window)) {
+      this.toast('当前打开方式不支持手机通知；请使用 HTTPS，并把即时 AI 添加到主屏幕。', true);
+      return;
+    }
+    this.pushBusy = true;
+    button.disabled = true;
+    button.textContent = '设置中…';
+    try {
+      const registration = await this.pushRegistration();
+      const current = await registration.pushManager.getSubscription();
+      if (current) {
+        await instantApi.unsubscribePush(current.endpoint);
+        await current.unsubscribe();
+        this.toast('这部设备的即时 AI 通知已关闭。');
+        return;
+      }
+      const status = await instantApi.pushStatus();
+      if (!status.available || !status.public_key) throw new Error(status.message);
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') throw new Error('你没有允许通知；可在手机系统设置中重新开启。');
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: this.decodeBase64Url(status.public_key),
+      });
+      try {
+        const saved = await instantApi.subscribePush(subscription.toJSON());
+        this.toast(saved.message, !saved.test_sent);
+      } catch (error) {
+        await subscription.unsubscribe();
+        throw error;
+      }
+    } catch (error) {
+      this.toast(error instanceof Error ? error.message : '手机通知设置失败。', true);
+    } finally {
+      this.pushBusy = false;
+      button.disabled = false;
+      await this.refreshPushButton();
+    }
+  }
+
+  private decodeBase64Url(value: string): ArrayBuffer {
+    const normalized = value.replace(/-/gu, '+').replace(/_/gu, '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const bytes = window.atob(padded);
+    const buffer = new ArrayBuffer(bytes.length);
+    const output = new Uint8Array(buffer);
+    output.set(Uint8Array.from(bytes, (character) => character.charCodeAt(0)));
+    return buffer;
   }
 
   private async translateVisible(showToast: boolean): Promise<void> {

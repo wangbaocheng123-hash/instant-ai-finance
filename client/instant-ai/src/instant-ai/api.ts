@@ -5,6 +5,7 @@ import type {
   ReaderTranslationResult, SourceStatus,
   TranslationBatchResult, TranslationStatus,
   WatchEventsResponse,
+  WebPushStatus,
 } from './types';
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -118,6 +119,15 @@ export const instantApi = {
     body: JSON.stringify({ messages, model }),
   }),
   status: () => request<AppStatus>('/api/status'),
+  pushStatus: () => request<WebPushStatus>('/api/push/status'),
+  subscribePush: (subscription: PushSubscriptionJSON) => request<{ ok: boolean; test_sent: boolean; message: string }>('/api/push/subscribe', {
+    method: 'POST',
+    body: JSON.stringify(subscription),
+  }),
+  unsubscribePush: (endpoint: string) => request<{ ok: boolean }>('/api/push/unsubscribe', {
+    method: 'POST',
+    body: JSON.stringify({ endpoint }),
+  }),
   items: (topic = '', query = '', limit = 40) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (topic) params.set('topic', topic);

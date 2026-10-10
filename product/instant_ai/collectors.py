@@ -182,27 +182,32 @@ def _entry_publisher(element: ET.Element) -> tuple[str, str]:
     return "", ""
 
 
-def parse_date(value: str) -> str | None:
+def parse_date(value: str, naive_timezone: timezone = UTC) -> str | None:
     value = value.strip()
     if not value:
         return None
     try:
         parsed = parsedate_to_datetime(value)
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
+            parsed = parsed.replace(tzinfo=naive_timezone)
         return parsed.astimezone(UTC).replace(microsecond=0).isoformat()
     except (TypeError, ValueError, OverflowError):
         pass
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
+            parsed = parsed.replace(tzinfo=naive_timezone)
         return parsed.astimezone(UTC).replace(microsecond=0).isoformat()
     except ValueError:
         return None
 
 
-def parse_feed(body: bytes, max_entries: int = 50) -> list[Entry]:
+def parse_feed(
+    body: bytes,
+    max_entries: int = 50,
+    *,
+    naive_timezone_offset_minutes: int = 0,
+) -> list[Entry]:
     root = ET.fromstring(body)
     candidates = [element for element in root.iter() if _local_name(element.tag) in {"item", "entry"}]
     entries: list[Entry] = []
@@ -211,7 +216,10 @@ def parse_feed(body: bytes, max_entries: int = 50) -> list[Entry]:
         link = _entry_link(element)
         identifier = _first_text(element, {"guid", "id"}) or link or title
         summary = clean_text(_first_text(element, {"description", "summary", "content", "encoded"}))
-        published = parse_date(_first_text(element, {"pubdate", "published", "updated", "date"}))
+        published = parse_date(
+            _first_text(element, {"pubdate", "published", "updated", "date"}),
+            timezone(timedelta(minutes=naive_timezone_offset_minutes)),
+        )
         if not published:
             published = infer_embedded_published_at(title, summary)
         if not title or not link:
@@ -648,7 +656,11 @@ def collect_source(source: Source) -> tuple[FetchResult, list[Entry], str, str]:
         return result, [], "", ""
     digest, raw_path = store_raw(source, result)
     if source.kind == "rss":
-        entries = parse_feed(result.body, int(source.config.get("max_entries", 50)))
+        entries = parse_feed(
+            result.body,
+            int(source.config.get("max_entries", 50)),
+            naive_timezone_offset_minutes=int(source.config.get("published_utc_offset_minutes", 0)),
+        )
     elif source.kind == "bing_news_rss":
         entries = parse_bing_news_feed(source, result.body)
     elif source.kind == "html_links":

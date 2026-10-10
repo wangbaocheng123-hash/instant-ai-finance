@@ -19,6 +19,10 @@ from .thumbnails import (
     invalidate_google_news_image_index,
     register_thumbnail_candidate,
 )
+from .web_push import WebPushSender, validate_endpoint, validate_subscription
+
+
+WEB_PUSH_SENDER = WebPushSender(LIBRARY_ROOT / "notifications" / "vapid-private.pem")
 
 
 def _source_from_row(row: sqlite3.Row) -> Source:
@@ -51,6 +55,65 @@ def list_sources(enabled_only: bool = False) -> list[dict[str, Any]]:
         item["enabled"] = bool(item["enabled"])
         result.append(item)
     return result
+
+
+def _notification_reason(source: Source, analysis: Any) -> dict[str, Any] | None:
+    threshold = int(source.config.get("notification_min_score", 85))
+    if source.trust_level < 4 or analysis.importance_score < threshold:
+        return None
+    allowed_events = {
+        str(value) for value in source.config.get("notification_event_types", []) if str(value)
+    }
+    if allowed_events and analysis.event_type not in allowed_events:
+        return None
+    if source.config.get("notification_require_entity") and not analysis.entities:
+        return None
+    return {
+        "importance_score": analysis.importance_score,
+        "trust_level": source.trust_level,
+        "event_type": analysis.event_type,
+        "topics": analysis.topics,
+        "entities": analysis.entities,
+        "source_key": source.key,
+        "reason": str(
+            source.config.get("notification_reason")
+            or "高可信来源与高重要度规则同时命中"
+        ),
+    }
+
+
+def _queue_notifications(
+    connection: sqlite3.Connection,
+    *,
+    item_id: int,
+    source: Source,
+    analysis: Any,
+    created_at: str,
+) -> None:
+    reason = _notification_reason(source, analysis)
+    if reason is None:
+        return
+    reason_json = json.dumps(reason, ensure_ascii=False)
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO notification_outbox(
+            item_id, channel, status, reason_json, created_at
+        ) VALUES (?, 'in_app', 'pending', ?, ?)
+        """,
+        (item_id, reason_json, created_at),
+    )
+    active_push = connection.execute(
+        "SELECT COUNT(*) FROM web_push_subscriptions WHERE enabled=1"
+    ).fetchone()[0]
+    if active_push:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO notification_outbox(
+                item_id, channel, status, reason_json, created_at
+            ) VALUES (?, 'web_push', 'pending', ?, ?)
+            """,
+            (item_id, reason_json, created_at),
+        )
 
 
 def _upsert_entry(
@@ -94,28 +157,6 @@ def _upsert_entry(
             ),
         )
         item_id = int(cursor.lastrowid)
-        if analysis.importance_score >= 85 and source.trust_level >= 4:
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO notification_outbox(
-                    item_id, channel, status, reason_json, created_at
-                ) VALUES (?, 'in_app', 'pending', ?, ?)
-                """,
-                (
-                    item_id,
-                    json.dumps(
-                        {
-                            "importance_score": analysis.importance_score,
-                            "trust_level": source.trust_level,
-                            "event_type": analysis.event_type,
-                            "topics": analysis.topics,
-                            "reason": "高可信官方来源与高重要度规则同时命中",
-                        },
-                        ensure_ascii=False,
-                    ),
-                    now,
-                ),
-            )
     else:
         item_id = int(existing["id"])
         replacement_summary = entry.summary if len(entry.summary) > len(existing["summary"] or "") else existing["summary"]
@@ -142,6 +183,14 @@ def _upsert_entry(
             ),
         )
         is_updated = True
+
+    _queue_notifications(
+        connection,
+        item_id=item_id,
+        source=source,
+        analysis=analysis,
+        created_at=now,
+    )
 
     if entry.image_url:
         register_thumbnail_candidate(connection, item_id, entry.image_url)
@@ -546,7 +595,7 @@ def list_notifications(limit: int = 50) -> list[dict[str, Any]]:
                    i.topics_json, i.event_type, i.published_at, i.first_seen_at
             FROM notification_outbox n
             JOIN items i ON i.id=n.item_id
-            WHERE n.status='pending'
+            WHERE n.status='pending' AND n.channel='in_app'
             ORDER BY i.importance_score DESC, n.created_at DESC
             LIMIT ?
             """,
@@ -568,6 +617,286 @@ def dismiss_notification(notification_id: int) -> bool:
             (utc_now(), notification_id),
         )
     return cursor.rowcount > 0
+
+
+def web_push_status(
+    path: Path | str | None = None,
+    *,
+    sender: WebPushSender = WEB_PUSH_SENDER,
+) -> dict[str, Any]:
+    with connect(path) as connection:
+        active = connection.execute(
+            "SELECT COUNT(*) FROM web_push_subscriptions WHERE enabled=1"
+        ).fetchone()[0]
+    if not sender.available:
+        return {
+            "available": False,
+            "active_subscriptions": active,
+            "public_key": "",
+            "message": "服务器暂不具备手机推送加密组件。",
+        }
+    try:
+        public_key = sender.public_key()
+    except (OSError, RuntimeError, ValueError) as error:
+        return {
+            "available": False,
+            "active_subscriptions": active,
+            "public_key": "",
+            "message": f"手机推送密钥暂不可用：{type(error).__name__}",
+        }
+    return {
+        "available": True,
+        "active_subscriptions": active,
+        "public_key": public_key,
+        "message": "只推送规则确认的高相关重要新消息。",
+    }
+
+
+def save_web_push_subscription(
+    payload: object,
+    path: Path | str | None = None,
+    *,
+    sender: WebPushSender = WEB_PUSH_SENDER,
+) -> dict[str, Any]:
+    if not sender.available:
+        raise ValueError("服务器暂不支持手机推送。")
+    checked = validate_subscription(payload)
+    subscription_id = hashlib.sha256(checked["endpoint"].encode("utf-8")).hexdigest()
+    now = utc_now()
+    with transaction(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO web_push_subscriptions(
+                id, endpoint, p256dh, auth_secret, enabled, created_at, updated_at,
+                last_success_at, last_error, failure_count
+            ) VALUES (?, ?, ?, ?, 1, ?, ?, NULL, NULL, 0)
+            ON CONFLICT(id) DO UPDATE SET
+                endpoint=excluded.endpoint,
+                p256dh=excluded.p256dh,
+                auth_secret=excluded.auth_secret,
+                enabled=1,
+                created_at=excluded.created_at,
+                updated_at=excluded.updated_at,
+                last_error=NULL,
+                failure_count=0
+            """,
+            (
+                subscription_id,
+                checked["endpoint"],
+                checked["p256dh"],
+                checked["auth"],
+                now,
+                now,
+            ),
+        )
+    result = sender.send(
+        checked,
+        {
+            "title": "即时 AI 手机通知已开启",
+            "body": "后续只提醒高相关、重要的新消息。",
+            "url": "/",
+            "tag": "instant-ai-push-ready",
+        },
+    )
+    with transaction(path) as connection:
+        if result.ok:
+            connection.execute(
+                """
+                UPDATE web_push_subscriptions
+                SET last_success_at=?, last_error=NULL, failure_count=0, updated_at=?
+                WHERE id=?
+                """,
+                (utc_now(), utc_now(), subscription_id),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE web_push_subscriptions
+                SET enabled=?, last_error=?, failure_count=1, updated_at=?
+                WHERE id=?
+                """,
+                (0 if result.expired else 1, result.error, utc_now(), subscription_id),
+            )
+    return {
+        "ok": True,
+        "test_sent": result.ok,
+        "message": (
+            "手机通知已开启，测试通知已经发出。"
+            if result.ok
+            else "手机通知已保存；测试通知暂未送达，系统会在后续重要消息时重试。"
+        ),
+    }
+
+
+def remove_web_push_subscription(
+    endpoint: str,
+    path: Path | str | None = None,
+) -> bool:
+    checked_endpoint = validate_endpoint(endpoint)
+    subscription_id = hashlib.sha256(checked_endpoint.encode("utf-8")).hexdigest()
+    with transaction(path) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE web_push_subscriptions
+            SET enabled=0, updated_at=?, last_error=NULL
+            WHERE id=? AND endpoint=?
+            """,
+            (utc_now(), subscription_id, checked_endpoint),
+        )
+    return cursor.rowcount > 0
+
+
+def dispatch_web_push_notifications(
+    path: Path | str | None = None,
+    *,
+    sender: WebPushSender = WEB_PUSH_SENDER,
+    limit: int = 20,
+) -> dict[str, int]:
+    summary = {"attempted": 0, "delivered": 0, "failed": 0, "expired": 0}
+    if not sender.available:
+        return summary
+    now = utc_now()
+    with transaction(path) as connection:
+        notifications = connection.execute(
+            """
+            SELECT n.id
+            FROM notification_outbox n
+            WHERE n.channel='web_push' AND n.status='pending'
+            ORDER BY n.created_at ASC
+            LIMIT ?
+            """,
+            (max(1, min(limit, 100)),),
+        ).fetchall()
+        for notification in notifications:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO web_push_deliveries(
+                    notification_id, subscription_id, state, attempts, updated_at
+                )
+                SELECT ?, id, 'pending', 0, ?
+                FROM web_push_subscriptions
+                WHERE enabled=1 AND created_at <= (
+                    SELECT created_at FROM notification_outbox WHERE id=?
+                )
+                """,
+                (notification["id"], now, notification["id"]),
+            )
+        tasks = connection.execute(
+            """
+            SELECT d.notification_id, d.subscription_id, d.attempts,
+                   s.endpoint, s.p256dh, s.auth_secret,
+                   i.id AS item_id, i.title, i.event_type,
+                   n.reason_json
+            FROM web_push_deliveries d
+            JOIN web_push_subscriptions s ON s.id=d.subscription_id
+            JOIN notification_outbox n ON n.id=d.notification_id
+            JOIN items i ON i.id=n.item_id
+            WHERE n.channel='web_push' AND n.status='pending'
+              AND s.enabled=1
+              AND d.state IN ('pending', 'retry')
+              AND (d.next_attempt_at IS NULL OR d.next_attempt_at <= ?)
+            ORDER BY n.created_at ASC
+            LIMIT ?
+            """,
+            (now, max(1, min(limit * 4, 200))),
+        ).fetchall()
+
+    touched: set[int] = set()
+    for row in tasks:
+        summary["attempted"] += 1
+        touched.add(int(row["notification_id"]))
+        reason = json.loads(row["reason_json"])
+        entities = [str(value) for value in reason.get("entities", []) if str(value)]
+        heading = "、".join(entities[:2]) or row["event_type"] or "重要消息"
+        result = sender.send(
+            {
+                "endpoint": row["endpoint"],
+                "p256dh": row["p256dh"],
+                "auth": row["auth_secret"],
+            },
+            {
+                "title": f"即时 AI · {heading}",
+                "body": row["title"],
+                "url": f"/?item={row['item_id']}",
+                "tag": f"instant-ai-item-{row['item_id']}",
+                "item_id": row["item_id"],
+            },
+        )
+        attempts = int(row["attempts"]) + 1
+        with transaction(path) as connection:
+            if result.ok:
+                summary["delivered"] += 1
+                connection.execute(
+                    """
+                    UPDATE web_push_deliveries
+                    SET state='delivered', attempts=?, next_attempt_at=NULL,
+                        last_status=?, last_error=NULL, updated_at=?, delivered_at=?
+                    WHERE notification_id=? AND subscription_id=?
+                    """,
+                    (
+                        attempts, result.status, utc_now(), utc_now(),
+                        row["notification_id"], row["subscription_id"],
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE web_push_subscriptions
+                    SET last_success_at=?, last_error=NULL, failure_count=0, updated_at=?
+                    WHERE id=?
+                    """,
+                    (utc_now(), utc_now(), row["subscription_id"]),
+                )
+            else:
+                expired = result.expired
+                final_failure = expired or attempts >= 5
+                summary["expired" if expired else "failed"] += 1
+                next_attempt = None if final_failure else (
+                    datetime.now(UTC) + timedelta(minutes=min(5 * (2 ** (attempts - 1)), 60))
+                ).replace(microsecond=0).isoformat()
+                connection.execute(
+                    """
+                    UPDATE web_push_deliveries
+                    SET state=?, attempts=?, next_attempt_at=?, last_status=?,
+                        last_error=?, updated_at=?
+                    WHERE notification_id=? AND subscription_id=?
+                    """,
+                    (
+                        "failed" if final_failure else "retry",
+                        attempts,
+                        next_attempt,
+                        result.status,
+                        result.error,
+                        utc_now(),
+                        row["notification_id"],
+                        row["subscription_id"],
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE web_push_subscriptions
+                    SET enabled=?, last_error=?, failure_count=failure_count+1, updated_at=?
+                    WHERE id=?
+                    """,
+                    (0 if expired else 1, result.error, utc_now(), row["subscription_id"]),
+                )
+
+    with transaction(path) as connection:
+        for notification_id in touched:
+            states = connection.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN state IN ('pending', 'retry') THEN 1 ELSE 0 END) AS remaining,
+                    SUM(CASE WHEN state='delivered' THEN 1 ELSE 0 END) AS delivered
+                FROM web_push_deliveries WHERE notification_id=?
+                """,
+                (notification_id,),
+            ).fetchone()
+            if int(states["remaining"] or 0) == 0:
+                connection.execute(
+                    "UPDATE notification_outbox SET status=? WHERE id=?",
+                    ("delivered" if int(states["delivered"] or 0) else "failed", notification_id),
+                )
+    return summary
 
 
 def set_item_flag(item_id: int, field: str, value: bool) -> bool:
@@ -616,7 +945,10 @@ def stats() -> dict[str, Any]:
         ).fetchone()
         last_run = connection.execute("SELECT * FROM collection_runs ORDER BY id DESC LIMIT 1").fetchone()
         pending_notifications = connection.execute(
-            "SELECT COUNT(*) FROM notification_outbox WHERE status='pending'"
+            "SELECT COUNT(*) FROM notification_outbox WHERE status='pending' AND channel='in_app'"
+        ).fetchone()[0]
+        active_push_subscriptions = connection.execute(
+            "SELECT COUNT(*) FROM web_push_subscriptions WHERE enabled=1"
         ).fetchone()[0]
         ai_jobs = connection.execute("SELECT COUNT(*) FROM ai_jobs").fetchone()[0]
     backups = sorted(BACKUPS_ROOT.glob("instant_ai-*.db"), key=lambda path: path.stat().st_mtime, reverse=True)
@@ -627,7 +959,10 @@ def stats() -> dict[str, Any]:
         "database_path": str(DATABASE_PATH),
         "library_path": str(LIBRARY_ROOT),
         "latest_backup": str(backups[0]) if backups else None,
-        "notifications": {"pending": pending_notifications},
+        "notifications": {
+            "pending": pending_notifications,
+            "mobile_subscriptions": active_push_subscriptions,
+        },
         "ai_jobs": ai_jobs,
         "retention": {
             "ordinary_hours": 72,

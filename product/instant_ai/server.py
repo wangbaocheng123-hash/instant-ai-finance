@@ -20,6 +20,7 @@ from .paths import STATIC_ROOT, ensure_layout
 from .service import (
     backfill_notifications,
     dismiss_notification,
+    dispatch_web_push_notifications,
     get_item,
     list_notifications,
     list_sources,
@@ -29,9 +30,12 @@ from .service import (
     reclassify_items,
     recent_runs,
     run_collection,
+    save_web_push_subscription,
     set_item_flag,
     stats,
     toggle_source,
+    remove_web_push_subscription,
+    web_push_status,
 )
 from .retention import run_retention_cleanup
 from .reader_translation import translate_reader_item
@@ -148,6 +152,7 @@ def _collect_in_background() -> None:
     try:
         result = run_collection()
         result["watch_events"] = refresh_watch_events()
+        result["mobile_notifications"] = dispatch_web_push_notifications()
         COLLECTION_STATE["last_result"] = result
     except Exception as error:  # keep the desktop service alive
         COLLECTION_STATE["last_result"] = {"status": "failed", "error": f"{type(error).__name__}: {error}"}
@@ -980,6 +985,8 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             self._json(recent_runs())
         elif path == "/api/notifications":
             self._json(list_notifications())
+        elif path == "/api/push/status":
+            self._json(web_push_status())
         elif path == "/api/ai/status":
             self._json(provider_status())
         elif path == "/api/translation/status":
@@ -1073,6 +1080,21 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             return
 
         if not self._require_auth():
+            return
+
+        if path == "/api/push/subscribe":
+            try:
+                self._json(save_web_push_subscription(payload))
+            except ValueError as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+
+        if path == "/api/push/unsubscribe":
+            try:
+                endpoint = str(payload.get("endpoint") or "")
+                self._json({"ok": remove_web_push_subscription(endpoint)})
+            except (AttributeError, ValueError) as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
             return
 
         if path == "/api/model-mr/chat":

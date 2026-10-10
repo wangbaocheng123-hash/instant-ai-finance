@@ -80,6 +80,7 @@ ENTITY_KEYWORDS = {
     "苹果": ("苹果公司", "apple", "aapl"),
     "微软": ("微软", "microsoft", "msft"),
     "台积电": ("台积电", "tsmc", "tsm"),
+    "阿斯麦": ("阿斯麦", "asml", "에이에스엠엘"),
     "三星电子": ("三星电子", "samsung electronics", "삼성전자"),
     "SK海力士": ("sk海力士", "sk hynix", "sk하이닉스", "하이닉스"),
     "高盛": ("高盛", "goldman sachs"),
@@ -94,7 +95,7 @@ EVENT_KEYWORDS = (
     ("业绩/财报", ("财报", "业绩", "年报", "季报", "利润", "营收", "earnings", "revenue", "guidance", "실적", "매출", "영업이익")),
     ("并购/投资", ("收购", "出售", "并购", "投资", "合同", "acquisition", "merger", "contract", "인수", "합병", "투자", "계약")),
     ("产量/库存", ("产量", "产能", "库存", "品位", "储量", "production", "inventory", "reserve", "생산", "재고", "매장량")),
-    ("价格/宏观", ("价格", "利率", "通胀", "降息", "加息", "price", "rate", "inflation", "가격", "금리", "물가", "환율")),
+    ("价格/宏观", ("价格", "涨价", "提价", "利率", "通胀", "降息", "加息", "price", "price increase", "rate", "inflation", "가격", "인상", "부품값", "금리", "물가", "환율")),
     ("融资/创业", ("融资", "风投", "创投", "初创", "funding", "venture capital", "startup")),
     ("机构观点", ("市场展望", "研究报告", "机构观点", "outlook", "research note", "forecast")),
 )

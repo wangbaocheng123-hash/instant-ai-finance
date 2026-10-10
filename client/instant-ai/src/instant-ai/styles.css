@@ -97,6 +97,7 @@ img { display: block; }
 .header-tools button:hover { background: #f4f8fd; color: #174ea6; }
 .header-tools button:disabled { opacity: .55; cursor: wait; }
 .header-tools .translate-button.is-active { background: #eefaf4; color: #137647; }
+.header-tools .push-button.is-active { background: #edf4ff; color: #174ea6; }
 .auto-collection {
   min-height: 30px;
   display: flex;
