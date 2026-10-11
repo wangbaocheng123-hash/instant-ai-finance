@@ -36,6 +36,7 @@ export class ModelMrPanel {
   private chatConfig: ModelMrChatConfig | null = null;
   private chatMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
   private available = false;
+  private hasLoadedData = false;
   private sending = false;
   private readonly details = new Map<number, ModelMrWorkDetail>();
   private readonly detailTabs = new Map<number, WorkDetailTab>();
@@ -85,7 +86,7 @@ export class ModelMrPanel {
     this.available = status.available;
     if (!status.available) {
       this.badge.textContent = '未连接';
-      this.renderUnavailable(status.message);
+      if (!this.hasOpenVideo()) this.renderUnavailable(status.message);
       return;
     }
     const [works, thoughts, chatConfig, processing] = await Promise.all([
@@ -106,15 +107,44 @@ export class ModelMrPanel {
     this.thoughts = thoughts.categories;
     this.chatConfig = chatConfig;
     this.processing = processing;
+    this.hasLoadedData = true;
     const media = status.counts?.media ?? 0;
     this.badge.textContent = media ? `${status.counts?.works ?? works.count} 部 · ${media} 个本地媒体` : `${status.counts?.works ?? works.count} 部`;
-    this.renderActiveTab();
+    this.renderBackgroundUpdate();
   }
 
   setError(message: string): void {
     this.available = false;
     this.badge.textContent = '异常';
-    this.renderUnavailable(message);
+    if (!this.hasOpenVideo()) this.renderUnavailable(message);
+  }
+
+  private hasOpenVideo(): boolean {
+    // Keep the entire mounted player, including paused/buffering/fullscreen video.
+    // Reattaching the same node or restoring currentTime after a redraw is too late.
+    return this.body.querySelector('video') !== null;
+  }
+
+  private renderBackgroundUpdate(appendLoadedWorks = false): void {
+    if (!this.hasOpenVideo()) {
+      this.renderActiveTab();
+      return;
+    }
+    this.element.querySelector('.model-processing')?.replaceWith(this.renderProcessing());
+    if (this.activeTab !== 'works') return;
+    const list = this.body.querySelector('.model-work-list');
+    const loader = list?.querySelector('.model-work-loader');
+    if (!list || !loader) return;
+    // Pagination may finish after playback starts. Append siblings without moving
+    // existing cards; the next explicit view change reconciles titles and ordering.
+    if (appendLoadedWorks) {
+      const shown = new Set(Array.from(list.children, (card) => (card as HTMLElement).dataset.workId));
+      this.works.forEach((work) => {
+        if (!shown.has(String(work.id))) list.insertBefore(this.renderWorkCard(work), loader);
+      });
+    }
+    loader.replaceWith(this.renderWorksLoader());
+    this.observeWorksLoader();
   }
 
   private async handleClick(event: MouseEvent): Promise<void> {
@@ -185,7 +215,8 @@ export class ModelMrPanel {
   }
 
   private renderActiveTab(): void {
-    if (!this.available) return;
+    // A transient refresh failure must not trap the owner in the retained player.
+    if (!this.available && !this.hasLoadedData) return;
     if (this.activeTab === 'works') this.renderWorks();
     else if (this.activeTab === 'thoughts') this.renderThoughts();
     else this.renderChat();
@@ -273,7 +304,7 @@ export class ModelMrPanel {
       this.setWorkMessage(workId, error instanceof Error ? error.message : '提炼排队失败', 'is-error');
     } finally {
       this.busyWorks.delete(workId);
-      this.renderWorks();
+      this.renderBackgroundUpdate();
     }
   }
 
@@ -300,6 +331,8 @@ export class ModelMrPanel {
   }
 
   private observeWorksLoader(): void {
+    this.worksObserver?.disconnect();
+    this.worksObserver = null;
     if (!this.hasMoreWorks || this.loadingMoreWorks || !('IntersectionObserver' in window)) return;
     const trigger = this.element.querySelector<HTMLElement>('[data-model-load-trigger]');
     if (!trigger) return;
@@ -313,7 +346,7 @@ export class ModelMrPanel {
     if (this.activeTab !== 'works' || this.loadingMoreWorks || !this.hasMoreWorks) return;
     this.loadingMoreWorks = true;
     this.worksLoadMessage = '';
-    this.renderWorks();
+    this.renderBackgroundUpdate();
     try {
       const page = await instantApi.modelMrWorks(MODEL_MR_WORK_PAGE_SIZE, this.nextWorksOffset);
       const loadedIds = new Set(this.works.map((work) => work.id));
@@ -328,7 +361,7 @@ export class ModelMrPanel {
       this.worksLoadMessage = error instanceof Error ? `加载失败：${error.message}` : '加载失败，请稍后重试。';
     } finally {
       this.loadingMoreWorks = false;
-      this.renderWorks();
+      this.renderBackgroundUpdate(true);
     }
   }
 
@@ -420,7 +453,8 @@ export class ModelMrPanel {
 
   private async openWorkDetail(workId: number, tab: WorkDetailTab): Promise<void> {
     this.detailTabs.set(workId, tab);
-    if (!this.details.has(workId)) {
+    const loadingDetail = !this.details.has(workId);
+    if (loadingDetail) {
       this.busyWorks.add(workId);
       this.workMessages.delete(workId);
       this.setWorkMessage(workId, '正在读取本地作品资料…', '');
@@ -434,7 +468,8 @@ export class ModelMrPanel {
         this.busyWorks.delete(workId);
       }
     }
-    this.renderWorks();
+    if (loadingDetail) this.renderBackgroundUpdate();
+    else this.renderWorks();
     requestAnimationFrame(() => this.element.querySelector<HTMLElement>(`[data-work-id="${workId}"] .model-work-detail`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
   }
 
@@ -870,7 +905,7 @@ export class ModelMrPanel {
       this.setWorkMessage(workId, error instanceof Error ? error.message : '标题保存失败。', 'is-error');
     } finally {
       this.busyWorks.delete(workId);
-      this.renderWorks();
+      this.renderBackgroundUpdate();
     }
   }
 
@@ -895,7 +930,7 @@ export class ModelMrPanel {
       this.setWorkMessage(workId, error instanceof Error ? error.message : '识别失败。', 'is-error');
     } finally {
       this.busyWorks.delete(workId);
-      this.renderWorks();
+      this.renderBackgroundUpdate();
     }
   }
 
@@ -919,7 +954,7 @@ export class ModelMrPanel {
       this.setWorkMessage(workId, error instanceof Error ? error.message : '保存失败。', 'is-error');
     } finally {
       this.busyWorks.delete(workId);
-      this.renderWorks();
+      this.renderBackgroundUpdate();
     }
   }
 
@@ -1049,7 +1084,7 @@ export class ModelMrPanel {
     } finally {
       if (generation === this.relatedRequest) {
         this.relatedLoading = false;
-        if (this.activeTab === 'thoughts') this.renderThoughts();
+        if (this.activeTab === 'thoughts') this.renderBackgroundUpdate();
       }
     }
   }
@@ -1123,7 +1158,7 @@ export class ModelMrPanel {
       });
       this.editingKeywords.delete(workId);
       this.setWorkMessage(workId, '关键词已保存；未调用 AI。', 'is-done');
-      this.renderWorks();
+      this.renderBackgroundUpdate();
     } catch (error) {
       // Preserve the draft when the server rejects a stale revision or the network fails.
       window.alert(error instanceof Error ? error.message : '保存失败，请保留当前草稿后重试。');
@@ -1196,7 +1231,7 @@ export class ModelMrPanel {
       this.chatMessages.push({ role: 'assistant', content: error instanceof Error ? `暂时无法回答：${error.message}` : '暂时无法回答。' });
     } finally {
       this.sending = false;
-      this.renderChat();
+      if (this.activeTab === 'chat') this.renderChat();
     }
   }
 

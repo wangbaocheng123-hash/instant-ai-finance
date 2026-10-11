@@ -67,31 +67,48 @@ export class BloggerPanel {
     this.processingFingerprint = this.processingSignature(processing);
     if (!status.available) {
       this.badge.textContent = '未连接';
-      this.renderUnavailable(status.message);
+      if (!this.hasOpenVideo()) this.renderUnavailable(status.message);
       return;
     }
     const response = await instantApi.bloggerCreators();
     if (requestId !== this.requestSerial) return;
     this.creators = response.items;
-    if (this.selectedCreatorId && !this.creators.some((item) => item.creator_id === this.selectedCreatorId)) this.resetSelection();
+    if (this.selectedCreatorId && !this.creators.some((item) => item.creator_id === this.selectedCreatorId)
+      && !this.hasOpenVideo()) this.resetSelection();
     if (this.selectedCreatorId) {
       const works = await instantApi.bloggerCreatorWorks(this.selectedCreatorId);
       if (requestId !== this.requestSerial) return;
       this.works = works.items;
       this.replaceCreator(works.creator);
       if (this.selectedWorkKey) {
-        this.detail = await instantApi.bloggerWork(this.selectedWorkKey);
+        const detail = await instantApi.bloggerWork(this.selectedWorkKey);
         if (requestId !== this.requestSerial) return;
+        this.detail = detail;
       }
     }
     this.badge.textContent = `${status.counts.creators} 位 · ${status.counts.works} 部`;
-    this.renderCurrentView();
+    this.renderBackgroundUpdate();
   }
 
   setError(message: string): void {
     ++this.requestSerial;
     this.badge.textContent = '异常';
-    this.renderUnavailable(message || '博主资料暂时无法读取。');
+    if (!this.hasOpenVideo()) this.renderUnavailable(message || '博主资料暂时无法读取。');
+  }
+
+  private hasOpenVideo(): boolean {
+    return this.body.querySelector('video') !== null;
+  }
+
+  private renderBackgroundUpdate(): void {
+    // Fetch fresh data but defer destructive detail rendering until the owner
+    // leaves the player. Paused/buffering video also owns a live media session.
+    if (this.hasOpenVideo() || this.hasFocusedEditor()) {
+      const processing = this.element.querySelector('.blogger-processing');
+      processing?.replaceWith(this.renderProcessing(processing.classList.contains('is-compact')));
+      return;
+    }
+    this.renderCurrentView();
   }
 
   private async handleClick(event: MouseEvent): Promise<void> {
@@ -157,8 +174,9 @@ export class BloggerPanel {
     const requestId = ++this.requestSerial;
     this.renderLoading('正在读取作品视频与评论…');
     try {
-      this.detail = await instantApi.bloggerWork(workKey);
+      const detail = await instantApi.bloggerWork(workKey);
       if (requestId !== this.requestSerial) return;
+      this.detail = detail;
       if (!this.detail.media_available) this.detailTab = 'text';
       this.renderDetail();
       this.scrollPanelToTop();
@@ -346,7 +364,7 @@ export class BloggerPanel {
       this.processingMessage = this.errorText(error);
     } finally {
       this.processingBusy = false;
-      this.renderCurrentView();
+      this.renderBackgroundUpdate();
     }
   }
 
@@ -409,7 +427,7 @@ export class BloggerPanel {
       if (requestId !== this.requestSerial || workKey !== this.selectedWorkKey) return;
       this.detail = detail;
     }
-    this.renderCurrentView();
+    this.renderBackgroundUpdate();
   }
 
   private hasFocusedEditor(): boolean {
@@ -692,7 +710,7 @@ export class BloggerPanel {
       if (work) { work.title = result.title; work.title_source = 'manual'; work.title_confidence = null; }
       this.editingTitle = false; this.workMessage = { text: '标题已保存。', tone: 'is-done' };
     } catch (error) { this.workMessage = { text: this.errorText(error), tone: 'is-error' }; }
-    finally { this.busy = false; this.renderDetail(); }
+    finally { this.busy = false; this.renderBackgroundUpdate(); }
   }
 
   private async saveVideoText(): Promise<void> {
@@ -704,7 +722,7 @@ export class BloggerPanel {
       this.detail.video_text = { text: result.text, official: Boolean(result.text), source: '主人保存', updated_at: new Date().toISOString() };
       this.detail.has_video_text = Boolean(result.text); this.workMessage = { text: '视频原文已保存。', tone: 'is-done' };
     } catch (error) { this.workMessage = { text: this.errorText(error), tone: 'is-error' }; }
-    finally { this.busy = false; this.renderDetail(); }
+    finally { this.busy = false; this.renderBackgroundUpdate(); }
   }
 
   private async transcribe(engine: 'video' | 'doubao'): Promise<void> {
@@ -716,7 +734,7 @@ export class BloggerPanel {
       this.detail.transcripts = [{ text: result.text, source: result.engine, language: 'zh-CN', created_at: new Date().toISOString() }];
       this.workMessage = { text: result.message || '识别完成，请核对后保存正式原文。', tone: 'is-done' };
     } catch (error) { this.workMessage = { text: this.errorText(error), tone: 'is-error' }; }
-    finally { this.busy = false; this.renderDetail(); }
+    finally { this.busy = false; this.renderBackgroundUpdate(); }
   }
 
   private async repairPipeline(): Promise<void> {
@@ -730,7 +748,7 @@ export class BloggerPanel {
       this.processingMessage = '单条补做已加入本地后台队列，页面每 4 秒仅刷新处理进度。';
       this.workMessage = { text: result.message || '已加入补做队列。', tone: result.state === 'done' ? 'is-done' : '' };
     } catch (error) { this.workMessage = { text: this.errorText(error), tone: 'is-error' }; }
-    finally { this.busy = false; this.renderDetail(); }
+    finally { this.busy = false; this.renderBackgroundUpdate(); }
   }
 
   private needsPipeline(detail: BloggerWorkDetail): boolean {
@@ -777,7 +795,7 @@ export class BloggerPanel {
       const result = await instantApi.extractBloggerKeywords(this.detail.work_key, this.detail.keyword_revision || '');
       this.workMessage = { text: `${result.message}。可在作品页“豆包自动处理”查看状态。`, tone: 'is-done' };
     } catch (error) { this.workMessage = { text: this.errorText(error), tone: 'is-error' }; }
-    finally { this.busy = false; this.renderDetail(); }
+    finally { this.busy = false; this.renderBackgroundUpdate(); }
   }
 
   private async saveKeywords(): Promise<void> {
@@ -799,7 +817,7 @@ export class BloggerPanel {
       if (work) { work.keywords = result.keywords; work.keyword_info = result.keyword_info; work.keyword_revision = result.keyword_revision; }
       this.editingKeywords = false; this.workMessage = { text: '关键词已保存；未调用 AI。', tone: 'is-done' };
     } catch (error) { window.alert(this.errorText(error)); }
-    finally { this.busy = false; this.renderDetail(); }
+    finally { this.busy = false; this.renderBackgroundUpdate(); }
   }
 
   private renderInterpretation(detail: BloggerWorkDetail): HTMLElement {
@@ -822,7 +840,7 @@ export class BloggerPanel {
       const work = this.works.find((item) => item.work_key === this.detail?.work_key); if (work) work.has_interpretation = Boolean(result.text);
       this.workMessage = { text: '解读感悟已保存；未调用 AI。', tone: 'is-done' };
     } catch (error) { this.workMessage = { text: this.errorText(error), tone: 'is-error' }; }
-    finally { this.busy = false; this.renderDetail(); }
+    finally { this.busy = false; this.renderBackgroundUpdate(); }
   }
 
   private renderTransferSummary(detail: BloggerWorkDetail): HTMLElement {
