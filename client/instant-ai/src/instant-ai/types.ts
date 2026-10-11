@@ -304,6 +304,20 @@ export interface ModelMrWork {
   keyword_revision?: string;
 }
 
+export interface ModelMrLearningState {
+  revision: number;
+  learned_work_ids: number[];
+  last_work_id: number | null;
+}
+
+export interface ModelMrWorksPage {
+  items: ModelMrWork[];
+  count: number;
+  total: number;
+  offset: number;
+  has_more: boolean;
+}
+
 export interface ModelMrTranscript {
   text: string;
   source: string;

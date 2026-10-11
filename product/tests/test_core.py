@@ -1042,7 +1042,12 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("继续向下滑自动加载", app)
         self.assertIn("IntersectionObserver", app)
         self.assertIn("model-work-loader", styles)
-        self.assertIn("offset=", app)
+        # Works query now uses URLSearchParams for ID-anchored pagination;
+        # the literal "offset=" no longer appears in the compiled bundle.
+        self.assertIn("around_id", app)
+        self.assertIn("relative_offset", app)
+        self.assertIn("/api/model-mr/learning", app)
+        self.assertIn("回到上次学习", app)
         self.assertIn("主人账户登录", app)
         self.assertIn("30 天", app)
         self.assertIn("显示密码", app)
@@ -1072,7 +1077,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("url.pathname.startsWith('/media/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.27.3", worker)
+        self.assertIn("instant-ai-shell-v0.28.0", worker)
         self.assertIn("showNotification", worker)
         self.assertIn("notificationclick", worker)
         self.assertIn("手机通知", app)

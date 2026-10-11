@@ -6,6 +6,7 @@ import mimetypes
 import os
 import re
 import socket
+import sqlite3
 import tempfile
 import threading
 import time
@@ -19,6 +20,7 @@ from urllib.request import Request, urlopen
 from .doubao_asr import DoubaoAsrUnavailable, is_configured as doubao_asr_is_configured, transcribe_video
 from .paths import LIBRARY_ROOT
 from .model_mr_metadata import KEYWORD_CATEGORIES, clean_keyword_info, clean_links, clean_words, keyword_revision
+from .model_mr_learning import MAX_SAFE_INTEGER, ModelMrLearningStore
 from .model_mr_titles import (
     clean_generated_title,
     is_meaningful_title,
@@ -56,6 +58,10 @@ def _default_media_root() -> Path:
 
 
 class ModelMrUnavailable(RuntimeError):
+    pass
+
+
+class ModelMrWorkNotFound(ValueError):
     pass
 
 
@@ -143,20 +149,58 @@ class ModelMrClient:
             "chat_enabled": bool(chat.get("enabled")),
         }
 
-    def works(self, *, limit: int = 40, offset: int = 0) -> dict[str, Any]:
+    def learning(self) -> dict[str, Any]:
+        try:
+            return ModelMrLearningStore(self.snapshot_path.parent / "learning.sqlite3").read()
+        except (OSError, sqlite3.Error) as error:
+            raise ModelMrUnavailable("学习标记暂时无法读取，请稍后重试。") from error
+
+    def save_learned(self, work_id: int, learned: bool, expected_revision: int) -> dict[str, Any]:
+        store = ModelMrLearningStore(self.snapshot_path.parent / "learning.sqlite3")
+        store.validate(work_id, learned, expected_revision)
+        # Check only the index, never fetch details, video, ASR or model output.
+        self.works(limit=1, around_id=work_id)
+        try:
+            return store.set_learned(work_id, learned, expected_revision)
+        except (OSError, sqlite3.Error) as error:
+            raise ModelMrUnavailable("学习标记未能保存，请稍后重试。") from error
+
+    @staticmethod
+    def _around_offset(items: list[dict[str, Any]], work_id: int, limit: int, relative_offset: int | None) -> int:
+        for index, item in enumerate(items):
+            raw_id = item.get("id")
+            # Legacy exports can carry integer IDs as strings; normalize them
+            # consistently with the work projection without accepting booleans.
+            if type(raw_id) is int:
+                index_id = raw_id
+            elif isinstance(raw_id, str) and re.fullmatch(r"[0-9]+", raw_id.strip()):
+                index_id = int(raw_id)
+            else:
+                continue
+            if index_id == work_id:
+                return max(0, index + (relative_offset if relative_offset is not None else -(limit // 2)))
+        raise ModelMrWorkNotFound("这条学习记录对应的作品暂时不在资料库中。")
+
+    def works(self, *, limit: int = 40, offset: int = 0, around_id: int | None = None, relative_offset: int | None = None) -> dict[str, Any]:
         safe_limit = max(1, min(int(limit), 500))
         safe_offset = max(0, min(int(offset), 500_000))
+        if around_id is not None and (type(around_id) is not int or not 0 < around_id <= MAX_SAFE_INTEGER):
+            raise ValueError("作品编号无效。")
+        if relative_offset is not None and (around_id is None or type(relative_offset) is not int or not -500_000 <= relative_offset <= 500_000):
+            raise ValueError("相对分页位置无效。")
         try:
             # The original Windows sidecar has no offset parameter. Request the
             # smallest prefix needed for this page, then slice locally. The cloud
             # snapshot path below performs true page slicing without loading work
             # details, comments or media.
-            source_limit = min(safe_offset + safe_limit, 500)
+            source_limit = 500 if around_id is not None else min(safe_offset + safe_limit, 500)
             source = self._json(f"/api/videos?{urlencode({'limit': source_limit, 'account': '模型先生'})}")
         except ModelMrUnavailable:
             snapshot = self._require_snapshot()
             items = snapshot.get("works") if isinstance(snapshot.get("works"), list) else []
             public_items = [item for item in items if isinstance(item, dict)]
+            if around_id is not None:
+                safe_offset = min(len(public_items), self._around_offset(public_items, around_id, safe_limit, relative_offset))
             page = public_items[safe_offset : safe_offset + safe_limit]
             cleaned = [self._clean_snapshot_work(item) for item in page]
             total = len(public_items)
@@ -170,6 +214,20 @@ class ModelMrClient:
             }
         items = source.get("items") if isinstance(source.get("items"), list) else []
         cleaned_prefix = [self._clean_work(item) for item in items if isinstance(item, dict)]
+        if around_id is not None:
+            try:
+                safe_offset = self._around_offset(cleaned_prefix, around_id, safe_limit, relative_offset)
+            except ModelMrWorkNotFound as error:
+                try:
+                    source_has_more = int(source.get("total") or 0) > len(cleaned_prefix)
+                except (TypeError, ValueError):
+                    source_has_more = False
+                if len(cleaned_prefix) >= 500 or source_has_more:
+                    raise ModelMrUnavailable("本机服务仅支持定位前500条作品；这条作品需在完整云端资料库中定位。") from error
+                raise
+            if safe_offset >= 500:
+                raise ModelMrUnavailable("本机服务仅支持定位前500条作品；请在完整云端资料库中继续翻页。")
+            safe_offset = min(safe_offset, len(cleaned_prefix))
         cleaned = cleaned_prefix[safe_offset : safe_offset + safe_limit]
         source_total = source.get("total")
         try:

@@ -1,7 +1,7 @@
 import { instantApi } from './api';
 import { commentThreads, isAuthorComment, rankCommentThreads, threadHasAuthorInteraction, type ModelMrCommentThread } from './ModelMrComments';
 import type {
-  ModelMrChatConfig, ModelMrComment, ModelMrThoughtCategory, ModelMrWork, ModelMrWorkDetail, ModelMrProcessing,
+  ModelMrChatConfig, ModelMrComment, ModelMrThoughtCategory, ModelMrWork, ModelMrWorkDetail, ModelMrProcessing, ModelMrLearningState, ModelMrWorksPage,
 } from './types';
 
 type ModelMrTab = 'works' | 'thoughts' | 'chat';
@@ -13,10 +13,17 @@ export class ModelMrPanel {
   public readonly element: HTMLElement;
   private readonly body: HTMLElement;
   private readonly badge: HTMLElement;
+  private readonly learningToolbar: HTMLElement;
   private activeTab: ModelMrTab = 'works';
   private works: ModelMrWork[] = [];
   private totalWorks = 0;
   private nextWorksOffset = 0;
+  private firstWorksOffset = 0;
+  private worksWindow = false;
+  private worksRequest = 0;
+  private refreshRequest = 0;
+  private navigationRequest = 0;
+  private loadingPreviousWorks = false;
   private hasMoreWorks = false;
   private loadingMoreWorks = false;
   private worksLoadMessage = '';
@@ -48,6 +55,15 @@ export class ModelMrPanel {
   private processing: ModelMrProcessing | null = null;
   private processingBusy = false;
   private processingMessage = '';
+  private learning: ModelMrLearningState | null = null;
+  private learningLoading = false;
+  private learningRequest = 0;
+  private learningSavingId: number | null = null;
+  private learningLocating = false;
+  private learningMessage = '';
+  private learningError = '';
+  private learningFailedId: number | null = null;
+  private learningTarget: number | null = null;
 
   constructor() {
     this.element = document.createElement('article');
@@ -64,9 +80,12 @@ export class ModelMrPanel {
         <button type="button" data-model-tab="thoughts">投资思路</button>
         <button type="button" data-model-tab="chat">智能问答</button>
       </nav>
+      <section class="model-learning-toolbar" aria-label="学习标记"></section>
       <div class="panel-body model-mr-body"><div class="panel-message">正在连接模型先生主人资料库…</div></div>`;
     this.body = this.required('.model-mr-body');
     this.badge = this.required('.panel-count');
+    this.learningToolbar = this.required('.model-learning-toolbar');
+    this.renderLearningToolbar();
     this.element.addEventListener('click', (event) => void this.handleClick(event));
     this.element.addEventListener('submit', (event) => {
       if ((event.target as HTMLElement).id === 'modelMrThoughtSearch') {
@@ -82,28 +101,43 @@ export class ModelMrPanel {
   }
 
   async refresh(): Promise<void> {
+    const refresh = ++this.refreshRequest;
+    const request = this.worksRequest;
     const status = await instantApi.modelMrStatus();
+    if (refresh !== this.refreshRequest) return;
     this.available = status.available;
     if (!status.available) {
       this.badge.textContent = '未连接';
       if (!this.hasOpenVideo()) this.renderUnavailable(status.message);
       return;
     }
+    const windowStart = this.worksWindow ? this.works[0]?.id : undefined;
     const [works, thoughts, chatConfig, processing] = await Promise.all([
-      instantApi.modelMrWorks(MODEL_MR_WORK_PAGE_SIZE, 0), instantApi.modelMrThoughts(), instantApi.modelMrChatConfig(),
+      instantApi.modelMrWorks(windowStart === undefined ? MODEL_MR_WORK_PAGE_SIZE : Math.min(500, Math.max(MODEL_MR_WORK_PAGE_SIZE, this.works.length)), 0, windowStart, windowStart === undefined ? undefined : 0),
+      instantApi.modelMrThoughts(), instantApi.modelMrChatConfig(),
       instantApi.modelMrProcessing().catch(() => null),
+      this.refreshLearning(),
     ]);
-    if (this.works.length) {
-      const newestIds = new Set(works.items.map((work) => work.id));
-      this.works = [...works.items, ...this.works.filter((work) => !newestIds.has(work.id))];
-      this.nextWorksOffset = Math.max(this.nextWorksOffset, works.offset + works.count);
-    } else {
-      this.works = works.items;
-      this.nextWorksOffset = works.offset + works.count;
+    if (refresh !== this.refreshRequest) return;
+    if (request === this.worksRequest && !this.loadingMoreWorks && !this.loadingPreviousWorks && !this.learningLocating) {
+      if (this.worksWindow && this.works.length > works.count && works.has_more) {
+        const seen = new Set(works.items.map((work) => work.id));
+        this.works = [...works.items, ...this.works.filter((work) => !seen.has(work.id))];
+        this.firstWorksOffset = works.offset;
+        this.nextWorksOffset = works.offset + this.works.length;
+        this.totalWorks = works.total;
+        this.hasMoreWorks = this.nextWorksOffset < works.total;
+      } else if (this.worksWindow || !this.works.length) this.applyWorksPage(works);
+      else {
+        const newestIds = new Set(works.items.map((work) => work.id));
+        this.works = [...works.items, ...this.works.filter((work) => !newestIds.has(work.id))];
+        this.nextWorksOffset = this.works.length;
+        this.firstWorksOffset = 0;
+        this.totalWorks = Math.max(status.counts?.works ?? 0, works.total, this.works.length);
+        this.hasMoreWorks = this.nextWorksOffset < this.totalWorks || works.has_more;
+      }
+      this.worksLoadMessage = '';
     }
-    this.totalWorks = Math.max(status.counts?.works ?? 0, works.total, this.works.length);
-    this.hasMoreWorks = this.nextWorksOffset < this.totalWorks || works.has_more;
-    this.worksLoadMessage = '';
     this.thoughts = thoughts.categories;
     this.chatConfig = chatConfig;
     this.processing = processing;
@@ -126,6 +160,7 @@ export class ModelMrPanel {
   }
 
   private renderBackgroundUpdate(appendLoadedWorks = false): void {
+    this.updateLearningControls();
     if (!this.hasOpenVideo()) {
       this.renderActiveTab();
       return;
@@ -144,6 +179,7 @@ export class ModelMrPanel {
       });
     }
     loader.replaceWith(this.renderWorksLoader());
+    list.querySelector('.model-work-window')?.replaceWith(this.renderWorksWindow());
     this.observeWorksLoader();
   }
 
@@ -156,6 +192,12 @@ export class ModelMrPanel {
     }
     const action = target.closest<HTMLElement>('[data-model-action]');
     if (!action) return;
+    if (action instanceof HTMLButtonElement && action.disabled) return;
+    if (['thought-open', 'thought-back', 'thought-more', 'edit-title', 'cancel-title', 'edit-keywords', 'cancel-keywords', 'comment-tab', 'more-comments'].includes(action.dataset.modelAction || '')) this.navigationRequest++;
+    if (action.dataset.modelAction === 'learning-return') { await this.returnToLearning(); return; }
+    if (action.dataset.modelAction === 'learning-retry' || action.dataset.modelAction === 'learning-retry-work') { await this.refreshLearning(); return; }
+    if (action.dataset.modelAction === 'load-previous') { await this.loadPreviousWorks(); return; }
+    if (action.dataset.modelAction === 'works-latest') { await this.showLatestWorks(); return; }
     if (['processing', 'toggle-processing', 'retry-processing'].includes(action.dataset.modelAction || '')) {
       await this.updateProcessing(action.dataset.modelAction || '', Number(action.dataset.jobId || 0));
       return;
@@ -186,7 +228,8 @@ export class ModelMrPanel {
     const workId = Number(action.dataset.workId || 0);
     if (!workId) return;
     const command = action.dataset.modelAction;
-    if (command === 'open-detail') await this.openWorkDetail(workId, (action.dataset.detailTab || 'video') as WorkDetailTab);
+    if (command === 'toggle-learned') await this.toggleLearned(workId);
+    else if (command === 'open-detail') await this.openWorkDetail(workId, (action.dataset.detailTab || 'video') as WorkDetailTab);
     else if (command === 'detail-tab') this.setWorkDetailTab(workId, (action.dataset.detailTab || 'video') as WorkDetailTab);
     else if (command === 'close-detail') this.closeWorkDetail(workId);
     else if (command === 'save-text') await this.saveVideoText(workId);
@@ -204,6 +247,7 @@ export class ModelMrPanel {
   }
 
   private selectTab(tab: ModelMrTab): void {
+    this.navigationRequest++;
     this.worksObserver?.disconnect();
     this.activeTab = tab;
     this.element.querySelectorAll<HTMLElement>('[data-model-tab]').forEach((button) => {
@@ -232,11 +276,270 @@ export class ModelMrPanel {
     const list = document.createElement('div');
     list.className = 'model-work-list model-work-list-full';
     list.append(this.renderProcessing());
+    if (this.worksWindow) list.append(this.renderWorksWindow());
     this.works.forEach((work) => list.append(this.renderWorkCard(work)));
     if (!this.works.length) list.append(this.message('模型先生作品库当前没有可显示内容。'));
     else list.append(this.renderWorksLoader());
     this.body.replaceChildren(list);
     this.observeWorksLoader();
+  }
+
+  private acceptLearning(state: ModelMrLearningState): void {
+    // Reads started before a save (or in another tab) must never undo a newer revision.
+    if (!this.learning || state.revision >= this.learning.revision) this.learning = state;
+  }
+
+  private async refreshLearning(): Promise<void> {
+    const request = ++this.learningRequest;
+    this.learningLoading = true;
+    this.updateLearningControls();
+    try {
+      const state = await instantApi.modelMrLearning();
+      if (request !== this.learningRequest) return;
+      this.acceptLearning(state);
+      this.learningError = '';
+      this.learningFailedId = null;
+    } catch (error) {
+      if (request !== this.learningRequest) return;
+      this.learningError = error instanceof Error ? `学习标记读取失败：${error.message}` : '学习标记读取失败，请重试。';
+    } finally {
+      if (request === this.learningRequest) {
+        this.learningLoading = false;
+        this.updateLearningControls();
+      }
+    }
+  }
+
+  private async toggleLearned(workId: number): Promise<void> {
+    if (!this.learning || this.learningSavingId !== null || this.learningLoading || this.learningError) return;
+    this.navigationRequest++;
+    const learned = !this.learning.learned_work_ids.includes(workId);
+    const revision = this.learning.revision;
+    ++this.learningRequest;
+    this.learningSavingId = workId;
+    this.learningMessage = '';
+    this.learningError = '';
+    this.learningFailedId = null;
+    this.updateLearningControls();
+    try {
+      const state = await instantApi.saveModelMrLearned(workId, learned, revision);
+      this.acceptLearning(state);
+      this.learningMessage = learned ? '已标为已学，云端已保存。' : '已取消“已学”，云端已保存。';
+    } catch (error) {
+      const failure = error instanceof Error ? error.message : '网络异常';
+      // Re-read after conflicts and uncertain network results, never replay a write.
+      await this.refreshLearning();
+      this.learningError = `本次标记未确认保存：${failure}。${this.learningError ? '请重试读取后再操作。' : '已重新读取云端标记，请确认后再操作。'}`;
+      this.learningFailedId = workId;
+    } finally {
+      this.learningSavingId = null;
+      this.updateLearningControls();
+    }
+  }
+
+  private renderLearningToolbar(): void {
+    const summary = document.createElement('div');
+    summary.className = 'model-learning-summary';
+    const title = document.createElement('strong');
+    title.textContent = this.learning ? `已学 ${this.learning.learned_work_ids.length} 条` : '学习标记';
+    const status = document.createElement('p');
+    status.className = `model-learning-status${this.learningError ? ' is-error' : ''}`;
+    status.setAttribute('role', 'status');
+    if (this.learningError) status.textContent = this.learningError;
+    else if (this.learningLocating) status.textContent = '正在定位上次标记的作品…';
+    else if (this.learningSavingId !== null) status.textContent = '正在保存学习标记…';
+    else if (this.learningLoading && !this.learning) status.textContent = '正在读取云端学习标记…';
+    else if (this.learningMessage) status.textContent = this.learningMessage;
+    else if (this.learning?.last_work_id) {
+      const last = [...this.works, ...this.relatedWorks].find((work) => work.id === this.learning?.last_work_id);
+      status.textContent = last ? `上次标记：${last.title}` : '已记住上次标记的位置，点击即可回到那条作品。';
+    } else status.textContent = '学完一条后点“标为已学”，下次可直接回到最后一次标记的位置。';
+    summary.append(title, status);
+    const controls = document.createElement('div');
+    controls.className = 'model-learning-actions';
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.dataset.modelAction = 'learning-return';
+    back.textContent = this.learningLocating ? '定位中…' : '回到上次学习';
+    back.disabled = !this.learning?.last_work_id || this.learningLocating || this.learningSavingId !== null || this.loadingMoreWorks || this.loadingPreviousWorks;
+    controls.append(back);
+    if (this.learningError) {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.dataset.modelAction = 'learning-retry';
+      retry.textContent = this.learningLoading ? '读取中…' : '重新读取标记';
+      retry.disabled = this.learningLoading || this.learningSavingId !== null;
+      controls.append(retry);
+    }
+    this.learningToolbar.replaceChildren(summary, controls);
+  }
+
+  private updateLearnedButton(button: HTMLButtonElement, workId: number): void {
+    const learned = this.learning?.learned_work_ids.includes(workId) ?? false;
+    button.classList.toggle('is-learned', learned);
+    button.setAttribute('aria-pressed', String(learned));
+    button.textContent = this.learningSavingId === workId ? '保存中…' : learned ? '✓ 已学' : '标为已学';
+    button.title = learned ? '点击取消已学标记' : '标记为已学，并记住这条作品的位置';
+    button.disabled = !this.learning || this.learningSavingId !== null || this.learningLoading || !!this.learningError;
+  }
+
+  private updateLearningControls(): void {
+    this.renderLearningToolbar();
+    this.element.querySelectorAll<HTMLButtonElement>('button[data-model-action="toggle-learned"]').forEach((button) => {
+      this.updateLearnedButton(button, Number(button.dataset.workId));
+    });
+    this.element.querySelectorAll<HTMLElement>('.model-work-card').forEach((card) => {
+      this.updateLearningCardFeedback(card, Number(card.dataset.workId));
+    });
+  }
+
+  private updateLearningCardFeedback(card: HTMLElement, workId: number): void {
+    let feedback = card.querySelector<HTMLElement>('.model-learning-card-feedback');
+    if (this.learningFailedId !== workId || !this.learningError) { feedback?.remove(); return; }
+    if (!feedback) {
+      feedback = document.createElement('div');
+      feedback.className = 'model-learning-card-feedback';
+      feedback.setAttribute('role', 'status');
+      card.querySelector('.model-work-actions')?.after(feedback);
+    }
+    const message = document.createElement('p');
+    message.textContent = this.learningError;
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.dataset.modelAction = 'learning-retry-work';
+    retry.textContent = this.learningLoading ? '读取中…' : '重新读取标记';
+    retry.disabled = this.learningLoading || this.learningSavingId !== null;
+    feedback.replaceChildren(message, retry);
+  }
+
+  private applyWorksPage(page: ModelMrWorksPage): void {
+    this.works = page.items;
+    this.firstWorksOffset = page.offset;
+    this.nextWorksOffset = page.offset + page.count;
+    this.totalWorks = page.total;
+    this.hasMoreWorks = page.has_more;
+    this.worksLoadMessage = '';
+  }
+
+  private focusLearningWork(workId: number): void {
+    this.learningTarget = workId;
+    this.element.querySelectorAll<HTMLElement>('.model-work-card').forEach((card) => {
+      card.classList.toggle('is-learning-target', Number(card.dataset.workId) === workId);
+    });
+    requestAnimationFrame(() => {
+      const card = this.body.querySelector<HTMLElement>(`.model-work-card[data-work-id="${workId}"]`);
+      if (!card) return;
+      card.tabIndex = -1;
+      card.focus({ preventScroll: true });
+      card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  }
+
+  private async returnToLearning(): Promise<void> {
+    const workId = this.learning?.last_work_id;
+    if (!workId || this.learningLocating || this.learningSavingId !== null || this.loadingMoreWorks || this.loadingPreviousWorks) return;
+    if (this.activeTab === 'works' && this.body.querySelector(`.model-work-card[data-work-id="${workId}"]`)) {
+      this.focusLearningWork(workId);
+      return;
+    }
+    const request = ++this.worksRequest;
+    const navigation = ++this.navigationRequest;
+    this.learningLocating = true;
+    this.learningError = '';
+    this.updateLearningControls();
+    try {
+      const page = await instantApi.modelMrWorks(MODEL_MR_WORK_PAGE_SIZE, 0, workId);
+      if (request !== this.worksRequest || navigation !== this.navigationRequest) return;
+      if (!page.items.some((work) => work.id === workId)) throw new Error('这条作品暂时不可用，学习标记仍保留。');
+      this.details.clear();
+      this.applyWorksPage(page);
+      this.worksWindow = true;
+      this.selectTab('works');
+      this.focusLearningWork(workId);
+    } catch (error) {
+      if (request === this.worksRequest && navigation === this.navigationRequest) {
+        this.learningError = error instanceof Error ? `定位失败：${error.message}` : '定位失败，请稍后重试。';
+      }
+    } finally {
+      if (request === this.worksRequest) this.learningLocating = false;
+      this.updateLearningControls();
+      this.body.querySelector('.model-work-window')?.replaceWith(this.renderWorksWindow());
+      this.observeWorksLoader();
+    }
+  }
+
+  private renderWorksWindow(): HTMLElement {
+    const section = document.createElement('section');
+    section.className = 'model-work-window';
+    const text = document.createElement('p');
+    text.textContent = `当前位置：第 ${this.firstWorksOffset + 1}–${this.firstWorksOffset + this.works.length} 条 / 共 ${this.totalWorks} 条（按发布时间，新到旧）`;
+    section.append(text);
+    if (this.firstWorksOffset > 0) {
+      const previous = document.createElement('button');
+      previous.type = 'button'; previous.dataset.modelAction = 'load-previous';
+      previous.textContent = this.loadingPreviousWorks ? '加载中…' : '加载前面的较新作品';
+      previous.disabled = this.loadingPreviousWorks || this.loadingMoreWorks || this.learningLocating;
+      section.append(previous);
+    }
+    const latest = document.createElement('button');
+    latest.type = 'button'; latest.dataset.modelAction = 'works-latest';
+    latest.textContent = '回到最新发布';
+    latest.disabled = this.loadingPreviousWorks || this.loadingMoreWorks || this.learningLocating;
+    section.append(latest);
+    return section;
+  }
+
+  private async showLatestWorks(): Promise<void> {
+    if (this.learningLocating || this.loadingMoreWorks || this.loadingPreviousWorks) return;
+    const request = ++this.worksRequest;
+    const navigation = ++this.navigationRequest;
+    this.learningLocating = true;
+    this.updateLearningControls();
+    try {
+      const page = await instantApi.modelMrWorks(MODEL_MR_WORK_PAGE_SIZE, 0);
+      if (request !== this.worksRequest || navigation !== this.navigationRequest) return;
+      this.details.clear();
+      this.applyWorksPage(page);
+      this.worksWindow = false;
+      this.learningTarget = null;
+      this.selectTab('works');
+      this.learningToolbar.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    } catch (error) {
+      if (request === this.worksRequest) this.learningError = error instanceof Error ? error.message : '作品读取失败，请重试。';
+    } finally {
+      if (request === this.worksRequest) this.learningLocating = false;
+      this.updateLearningControls();
+      this.body.querySelector('.model-work-window')?.replaceWith(this.renderWorksWindow());
+      this.observeWorksLoader();
+    }
+  }
+
+  private async loadPreviousWorks(): Promise<void> {
+    if (this.activeTab !== 'works' || this.loadingPreviousWorks || this.loadingMoreWorks || this.learningLocating || !this.firstWorksOffset) return;
+    const firstId = this.works[0]?.id;
+    if (!firstId) return;
+    const request = ++this.worksRequest;
+    this.loadingPreviousWorks = true;
+    this.worksLoadMessage = '';
+    this.renderBackgroundUpdate();
+    try {
+      const page = await instantApi.modelMrWorks(MODEL_MR_WORK_PAGE_SIZE, 0, firstId, -MODEL_MR_WORK_PAGE_SIZE);
+      if (request !== this.worksRequest) return;
+      const loadedIds = new Set(this.works.map((work) => work.id));
+      const additions = page.items.filter((work) => !loadedIds.has(work.id));
+      this.works = [...additions, ...this.works];
+      this.firstWorksOffset = page.offset;
+      this.nextWorksOffset = this.firstWorksOffset + this.works.length;
+      this.totalWorks = page.total;
+      // Prepend new siblings in place, including when a video is mounted.
+      const firstCard = this.body.querySelector('.model-work-card');
+      if (this.activeTab === 'works' && firstCard) additions.forEach((work) => firstCard.before(this.renderWorkCard(work)));
+    } catch (error) {
+      if (request === this.worksRequest) this.worksLoadMessage = error instanceof Error ? `加载失败：${error.message}` : '加载失败，请重试。';
+    } finally {
+      if (request === this.worksRequest) this.loadingPreviousWorks = false;
+      this.renderBackgroundUpdate();
+    }
   }
 
   private renderProcessing(): HTMLElement {
@@ -316,8 +619,8 @@ export class ModelMrPanel {
     const status = document.createElement('p');
     if (this.worksLoadMessage) status.textContent = this.worksLoadMessage;
     else if (this.loadingMoreWorks) status.textContent = '正在加载更早的作品…';
-    else if (this.hasMoreWorks) status.textContent = `已显示 ${this.works.length} / ${this.totalWorks} 部，继续向下滑自动加载`;
-    else status.textContent = `已显示全部 ${this.works.length} 部作品`;
+    else if (this.hasMoreWorks) status.textContent = `当前显示 ${this.works.length} / ${this.totalWorks} 部，继续向下滑自动加载更早作品`;
+    else status.textContent = this.firstWorksOffset ? `已到最早作品；当前显示 ${this.works.length} / ${this.totalWorks} 部` : `已显示全部 ${this.works.length} 部作品`;
     loader.append(status);
     if (this.hasMoreWorks) {
       const button = document.createElement('button');
@@ -333,7 +636,7 @@ export class ModelMrPanel {
   private observeWorksLoader(): void {
     this.worksObserver?.disconnect();
     this.worksObserver = null;
-    if (!this.hasMoreWorks || this.loadingMoreWorks || !('IntersectionObserver' in window)) return;
+    if (!this.hasMoreWorks || this.loadingMoreWorks || this.loadingPreviousWorks || this.learningLocating || !('IntersectionObserver' in window)) return;
     const trigger = this.element.querySelector<HTMLElement>('[data-model-load-trigger]');
     if (!trigger) return;
     this.worksObserver = new IntersectionObserver((entries) => {
@@ -343,12 +646,15 @@ export class ModelMrPanel {
   }
 
   private async loadMoreWorks(): Promise<void> {
-    if (this.activeTab !== 'works' || this.loadingMoreWorks || !this.hasMoreWorks) return;
+    if (this.activeTab !== 'works' || this.loadingMoreWorks || this.loadingPreviousWorks || this.learningLocating || !this.hasMoreWorks) return;
+    const request = ++this.worksRequest;
     this.loadingMoreWorks = true;
     this.worksLoadMessage = '';
     this.renderBackgroundUpdate();
     try {
-      const page = await instantApi.modelMrWorks(MODEL_MR_WORK_PAGE_SIZE, this.nextWorksOffset);
+      const lastId = this.worksWindow ? this.works[this.works.length - 1]?.id : undefined;
+      const page = await instantApi.modelMrWorks(MODEL_MR_WORK_PAGE_SIZE, this.nextWorksOffset, lastId, lastId === undefined ? undefined : 1);
+      if (request !== this.worksRequest) return;
       const loadedIds = new Set(this.works.map((work) => work.id));
       page.items.forEach((work) => {
         if (!loadedIds.has(work.id)) this.works.push(work);
@@ -358,9 +664,9 @@ export class ModelMrPanel {
       this.hasMoreWorks = page.count > 0 && (page.has_more || this.nextWorksOffset < this.totalWorks);
       if (!page.count) this.worksLoadMessage = '没有读取到更多作品，请稍后再试。';
     } catch (error) {
-      this.worksLoadMessage = error instanceof Error ? `加载失败：${error.message}` : '加载失败，请稍后重试。';
+      if (request === this.worksRequest) this.worksLoadMessage = error instanceof Error ? `加载失败：${error.message}` : '加载失败，请稍后重试。';
     } finally {
-      this.loadingMoreWorks = false;
+      if (request === this.worksRequest) this.loadingMoreWorks = false;
       this.renderBackgroundUpdate(true);
     }
   }
@@ -369,6 +675,7 @@ export class ModelMrPanel {
     const card = document.createElement('article');
     card.className = 'model-work-card model-work-card-full';
     card.dataset.workId = String(work.id);
+    card.classList.toggle('is-learning-target', this.learningTarget === work.id);
     const heading = document.createElement('div');
     heading.className = 'model-work-heading';
     const titleGroup = document.createElement('div');
@@ -422,6 +729,10 @@ export class ModelMrPanel {
     }
     const actions = document.createElement('div');
     actions.className = 'model-work-actions';
+    const learned = this.actionButton('标为已学', work.id, 'toggle-learned');
+    learned.classList.add('model-learned-toggle');
+    this.updateLearnedButton(learned, work.id);
+    actions.append(learned);
     if (work.media_available) actions.append(this.actionButton(isImagePost ? '查看图文原图' : '播放本地视频', work.id, 'open-detail', 'video', true));
     actions.append(this.actionButton(isImagePost ? '图文正文' : '视频原文', work.id, 'open-detail', 'text'));
     actions.append(this.actionButton(`评论 ${work.comment_count || ''}`.trim(), work.id, 'open-detail', 'comments'));
@@ -437,6 +748,7 @@ export class ModelMrPanel {
       actions.append(link);
     }
     card.append(actions);
+    this.updateLearningCardFeedback(card, work.id);
     const detail = this.details.get(work.id);
     if (detail) card.append(this.renderWorkDetail(detail));
     else {
@@ -452,6 +764,7 @@ export class ModelMrPanel {
   }
 
   private async openWorkDetail(workId: number, tab: WorkDetailTab): Promise<void> {
+    this.navigationRequest++;
     this.detailTabs.set(workId, tab);
     const loadingDetail = !this.details.has(workId);
     if (loadingDetail) {
@@ -474,11 +787,13 @@ export class ModelMrPanel {
   }
 
   private closeWorkDetail(workId: number): void {
+    this.navigationRequest++;
     this.details.delete(workId);
     this.renderWorks();
   }
 
   private setWorkDetailTab(workId: number, tab: WorkDetailTab): void {
+    this.navigationRequest++;
     this.detailTabs.set(workId, tab);
     this.renderWorks();
   }

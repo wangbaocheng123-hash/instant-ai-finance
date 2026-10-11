@@ -1,7 +1,7 @@
 import type {
   AppStatus, AuthLoginResult, AuthStatus, BloggerCreatorsResponse, BloggerCreatorWorksResponse,
   BloggerLibraryStatus, BloggerWorkDetail, FinanceItem, FinanceItemDetail, ModelMrChatConfig, ModelMrChatResult,
-  ModelMrStatus, ModelMrThoughtCategory, ModelMrTranscriptionResult, ModelMrWork, ModelMrWorkDetail,
+  ModelMrStatus, ModelMrThoughtCategory, ModelMrTranscriptionResult, ModelMrWorkDetail, ModelMrLearningState, ModelMrWorksPage,
   ReaderTranslationResult, SourceStatus,
   TranslationBatchResult, TranslationStatus,
   WatchEventsResponse,
@@ -76,13 +76,16 @@ export const instantApi = {
     method: 'POST', body: JSON.stringify({ text }),
   }),
   modelMrStatus: () => request<ModelMrStatus>('/api/model-mr/status'),
-  modelMrWorks: (limit = 24, offset = 0) => request<{
-    items: ModelMrWork[];
-    count: number;
-    total: number;
-    offset: number;
-    has_more: boolean;
-  }>(`/api/model-mr/works?limit=${limit}&offset=${offset}`),
+  modelMrWorks: (limit = 24, offset = 0, aroundId?: number, relativeOffset?: number) => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (aroundId !== undefined) params.set('around_id', String(aroundId));
+    if (relativeOffset !== undefined) params.set('relative_offset', String(relativeOffset));
+    return request<ModelMrWorksPage>(`/api/model-mr/works?${params}`);
+  },
+  modelMrLearning: () => request<ModelMrLearningState>('/api/model-mr/learning'),
+  saveModelMrLearned: (id: number, learned: boolean, revision: number) => request<ModelMrLearningState>(`/api/model-mr/works/${id}/learned`, {
+    method: 'POST', body: JSON.stringify({ learned, expected_revision: revision }),
+  }),
   modelMrWork: (id: number) => request<ModelMrWorkDetail>(`/api/model-mr/works/${id}`),
   modelMrProcessing: () => request<import('./types').ModelMrProcessing>('/api/model-mr/processing'),
   setModelMrProcessing: (enabled: boolean) => request<import('./types').ModelMrProcessing>('/api/model-mr/processing', {

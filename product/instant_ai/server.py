@@ -42,7 +42,8 @@ from .reader_translation import translate_reader_item
 from .translation import translate_items, translation_status
 from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 from .watch_events import list_watch_events, refresh_watch_events
-from .model_mr import MODEL_MR, ModelMrUnavailable
+from .model_mr import MODEL_MR, ModelMrUnavailable, ModelMrWorkNotFound
+from .model_mr_learning import ModelMrLearningConflict
 from .model_mr_transfer import MODEL_MR_TRANSFER_PROJECTOR
 from .model_mr_processing import MODEL_MR_PROCESSOR
 from .blogger_http import BloggerTransferHTTP
@@ -888,12 +889,23 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             self._json(MODEL_MR.status())
         elif path == "/api/model-mr/processing":
             self._json(MODEL_MR_PROCESSOR.status())
+        elif path == "/api/model-mr/learning":
+            try:
+                self._json(MODEL_MR.learning())
+            except ModelMrUnavailable as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
         elif path == "/api/model-mr/works":
             try:
-                limit = int(query.get("limit", ["40"])[0])
+                around_id = int(query["around_id"][0]) if "around_id" in query else None
+                relative_offset = int(query["relative_offset"][0]) if "relative_offset" in query else None
+                limit = int(query.get("limit", ["24" if around_id is not None else "40"])[0])
                 offset = int(query.get("offset", ["0"])[0])
-                self._json(MODEL_MR.works(limit=limit, offset=offset))
-            except (ValueError, ModelMrUnavailable) as error:
+                self._json(MODEL_MR.works(limit=limit, offset=offset, around_id=around_id, relative_offset=relative_offset))
+            except ModelMrWorkNotFound as error:
+                self._json({"error": str(error)}, HTTPStatus.NOT_FOUND)
+            except ValueError as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            except ModelMrUnavailable as error:
                 self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
         elif re.fullmatch(r"/api/model-mr/works/\d+/video", path):
             self._serve_model_mr_video(int(path.split("/")[4]))
@@ -1176,6 +1188,22 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                            if path.endswith("/retry") else MODEL_MR_PROCESSOR.set_enabled(payload.get("enabled")))
             except (ValueError, TypeError) as error:
                 self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+
+        model_learned_match = re.fullmatch(r"/api/model-mr/works/(\d+)/learned", path)
+        if model_learned_match:
+            try:
+                if not isinstance(payload, dict) or set(payload) != {"learned", "expected_revision"}:
+                    raise ValueError("请提交已学标记和当前版本。")
+                self._json(MODEL_MR.save_learned(int(model_learned_match.group(1)), payload["learned"], payload["expected_revision"]))
+            except ModelMrLearningConflict as error:
+                self._json({"error": str(error)}, HTTPStatus.CONFLICT)
+            except ModelMrWorkNotFound as error:
+                self._json({"error": str(error)}, HTTPStatus.NOT_FOUND)
+            except ValueError as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            except ModelMrUnavailable as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
             return
 
         model_work_match = re.fullmatch(r"/api/model-mr/works/(\d+)/(title|video-text|keywords|extract-keywords|transcribe|doubao-transcribe)", path)

@@ -90,6 +90,7 @@ async function mount(browser, compiled, media, kind, width) {
     if (p.endsWith('/status')) return json({ available: state.available, message: '合成连接暂时不可用',
       counts: { creators: 1, works: state.workPages, media: 1, transferring: 0, awaiting_asr_approval: 0, ready: 1, failed: 0 } });
     if (p.endsWith('/processing')) { state.reads.processing++; return json(processing(state, blogger)); }
+    if (p === '/api/model-mr/learning') return json({ revision: 0, learned_work_ids: [], last_work_id: null });
     if (p.endsWith('/chat/config')) return json({ enabled: false, models: [] });
     if (p.endsWith('/thoughts')) return json({ categories: [{ id: 1, name: '合成主题', description: '', level: 1, parent_id: null, video_count: 1 }] });
     if (p.endsWith('/creators')) return json({ items: [creator], count: 1 });
