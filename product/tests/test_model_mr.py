@@ -532,6 +532,32 @@ class ModelMrGatewayTests(unittest.TestCase):
         self.assertNotIn("primary_asset", cleaned)
         self.assertNotIn("source_path", str(cleaned))
 
+    def test_work_summary_keeps_only_https_douyin_links_and_supports_legacy_source_url(self) -> None:
+        expected = "https://www.douyin.com/video/778899?previous_page=web_code_link"
+        live = ModelMrClient._clean_work({"id": 1, "title": "合成作品", "source_url": expected})
+        snapshot = ModelMrClient._clean_snapshot_work(
+            {"id": 2, "title": "合成作品", "url": "javascript:alert(1)", "source_url": expected}
+        )
+        self.assertEqual(live["url"], expected)
+        self.assertEqual(snapshot["url"], expected)
+        self.assertEqual(
+            ModelMrClient._clean_snapshot_work({"id": 3, "url": "https://v.douyin.com/synthetic-share/"})["url"],
+            "https://v.douyin.com/synthetic-share/",
+        )
+        for unsafe in (
+            "http://www.douyin.com/video/1",
+            "https://douyin.com.example.test/video/1",
+            "https://example.test@www.douyin.com/video/1",
+            "https://www.douyin.com:444/video/1",
+            "https://www.douyin.com:not-a-port/video/1",
+            "javascript:alert(1)",
+            "data:text/html,unsafe",
+            "file:///tmp/private.json",
+            r"C:\private\source.json",
+        ):
+            with self.subTest(unsafe=unsafe):
+                self.assertEqual(ModelMrClient._clean_snapshot_work({"id": 3, "url": unsafe})["url"], "")
+
     def test_unavailable_sidecar_returns_a_safe_module_status(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             client = ModelMrClient("http://127.0.0.1:8787", Path(directory) / "missing.json")

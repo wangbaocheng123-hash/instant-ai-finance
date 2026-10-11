@@ -19,7 +19,7 @@ async function main() {
       page.on('pageerror', error => errors.push(error.message));
       const categories = [{ id: 1, name: '行业主题', level: 1, parent_id: null, description: '分类回归样例', video_count: 30 },
         { id: 2, name: '科技总论与自主可控', level: 2, parent_id: 1, description: '已有关键词与关联作品', video_count: 30 }];
-      const works = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, title: `回归样例作品 ${i + 1}`, description: '', url: '', published_at: '2026-09-01', media_available: true, video_url: `/media/model-mr/works/${i + 1}/video`, has_video_text: true, has_interpretation: true, comment_count: 0, keywords: ['科技股', '长期研究'], keyword_revision: 'revision1', keyword_info: { categories: { '行业与板块': ['科技股'], '投资战略、战术与选股方法': ['长期研究'] }, keywords: ['科技股', '长期研究'] } }));
+      const works = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, title: `回归样例作品 ${i + 1}`, description: '', url: `https://www.douyin.com/video/${7000000000000000000n + BigInt(i + 1)}`, published_at: '2026-09-01', work_type: 'video', media_available: true, video_available: true, video_url: `/media/model-mr/works/${i + 1}/video`, image_count: 0, image_urls: [], has_video_text: true, has_interpretation: true, comment_count: 0, keywords: ['科技股', '长期研究'], keyword_revision: 'revision1', keyword_info: { categories: { '行业与板块': ['科技股'], '投资战略、战术与选股方法': ['长期研究'] }, keywords: ['科技股', '长期研究'] } }));
       let keywordSaves = 0;
       await page.route('http://127.0.0.1:19846/**', async route => {
         const url = new URL(route.request().url());
@@ -27,9 +27,11 @@ async function main() {
         requests.push(pathname + url.search);
         const json = data => route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
         if (pathname === '/') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/styles.css"><body><main id="fixture"></main><script type="module">import {ModelMrPanel} from '/ModelMrPanel.js'; const panel=new ModelMrPanel(); document.querySelector('#fixture').append(panel.element);panel.element.hidden=false;await panel.refresh();window.ready=true;</script>` });
-        if (['/ModelMrPanel.js', '/ModelMrComments.js', '/api.js', '/styles.css'].includes(pathname)) return route.fulfill({ contentType: pathname.endsWith('.css') ? 'text/css' : 'text/javascript', body: fs.readFileSync(path.join(compiled, pathname.slice(1)), 'utf8') });
+        if (['/ModelMrPanel.js', '/ModelMrComments.js', '/api.js', '/ModelMrComments', '/api', '/styles.css'].includes(pathname)) return route.fulfill({ contentType: pathname.endsWith('.css') ? 'text/css' : 'text/javascript', body: fs.readFileSync(path.join(compiled, `${pathname.slice(1)}${pathname === '/api' || pathname === '/ModelMrComments' ? '.js' : ''}`), 'utf8') });
         if (pathname.endsWith('/status')) return json({ available: true, counts: { works: 30, media: 30 } });
         if (pathname.endsWith('/chat/config')) return json({ enabled: false, models: [], message: '测试不调用 AI' });
+        if (pathname.endsWith('/processing')) return json(null);
+        if (pathname.endsWith('/learning')) return json({ revision: 0, learned_work_ids: [], last_work_id: null });
         if (pathname.endsWith('/thoughts')) return json({ categories, count: 2 });
         if (pathname.endsWith('/works')) {
           const offset = Number(url.searchParams.get('offset'));

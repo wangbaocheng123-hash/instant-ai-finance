@@ -43,6 +43,29 @@ def _clean_title_confidence(value: object) -> float | None:
         return None
 
 
+def _clean_douyin_url(*values: object) -> str:
+    """Return the first owner-safe Douyin HTTPS URL, including legacy source_url."""
+    for value in values:
+        candidate = str(value or "").strip()
+        if not candidate:
+            continue
+        try:
+            parsed = urlparse(candidate)
+            port = parsed.port
+        except ValueError:
+            continue
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        if (
+            parsed.scheme == "https"
+            and parsed.username is None
+            and parsed.password is None
+            and port in {None, 443}
+            and (hostname == "douyin.com" or hostname.endswith(".douyin.com"))
+        ):
+            return candidate
+    return ""
+
+
 def _default_snapshot_path() -> Path:
     return Path(
         os.environ.get(
@@ -926,6 +949,9 @@ class ModelMrClient:
                 for index, item in enumerate(comments, start=1)
                 if isinstance(item, dict)
             ]
+            safe_source_url = _clean_douyin_url(source_url, previous_work.get("url")) or (
+                f"https://www.douyin.com/{'note' if normalized_work_type != 'video' else 'video'}/{source_id}"
+            )
             work = {
                 "id": work_id,
                 "title": active_title,
@@ -933,11 +959,7 @@ class ModelMrClient:
                 "title_confidence": active_title_confidence,
                 "title_updated_at": active_title_updated_at,
                 "description": str(description or previous_work.get("description") or ""),
-                "url": str(
-                    source_url
-                    or previous_work.get("url")
-                    or f"https://www.douyin.com/{'note' if normalized_work_type != 'video' else 'video'}/{source_id}"
-                ),
+                "url": safe_source_url,
                 "published_at": str(published_at or previous_work.get("published_at") or ""),
                 "work_type": normalized_work_type,
                 "has_video_text": bool(previous.get("video_text", {}).get("text")) if previous else False,
@@ -1520,7 +1542,7 @@ class ModelMrClient:
             "title_confidence": _clean_title_confidence(item.get("title_confidence")),
             "title_updated_at": str(item.get("title_updated_at") or ""),
             "description": description,
-            "url": str(item.get("url") or ""),
+            "url": _clean_douyin_url(item.get("url"), item.get("source_url")),
             "published_at": str(item.get("published_at") or item.get("discovered_at") or ""),
             "has_video_text": bool(item.get("has_video_text")),
             "has_interpretation": bool(item.get("has_interpretation")),
@@ -1566,7 +1588,7 @@ class ModelMrClient:
             "title_confidence": _clean_title_confidence(item.get("title_confidence")),
             "title_updated_at": str(item.get("title_updated_at") or ""),
             "description": str(item.get("description") or ""),
-            "url": str(item.get("url") or ""),
+            "url": _clean_douyin_url(item.get("url"), item.get("source_url")),
             "published_at": str(item.get("published_at") or ""),
             "has_video_text": bool(item.get("has_video_text")),
             "has_interpretation": bool(item.get("has_interpretation")),

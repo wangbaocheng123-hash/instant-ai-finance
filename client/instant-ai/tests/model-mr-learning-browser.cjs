@@ -27,6 +27,10 @@ function fixture() {
     ids: Array.from({ length: 750 }, (_, index) => 750 - index),
     learning: { revision: 0, learned_work_ids: [], last_work_id: null },
     markOrder: [],
+    // An explicit map entry overrides the ordinary trusted Douyin fixture URL.
+    // Empty or unsafe overrides exercise the unavailable state without ever
+    // navigating away from this synthetic browser origin.
+    listUrls: new Map(), detailUrls: new Map(),
     requests: [], unexpected: [], failedWrites: 0, failedReads: 0,
     holdWrite: null, holdRead: null, holdWorks: null,
   };
@@ -44,9 +48,18 @@ function setLearned(state, id, learned = true) {
   };
 }
 
-function work(id) {
+function originalUrl(id) {
+  return `https://www.douyin.com/video/${7000000000000000000n + BigInt(id)}`;
+}
+
+function selectedUrl(overrides, id) {
+  return overrides.has(id) ? overrides.get(id) : originalUrl(id);
+}
+
+function work(id, url = originalUrl(id)) {
   return {
     id, title: `合成学习作品 ${id}`, description: '', work_type: 'video', title_source: 'source',
+    url,
     published_at: new Date(Date.UTC(2026, 9, 11) - (750 - id) * 86400000).toISOString(),
     captured_at: '2026-10-11T08:00:00+08:00', media_available: true, video_available: true,
     video_url: `/media/model-mr/works/${id}/video`, image_urls: [], image_count: 0,
@@ -126,7 +139,7 @@ async function mount(browser, compiled, media, width, state = fixture()) {
       if (around && index < 0) return json({ error: '上次学习的作品暂不可用' }, 404);
       const relative = url.searchParams.has('relative_offset') ? Number(url.searchParams.get('relative_offset')) : -Math.floor(limit / 2);
       const offset = around ? Math.max(0, index + relative) : Number(url.searchParams.get('offset') || 0);
-      const items = state.ids.slice(offset, offset + limit).map(work);
+      const items = state.ids.slice(offset, offset + limit).map(id => work(id, selectedUrl(state.listUrls, id)));
       const snapshot = { items, count: items.length, total: state.ids.length, offset, has_more: offset + items.length < state.ids.length };
       const gate = state.holdWorks;
       state.holdWorks = null;
@@ -134,9 +147,12 @@ async function mount(browser, compiled, media, width, state = fixture()) {
       return json(snapshot);
     }
     const detail = p.match(/^\/api\/model-mr\/works\/(\d+)$/);
-    if (detail) return json({ work: work(Number(detail[1])), video_text: { text: '合成原文，不调用任何模型。', official: true },
+    if (detail) {
+      const id = Number(detail[1]);
+      return json({ work: work(id, selectedUrl(state.detailUrls, id)), video_text: { text: '合成原文，不调用任何模型。', official: true },
       interpretation: { text: '' }, transcripts: [], comments: [], comment_total: 0,
       stock_mentions: { items: [], stock_count: 0, total_comments: 0, uncertain: [] }, capabilities: { video: true } });
+    }
     state.unexpected.push(`${method} ${p}`);
     return json({ error: `Unexpected synthetic request: ${method} ${p}` }, 500);
   });
@@ -169,8 +185,47 @@ async function renderedIds(page) {
   return page.locator('.model-work-list-full > .model-work-card').evaluateAll(cards => cards.map(item => Number(item.dataset.workId)));
 }
 
+function cardOriginalLink(page, id) {
+  return page.locator(`${card(id)} > .model-work-actions .model-original-link`);
+}
+
+function detailOriginalLink(page, id) {
+  return page.locator(`${card(id)} .model-detail-source .model-original-link`);
+}
+
+async function assertAvailableOriginalLink(locator, expectedUrl, label) {
+  await locator.waitFor();
+  assert.equal(await locator.count(), 1, `${label}: render one stable original-link control`);
+  assert.equal(await locator.evaluate(element => element.tagName), 'A', `${label}: available source is a real link`);
+  assert.equal(await locator.innerText(), '打开抖音原作品', `${label}: use the explicit source label`);
+  assert.equal(await locator.getAttribute('href'), expectedUrl, `${label}: preserve the verified Douyin URL`);
+  assert.equal(await locator.getAttribute('target'), '_blank', `${label}: keep the owner workspace open`);
+  const rel = (await locator.getAttribute('rel') || '').split(/\s+/);
+  assert.ok(rel.includes('noopener') && rel.includes('noreferrer'), `${label}: isolate the external page`);
+  assert.equal(await locator.getAttribute('aria-disabled'), null, `${label}: available links are not disabled`);
+}
+
+async function assertUnavailableOriginalLink(locator, label) {
+  await locator.waitFor();
+  assert.equal(await locator.count(), 1, `${label}: never silently remove the source position`);
+  assert.equal(await locator.innerText(), '抖音原链接暂缺', `${label}: explain why navigation is unavailable`);
+  assert.equal(await locator.getAttribute('aria-disabled'), 'true', `${label}: unavailable state is exposed accessibly`);
+  assert.equal(await locator.getAttribute('href'), null, `${label}: unavailable state cannot navigate`);
+  assert.equal(await locator.evaluate(element => element.classList.contains('is-unavailable')), true, `${label}: unavailable state has a stable visual class`);
+}
+
+async function assertInsideViewport(locator, width, label) {
+  await locator.scrollIntoViewIfNeeded();
+  const bounds = await locator.boundingBox();
+  assert.ok(bounds, `${label}: control has a rendered box`);
+  assert.ok(bounds.x >= -1 && bounds.x + bounds.width <= width + 1, `${label}: control fits the ${width}px viewport`);
+  if (width === 390) assert.ok(bounds.height >= 44, `${label}: mobile control keeps a 44px touch target`);
+}
+
 async function emptyAndMark(session) {
   const { page, state } = session;
+  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'ordinary list card');
+  await assertInsideViewport(cardOriginalLink(page, 750), session.width, 'ordinary list original link');
   assert.equal(await page.locator(action('learning-return')).isDisabled(), true);
   assert.equal(await page.locator(mark(750)).getAttribute('aria-pressed'), 'false');
   assert.equal(await page.locator('video').count(), 0);
@@ -214,6 +269,8 @@ async function farWindow(session) {
   const ids = await renderedIds(page);
   assert.equal(ids.length, 24, 'jump loads one bounded metadata page, not the entire history');
   assert.ok(ids.includes(119) && ids.includes(121), 'both neighboring works remain available');
+  await assertAvailableOriginalLink(cardOriginalLink(page, 120), originalUrl(120), 'deep learning target');
+  await assertInsideViewport(cardOriginalLink(page, 120), session.width, 'deep learning target original link');
   assert.equal(await page.evaluate(() => window.learningScrolls.at(-1)), 120);
   if (session.width === 390) {
     // Override smooth motion only for the capture; the ordinary jump was already asserted.
@@ -319,9 +376,12 @@ async function readFailure(session) {
 
 async function preserveVideo(session) {
   const { page, state } = session;
+  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'before opening video');
   await page.locator(`${action('open-detail')}[data-work-id="750"][data-detail-tab="video"]`).click();
   await page.locator('video').waitFor();
   await page.waitForFunction(() => document.querySelector('video').readyState >= 1);
+  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'card while video is open');
+  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'video detail source');
   await page.evaluate(async () => {
     const video = document.querySelector('video');
     window.originalVideo = video;
@@ -342,11 +402,69 @@ async function preserveVideo(session) {
   setLearned(state, 748);
   await page.evaluate(() => window.panel.refresh());
   await waitPressed(page, 748, true);
+  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'card after background refresh');
+  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'video detail after background refresh');
   assert.deepEqual(await page.evaluate(() => ({ same: document.querySelector('video') === window.originalVideo,
     connected: window.originalVideo.isConnected, paused: window.originalVideo.paused,
     removals: window.removals, srcChanges: window.srcChanges, loads: window.loads,
     progressed: window.originalVideo.currentTime >= 20 })),
   { same: true, connected: true, paused: false, removals: 0, srcChanges: 0, loads: 0, progressed: true });
+}
+
+async function detailFallbackOriginalLink(session) {
+  const { page, state } = session;
+  state.listUrls.set(750, '');
+  await page.evaluate(() => window.reopen());
+  await assertUnavailableOriginalLink(cardOriginalLink(page, 750), 'list metadata without a source URL');
+  await page.locator(`${action('open-detail')}[data-work-id="750"][data-detail-tab="video"]`).click();
+  await page.locator('video').waitFor();
+  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'detail URL repairs the card action');
+  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'detail URL supplies the video source action');
+  await assertInsideViewport(detailOriginalLink(page, 750), session.width, 'detail fallback original link');
+  await page.locator(`${action('detail-tab')}[data-work-id="750"][data-detail-tab="text"]`).click();
+  await page.locator(`${card(750)} .model-video-text-panel`).waitFor();
+  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'detail source remains visible on the text tab');
+  await page.evaluate(() => window.panel.refresh());
+  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'fallback card after background refresh');
+  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'fallback detail after background refresh');
+}
+
+async function unavailableOriginalLink(session) {
+  const { page, state } = session;
+  state.listUrls.set(750, '');
+  state.detailUrls.set(750, '');
+  // Unsafe URLs must be treated exactly like a missing URL. The page never
+  // follows either fixture value; this only exercises rendering validation.
+  const malicious = new Map([
+    [749, 'javascript:alert(1)'],
+    [748, 'data:text/html,unsafe'],
+    [747, 'file:///tmp/unsafe'],
+    [746, 'https://douyin.com.example/video/746'],
+  ]);
+  malicious.forEach((url, id) => {
+    state.listUrls.set(id, url);
+    state.detailUrls.set(id, url);
+  });
+  await page.evaluate(() => window.reopen());
+  await assertUnavailableOriginalLink(cardOriginalLink(page, 750), 'missing list and detail URL');
+  for (const [id] of malicious) await assertUnavailableOriginalLink(cardOriginalLink(page, id), `untrusted list URL ${id}`);
+  await assertInsideViewport(cardOriginalLink(page, 750), session.width, 'missing original-link notice');
+  await page.locator(`${action('open-detail')}[data-work-id="750"][data-detail-tab="video"]`).click();
+  await page.locator('video').waitFor();
+  await assertUnavailableOriginalLink(cardOriginalLink(page, 750), 'card remains unavailable after empty detail');
+  await assertUnavailableOriginalLink(detailOriginalLink(page, 750), 'video detail explains missing URL');
+  await page.locator(`${action('close-detail')}[data-work-id="750"]`).click();
+  await page.waitForFunction(() => !document.querySelector('[data-work-id="750"] .model-work-detail'));
+  for (const [id] of malicious) {
+    await page.locator(`${action('open-detail')}[data-work-id="${id}"][data-detail-tab="video"]`).click();
+    await page.locator(`${card(id)} video`).waitFor();
+    await assertUnavailableOriginalLink(cardOriginalLink(page, id), `card rejects untrusted detail URL ${id}`);
+    await assertUnavailableOriginalLink(detailOriginalLink(page, id), `detail rejects untrusted URL ${id}`);
+    await page.locator(`${action('close-detail')}[data-work-id="${id}"]`).click();
+    await page.waitForFunction(id => !document.querySelector(`[data-work-id="${id}"] .model-work-detail`), id);
+  }
+  assert.equal(await page.locator('.model-original-link[href]').count(), 19,
+    'only the other nineteen trusted cards remain navigable after the malicious URL matrix');
 }
 
 async function pendingPageNavigation(session) {
@@ -400,7 +518,7 @@ async function main() {
   let passed = 0, failed = 0;
   try {
     for (const width of [390, 1280]) {
-      for (const scenario of [emptyAndMark, persistAcrossPanels, farWindow, failedSave, conflictRefresh, pendingAndStaleRead, readFailure, preserveVideo, pendingPageNavigation, lateLocatorRespectsVideo]) {
+      for (const scenario of [emptyAndMark, persistAcrossPanels, farWindow, failedSave, conflictRefresh, pendingAndStaleRead, readFailure, preserveVideo, detailFallbackOriginalLink, unavailableOriginalLink, pendingPageNavigation, lateLocatorRespectsVideo]) {
         const session = await mount(browser, compiled, media, width);
         const label = `${scenario.name} ${width}`;
         try {

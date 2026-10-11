@@ -727,29 +727,21 @@ export class ModelMrPanel {
       description.textContent = work.description;
       card.append(description);
     }
+    const detail = this.details.get(work.id);
     const actions = document.createElement('div');
     actions.className = 'model-work-actions';
+    if (work.media_available) actions.append(this.actionButton(isImagePost ? '查看图文原图' : '播放本地视频', work.id, 'open-detail', 'video', true));
+    actions.append(this.originalLink(detail?.work.url, work.url));
     const learned = this.actionButton('标为已学', work.id, 'toggle-learned');
     learned.classList.add('model-learned-toggle');
     this.updateLearnedButton(learned, work.id);
     actions.append(learned);
-    if (work.media_available) actions.append(this.actionButton(isImagePost ? '查看图文原图' : '播放本地视频', work.id, 'open-detail', 'video', true));
     actions.append(this.actionButton(isImagePost ? '图文正文' : '视频原文', work.id, 'open-detail', 'text'));
     actions.append(this.actionButton(`评论 ${work.comment_count || ''}`.trim(), work.id, 'open-detail', 'comments'));
     actions.append(this.actionButton(`AI关键词 ${work.keywords.length}`, work.id, 'open-detail', 'keywords'));
     if (work.has_interpretation) actions.append(this.actionButton('解读感悟', work.id, 'open-detail', 'interpretation'));
-    if (work.url) {
-      const link = document.createElement('a');
-      link.className = 'model-original-link';
-      link.href = work.url;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.textContent = '抖音原链接';
-      actions.append(link);
-    }
     card.append(actions);
     this.updateLearningCardFeedback(card, work.id);
-    const detail = this.details.get(work.id);
     if (detail) card.append(this.renderWorkDetail(detail));
     else {
       const status = this.workMessages.get(work.id);
@@ -813,6 +805,10 @@ export class ModelMrPanel {
       tabs.append(button);
     });
     tabs.append(this.actionButton('收起', workId, 'close-detail'));
+    const source = document.createElement('div');
+    source.className = 'model-detail-source';
+    const listed = [...this.works, ...this.relatedWorks].find((work) => work.id === detail.work.id);
+    source.append(this.originalLink(detail.work.url, listed?.url, '打开抖音原作品'));
     const content = document.createElement('div');
     content.className = 'model-detail-content';
     if (tab === 'video') content.append(this.renderVideo(detail));
@@ -832,7 +828,7 @@ export class ModelMrPanel {
       message.textContent = status?.text || '正在处理…';
       content.append(message);
     }
-    shell.append(tabs, content);
+    shell.append(tabs, source, content);
     return shell;
   }
 
@@ -1574,6 +1570,40 @@ export class ModelMrPanel {
     if (primary) button.classList.add('is-primary');
     button.textContent = text;
     return button;
+  }
+
+  private originalLink(primary?: string, fallback?: string, label = '打开抖音原作品'): HTMLElement {
+    const url = this.cleanDouyinUrl(primary) || this.cleanDouyinUrl(fallback);
+    if (!url) {
+      const missing = document.createElement('span');
+      missing.className = 'model-original-link is-unavailable';
+      missing.setAttribute('aria-disabled', 'true');
+      missing.textContent = '抖音原链接暂缺';
+      return missing;
+    }
+    const link = document.createElement('a');
+    link.className = 'model-original-link';
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = label;
+    return link;
+  }
+
+  private cleanDouyinUrl(value?: string): string {
+    const candidate = value?.trim();
+    if (!candidate) return '';
+    try {
+      const parsed = new URL(candidate);
+      const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
+      return parsed.protocol === 'https:'
+        && !parsed.username
+        && !parsed.password
+        && (!parsed.port || parsed.port === '443')
+        && (hostname === 'douyin.com' || hostname.endsWith('.douyin.com')) ? candidate : '';
+    } catch {
+      return '';
+    }
   }
 
   private pill(text: string): HTMLElement {
