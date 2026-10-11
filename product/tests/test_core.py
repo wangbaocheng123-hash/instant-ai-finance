@@ -672,6 +672,7 @@ class RetentionTests(unittest.TestCase):
             recent = (current - timedelta(hours=2)).isoformat()
             ordinary_old = (current - timedelta(days=4)).isoformat()
             critical_old = (current - timedelta(days=8)).isoformat()
+            false_future = (current + timedelta(days=66)).isoformat()
             raw_old = raw_root / "old.xml"
             raw_recent = raw_root / "recent.xml"
             raw_old.write_text("old", encoding="utf-8")
@@ -714,9 +715,22 @@ class RetentionTests(unittest.TestCase):
                     """,
                     (recent, recent),
                 )
+                connection.execute(
+                    """
+                    INSERT INTO items(
+                        id, canonical_key, title, url, first_seen_at, last_seen_at,
+                        published_at, importance_score
+                    ) VALUES (5, 'false-future-sec',
+                              'Municipal Securities Underwriters Pay a Total of $325,000 in Fines',
+                              'https://www.sec.gov/newsroom/press-releases/97-114',
+                              ?, ?, ?, 68)
+                    """,
+                    (recent, recent, false_future),
+                )
 
             preview = retention_preview(path=path, now=current)
-            self.assertEqual(preview["would_remove"]["items"], 2)
+            self.assertEqual(preview["would_remove"]["items"], 3)
+            self.assertEqual(preview["policy"]["future_tolerance_hours"], 24)
             result = run_retention_cleanup(
                 path=path,
                 raw_root=raw_root,
@@ -730,7 +744,7 @@ class RetentionTests(unittest.TestCase):
                 evidence_count = connection.execute("SELECT COUNT(*) FROM evidence").fetchone()[0]
             self.assertEqual(remaining, [3])
             self.assertEqual(evidence_count, 1)
-            self.assertEqual(result["removed"]["items"], 3)
+            self.assertEqual(result["removed"]["items"], 4)
             self.assertEqual(result["removed"]["corrected_embedded_dates"], 1)
             self.assertFalse(raw_old.exists())
             self.assertTrue(raw_recent.exists())
@@ -739,6 +753,8 @@ class RetentionTests(unittest.TestCase):
         current = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
         self.assertTrue(published_within_hard_limit((current - timedelta(days=6)).isoformat(), current))
         self.assertFalse(published_within_hard_limit((current - timedelta(days=8)).isoformat(), current))
+        self.assertTrue(published_within_hard_limit((current + timedelta(hours=23)).isoformat(), current))
+        self.assertFalse(published_within_hard_limit((current + timedelta(days=2)).isoformat(), current))
 
 
 class ThumbnailTests(unittest.TestCase):
@@ -1056,7 +1072,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("url.pathname.startsWith('/media/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.27.1", worker)
+        self.assertIn("instant-ai-shell-v0.27.2", worker)
         self.assertIn("showNotification", worker)
         self.assertIn("notificationclick", worker)
         self.assertIn("手机通知", app)

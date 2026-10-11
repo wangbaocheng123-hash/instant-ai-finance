@@ -16,6 +16,7 @@ CRITICAL_TTL = timedelta(days=7)
 RUN_TTL = timedelta(days=7)
 MAX_EVIDENCE_PER_ITEM = 5
 MAX_BACKUPS = 3
+FUTURE_TOLERANCE = timedelta(days=1)
 
 
 def _iso(value: datetime) -> str:
@@ -34,6 +35,7 @@ def item_expiry_cutoffs(now: datetime | None = None) -> dict[str, str]:
         "important": _iso(current - IMPORTANT_TTL),
         "critical": _iso(current - CRITICAL_TTL),
         "runs": _iso(current - RUN_TTL),
+        "future": _iso(current + FUTURE_TOLERANCE),
     }
 
 
@@ -46,13 +48,15 @@ def published_within_hard_limit(published_at: str | None, now: datetime | None =
             published = published.replace(tzinfo=UTC)
     except ValueError:
         return True
-    return published.astimezone(UTC) >= _now(now) - CRITICAL_TTL
+    normalized = published.astimezone(UTC)
+    current = _now(now)
+    return current - CRITICAL_TTL <= normalized <= current + FUTURE_TOLERANCE
 
 
 def _expired_where() -> str:
     anchor = "COALESCE(published_at, first_seen_at)"
     return (
-        f"({anchor} < :critical OR "
+        f"({anchor} > :future OR {anchor} < :critical OR "
         f"(importance_score < 85 AND {anchor} < :important) OR "
         f"(importance_score < 70 AND {anchor} < :ordinary))"
     )
@@ -146,6 +150,7 @@ def retention_preview(
             "ordinary_hours": int(ORDINARY_TTL.total_seconds() // 3600),
             "important_days": IMPORTANT_TTL.days,
             "critical_days": CRITICAL_TTL.days,
+            "future_tolerance_hours": int(FUTURE_TOLERANCE.total_seconds() // 3600),
             "max_evidence_per_item": MAX_EVIDENCE_PER_ITEM,
             "max_backups": MAX_BACKUPS,
         },
