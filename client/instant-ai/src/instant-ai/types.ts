@@ -45,6 +45,9 @@ export interface SourceStatus {
   enabled: boolean;
   last_success_at: string | null;
   last_error: string | null;
+  last_attempt_at: string | null;
+  next_fetch_at: string | null;
+  failure_count: number;
   last_item_count: number;
   topic_hints: string[];
 }

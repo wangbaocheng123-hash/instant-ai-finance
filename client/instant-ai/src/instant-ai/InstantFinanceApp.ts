@@ -672,10 +672,19 @@ export class InstantFinanceApp {
     main.append(name, topics);
     const state = document.createElement('div');
     state.className = 'source-state';
-    state.textContent = source.last_error ? '异常' : source.last_success_at ? '正常' : '待运行';
+    const rateLimited = /(?:HTTP\s*429|429 Too Many Requests|上游限流)/iu.test(source.last_error || '');
+    state.textContent = rateLimited
+      ? '上游限流，自动退避'
+      : source.last_error
+        ? '异常，自动重试'
+        : source.last_success_at
+          ? '正常'
+          : '待运行';
     const info = document.createElement('small');
-    info.textContent = `可信 ${source.trust_level}/5 · 最近 ${source.last_item_count || 0} 条`;
+    const next = source.next_fetch_at ? ` · 下次 ${formatFullTime(source.next_fetch_at)}` : '';
+    info.textContent = `可信 ${source.trust_level}/5 · 最近 ${source.last_item_count || 0} 条${next}`;
     state.append(info);
+    if (source.last_error) row.title = source.last_error;
     row.append(main, state);
     return row;
   }

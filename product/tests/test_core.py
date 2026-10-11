@@ -506,6 +506,19 @@ class DatabaseTests(unittest.TestCase):
         self.assertTrue(stockplus["config"]["title_link_only"])
         self.assertTrue(stockplus["config"]["discovery_only"])
 
+    def test_cnbc_sources_are_direct_title_only_fallbacks(self) -> None:
+        sources = {source["key"]: source for source in DEFAULT_SOURCES}
+        top = sources["cnbc-top-news"]
+        finance = sources["cnbc-finance"]
+        self.assertEqual(top["url"], "https://www.cnbc.com/id/100003114/device/rss/rss.html")
+        self.assertEqual(finance["url"], "https://www.cnbc.com/id/10000664/device/rss/rss.html")
+        for source in (top, finance):
+            self.assertEqual(source["kind"], "rss")
+            self.assertEqual(source["trust_level"], 3)
+            self.assertTrue(source["config"]["title_link_only"])
+            self.assertEqual(source["config"]["rights_scope"], "title_date_link_only")
+            self.assertEqual(source["config"]["poll_interval_seconds"], 600)
+
     def test_schema_and_source_seed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "test.db"
@@ -515,7 +528,7 @@ class DatabaseTests(unittest.TestCase):
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             self.assertEqual(source_count, len(DEFAULT_SOURCES))
-            self.assertEqual(version, "12")
+            self.assertEqual(version, "13")
             with connect(path) as connection:
                 tables = {
                     row[0]
@@ -1043,7 +1056,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("url.pathname.startsWith('/media/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.27.0", worker)
+        self.assertIn("instant-ai-shell-v0.27.1", worker)
         self.assertIn("showNotification", worker)
         self.assertIn("notificationclick", worker)
         self.assertIn("手机通知", app)

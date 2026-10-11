@@ -7,6 +7,7 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .collectors import Entry, Source, collect_source
 from .database import connect, transaction, utc_now
@@ -23,6 +24,10 @@ from .web_push import WebPushSender, validate_endpoint, validate_subscription
 
 
 WEB_PUSH_SENDER = WebPushSender(LIBRARY_ROOT / "notifications" / "vapid-private.pem")
+DEFAULT_SOURCE_POLL_SECONDS = 5 * 60
+GOOGLE_NEWS_POLL_SECONDS = 60 * 60
+GOOGLE_NEWS_BATCH_PER_RUN = 1
+MAX_SOURCE_BACKOFF_SECONDS = 6 * 60 * 60
 
 
 def _source_from_row(row: sqlite3.Row) -> Source:
@@ -38,6 +43,84 @@ def _source_from_row(row: sqlite3.Row) -> Source:
         etag=row["etag"],
         last_modified=row["last_modified"],
     )
+
+
+def _source_from_mapping(row: sqlite3.Row | dict[str, Any]) -> Source:
+    if isinstance(row, sqlite3.Row):
+        return _source_from_row(row)
+    return Source(
+        id=int(row["id"]),
+        key=str(row["key"]),
+        name=str(row["name"]),
+        kind=str(row["kind"]),
+        url=str(row["url"]),
+        trust_level=int(row["trust_level"]),
+        topic_hints=json.loads(str(row["topic_hints_json"])),
+        config=json.loads(str(row["config_json"])),
+        etag=row.get("etag"),
+        last_modified=row.get("last_modified"),
+    )
+
+
+def _source_schedule(source: Source) -> tuple[str, int, int]:
+    """Return scheduling group, success interval, and per-run group limit."""
+
+    hostname = (urlsplit(source.url).hostname or "").lower()
+    configured = int(source.config.get("poll_interval_seconds", DEFAULT_SOURCE_POLL_SECONDS))
+    interval = min(max(configured, DEFAULT_SOURCE_POLL_SECONDS), 24 * 60 * 60)
+    if hostname == "news.google.com":
+        return "google-news", max(interval, GOOGLE_NEWS_POLL_SECONDS), GOOGLE_NEWS_BATCH_PER_RUN
+    return f"source:{source.id}", interval, 1
+
+
+def _parse_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=parsed.tzinfo or UTC).astimezone(UTC)
+
+
+def _select_due_source_rows(
+    rows: list[sqlite3.Row] | list[dict[str, Any]], now: datetime
+) -> tuple[list[sqlite3.Row | dict[str, Any]], int]:
+    """Select due sources while spreading shared upstream hosts across scheduler runs."""
+
+    normal: list[sqlite3.Row | dict[str, Any]] = []
+    grouped: dict[str, tuple[int, list[sqlite3.Row | dict[str, Any]]]] = {}
+    deferred = 0
+    for row in rows:
+        next_fetch = _parse_timestamp(row["next_fetch_at"])
+        if next_fetch is not None and next_fetch > now:
+            deferred += 1
+            continue
+        source = _source_from_mapping(row)
+        group, _interval, limit = _source_schedule(source)
+        if group.startswith("source:"):
+            normal.append(row)
+        else:
+            grouped.setdefault(group, (limit, []))[1].append(row)
+
+    selected = list(normal)
+    for limit, candidates in grouped.values():
+        candidates.sort(key=lambda row: (str(row["next_fetch_at"] or ""), int(row["id"])))
+        selected.extend(candidates[:limit])
+        deferred += max(0, len(candidates) - limit)
+    return selected, deferred
+
+
+def _next_source_fetch_at(now: datetime, seconds: int) -> str:
+    return (now + timedelta(seconds=seconds)).replace(microsecond=0).isoformat()
+
+
+def _source_failure_delay(source: Source, failure_count: int, error: Exception) -> int:
+    _group, interval, _limit = _source_schedule(source)
+    is_rate_limit = int(getattr(error, "code", 0) or 0) == 429
+    base = max(interval, GOOGLE_NEWS_POLL_SECONDS) if is_rate_limit else interval
+    multiplier = 2 ** min(max(failure_count - 1, 0), 6)
+    return min(base * multiplier, MAX_SOURCE_BACKOFF_SECONDS)
 
 
 def list_sources(enabled_only: bool = False) -> list[dict[str, Any]]:
@@ -258,6 +341,7 @@ def _upsert_entry(
 
 def run_collection() -> dict[str, Any]:
     started = utc_now()
+    started_at = datetime.fromisoformat(started).astimezone(UTC)
     with transaction() as connection:
         cursor = connection.execute(
             "INSERT INTO collection_runs(started_at, status) VALUES (?, 'running')",
@@ -267,12 +351,23 @@ def run_collection() -> dict[str, Any]:
 
     with connect() as connection:
         rows = connection.execute("SELECT * FROM sources WHERE enabled=1 ORDER BY trust_level DESC, id").fetchall()
-    sources = [_source_from_row(row) for row in rows]
-    totals = {"source_count": len(sources), "fetched_count": 0, "new_count": 0, "updated_count": 0, "error_count": 0}
+    due_rows, deferred_count = _select_due_source_rows(list(rows), started_at)
+    sources = [(_source_from_mapping(row), row) for row in due_rows]
+    totals = {
+        "source_count": len(rows),
+        "attempted_source_count": len(sources),
+        "deferred_source_count": deferred_count,
+        "fetched_count": 0,
+        "new_count": 0,
+        "updated_count": 0,
+        "error_count": 0,
+    }
     details: list[dict[str, Any]] = []
 
-    for source in sources:
+    for source, source_row in sources:
         source_detail: dict[str, Any] = {"source": source.name, "key": source.key}
+        _group, success_interval, _limit = _source_schedule(source)
+        next_success_at = _next_source_fetch_at(started_at, success_interval)
         try:
             result, entries, content_hash, raw_path = collect_source(source)
             if result.status == 304:
@@ -280,10 +375,11 @@ def run_collection() -> dict[str, Any]:
                     connection.execute(
                         """
                         UPDATE sources
-                        SET last_success_at=?, last_error=NULL, updated_at=?
+                        SET last_success_at=?, last_error=NULL, last_attempt_at=?,
+                            next_fetch_at=?, failure_count=0, updated_at=?
                         WHERE id=?
                         """,
-                        (utc_now(), utc_now(), source.id),
+                        (utc_now(), started, next_success_at, utc_now(), source.id),
                     )
                 source_detail.update(status="not_modified", items=0)
                 details.append(source_detail)
@@ -308,9 +404,13 @@ def run_collection() -> dict[str, Any]:
                 connection.execute(
                     """
                     UPDATE sources SET etag=?, last_modified=?, last_success_at=?,
-                        last_error=NULL, last_item_count=?, updated_at=? WHERE id=?
+                        last_error=NULL, last_item_count=?, last_attempt_at=?,
+                        next_fetch_at=?, failure_count=0, updated_at=? WHERE id=?
                     """,
-                    (result.etag, result.last_modified, utc_now(), len(entries), utc_now(), source.id),
+                    (
+                        result.etag, result.last_modified, utc_now(), len(entries), started,
+                        next_success_at, utc_now(), source.id,
+                    ),
                 )
             totals["fetched_count"] += len(entries)
             totals["new_count"] += new_count
@@ -321,12 +421,19 @@ def run_collection() -> dict[str, Any]:
         except Exception as error:  # source isolation is intentional
             totals["error_count"] += 1
             message = f"{type(error).__name__}: {error}"[:1000]
+            failure_count = int(source_row["failure_count"] or 0) + 1
+            retry_at = _next_source_fetch_at(
+                started_at, _source_failure_delay(source, failure_count, error)
+            )
             with transaction() as connection:
                 connection.execute(
-                    "UPDATE sources SET last_error=?, updated_at=? WHERE id=?",
-                    (message, utc_now(), source.id),
+                    """
+                    UPDATE sources SET last_error=?, last_attempt_at=?, next_fetch_at=?,
+                        failure_count=?, updated_at=? WHERE id=?
+                    """,
+                    (message, started, retry_at, failure_count, utc_now(), source.id),
                 )
-            source_detail.update(status="error", error=message)
+            source_detail.update(status="error", error=message, retry_at=retry_at)
         details.append(source_detail)
 
     status = "success" if totals["error_count"] == 0 else ("partial" if totals["fetched_count"] else "failed")
@@ -910,8 +1017,14 @@ def set_item_flag(item_id: int, field: str, value: bool) -> bool:
 def toggle_source(source_id: int, enabled: bool) -> bool:
     with transaction() as connection:
         cursor = connection.execute(
-            "UPDATE sources SET enabled=?, updated_at=? WHERE id=?",
-            (int(enabled), utc_now(), source_id),
+            """
+            UPDATE sources SET enabled=?, updated_at=?,
+                next_fetch_at=CASE WHEN ?=1 THEN NULL ELSE next_fetch_at END,
+                failure_count=CASE WHEN ?=1 THEN 0 ELSE failure_count END,
+                last_error=CASE WHEN ?=1 THEN NULL ELSE last_error END
+            WHERE id=?
+            """,
+            (int(enabled), utc_now(), int(enabled), int(enabled), int(enabled), source_id),
         )
     return cursor.rowcount > 0
 

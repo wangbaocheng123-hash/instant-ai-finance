@@ -162,7 +162,7 @@ class OfficialMonitorTests(unittest.TestCase):
                 self.assertIn("gtc berlin", signal["matched_terms_json"])
                 self.assertEqual(connection.execute(
                     "SELECT value FROM schema_meta WHERE key='schema_version'"
-                ).fetchone()[0], "12")
+                ).fetchone()[0], "13")
 
             sent: list[dict[str, object]] = []
 

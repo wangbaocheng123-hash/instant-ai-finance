@@ -13,7 +13,7 @@ from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensur
 from .publishers import resolve_publisher_identity
 
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -138,6 +138,40 @@ DEFAULT_SOURCES = (
         "trust_level": 5,
         "topic_hints": ["华尔街", "宏观政策"],
         "config": {"max_entries": 50},
+    },
+    {
+        "key": "cnbc-top-news",
+        "name": "CNBC 公开头条直连",
+        "kind": "rss",
+        "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+        "trust_level": 3,
+        "topic_hints": ["全球财经"],
+        "config": {
+            "max_entries": 50,
+            "discovery_only": True,
+            "title_link_only": True,
+            "publisher": "CNBC",
+            "publisher_url": "https://www.cnbc.com/",
+            "rights_scope": "title_date_link_only",
+            "poll_interval_seconds": 600,
+        },
+    },
+    {
+        "key": "cnbc-finance",
+        "name": "CNBC 金融市场直连",
+        "kind": "rss",
+        "url": "https://www.cnbc.com/id/10000664/device/rss/rss.html",
+        "trust_level": 3,
+        "topic_hints": ["全球财经", "华尔街"],
+        "config": {
+            "max_entries": 50,
+            "discovery_only": True,
+            "title_link_only": True,
+            "publisher": "CNBC",
+            "publisher_url": "https://www.cnbc.com/",
+            "rights_scope": "title_date_link_only",
+            "poll_interval_seconds": 600,
+        },
     },
     {
         "key": "global-financial-wire",
@@ -432,6 +466,9 @@ def initialize(path: Path | str | None = None) -> None:
                 last_success_at TEXT,
                 last_error TEXT,
                 last_item_count INTEGER NOT NULL DEFAULT 0,
+                last_attempt_at TEXT,
+                next_fetch_at TEXT,
+                failure_count INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -715,6 +752,20 @@ def initialize(path: Path | str | None = None) -> None:
             connection.execute("ALTER TABLE evidence ADD COLUMN publisher_name TEXT NOT NULL DEFAULT ''")
         if "publisher_url" not in evidence_columns:
             connection.execute("ALTER TABLE evidence ADD COLUMN publisher_url TEXT NOT NULL DEFAULT ''")
+        source_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(sources)").fetchall()
+        }
+        if "last_attempt_at" not in source_columns:
+            connection.execute("ALTER TABLE sources ADD COLUMN last_attempt_at TEXT")
+        if "next_fetch_at" not in source_columns:
+            connection.execute("ALTER TABLE sources ADD COLUMN next_fetch_at TEXT")
+        if "failure_count" not in source_columns:
+            connection.execute(
+                "ALTER TABLE sources ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0"
+            )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sources_due ON sources(enabled, next_fetch_at, id)"
+        )
         watch_channel_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(watch_event_channels)").fetchall()
         }
