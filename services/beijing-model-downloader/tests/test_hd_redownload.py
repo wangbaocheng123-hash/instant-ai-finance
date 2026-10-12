@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import queue
 import shutil
 import sqlite3
 import subprocess
@@ -18,7 +20,9 @@ COMPONENT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(COMPONENT))
 
 from douyin_core import (  # noqa: E402
+    DouyinResolver,
     ParseError,
+    douyin_work_id_from_url,
     inspect_mp4,
     probe_media_streams,
     source_quality_improves,
@@ -34,6 +38,30 @@ NOW = datetime(2026, 10, 12, 12, 0, tzinfo=timezone.utc)
 
 
 class SourceQualityCommandTests(unittest.TestCase):
+    def test_exact_work_id_accepts_path_and_profile_modal_only(self) -> None:
+        self.assertEqual(
+            VIDEO_ID,
+            douyin_work_id_from_url(
+                f"https://www.douyin.com/video/{VIDEO_ID}?previous_page=web"
+            ),
+        )
+        self.assertEqual(
+            VIDEO_ID,
+            douyin_work_id_from_url(
+                "https://www.douyin.com/user/creator?modal_id=" + VIDEO_ID
+            ),
+        )
+        self.assertEqual(
+            "",
+            douyin_work_id_from_url("https://www.douyin.com/jingxuan"),
+        )
+        self.assertEqual(
+            "",
+            douyin_work_id_from_url(
+                "https://example.test/video/" + VIDEO_ID
+            ),
+        )
+
     def test_source_quality_command_has_no_video_or_audio_reencoding(self) -> None:
         command = source_quality_video_command(
             "/usr/bin/ffmpeg",
@@ -119,6 +147,263 @@ class SourceQualityCommandTests(unittest.TestCase):
             (720, 1280),
         )
         self.assertTrue(output_inspection["fast_start"])
+
+
+class ExactProfileEntryTests(unittest.TestCase):
+    def test_resolver_rejects_response_without_post_barrier_request_id(self) -> None:
+        old_url = "https://v26-webf.douyinvod.com/old?type=video"
+        fresh_url = "https://v26-webf.douyinvod.com/fresh?type=video"
+
+        class CDP:
+            def __init__(self):
+                self.events = queue.Queue()
+                self.events.put(
+                    {
+                        "method": "Network.responseReceived",
+                        "params": {
+                            "requestId": "old-profile",
+                            "type": "Media",
+                            "response": {
+                                "url": old_url,
+                                "mimeType": "video/mp4",
+                                "headers": {"content-length": "999999"},
+                            },
+                        },
+                    }
+                )
+                self.events.put(
+                    {
+                        "method": "Network.requestWillBeSent",
+                        "params": {"requestId": "fresh-target"},
+                    }
+                )
+                self.events.put(
+                    {
+                        "method": "Network.responseReceived",
+                        "params": {
+                            "requestId": "fresh-target",
+                            "type": "Media",
+                            "response": {
+                                "url": fresh_url,
+                                "mimeType": "video/mp4",
+                                "headers": {"content-length": "1234"},
+                            },
+                        },
+                    }
+                )
+
+            def call(self, method, params=None):
+                if method == "Network.getAllCookies":
+                    return {"cookies": []}
+                return {}
+
+        cdp = CDP()
+        resolver = DouyinResolver.__new__(DouyinResolver)
+        resolver.cdp = cdp
+        resolver.cancel_event = threading.Event()
+        resolver.log = Mock()
+
+        def evaluate(expression):
+            if "JSON.stringify({url:location.href,title:document.title" in expression:
+                return json.dumps(
+                    {
+                        "url": f"https://www.douyin.com/video/{VIDEO_ID}",
+                        "title": "精确作品 - 抖音",
+                        "description": "",
+                        "og": "",
+                    }
+                )
+            if expression == "navigator.userAgent":
+                return "test-agent"
+            return ""
+
+        resolver._evaluate = evaluate
+        probe = Mock()
+        probe.status_code = 206
+        probe.headers = {"Content-Length": "1234"}
+        probe.__enter__ = Mock(return_value=probe)
+        probe.__exit__ = Mock(return_value=False)
+
+        with patch.object(resolver, "_start_chrome"), patch.object(
+            resolver,
+            "_open_exact_work_from_profile",
+            return_value=True,
+        ), patch("douyin_core.requests.get", return_value=probe):
+            result = resolver.resolve(
+                f"https://www.douyin.com/video/{VIDEO_ID}",
+                timeout=0.05,
+                profile_entry_url="https://www.douyin.com/user/creator",
+                expected_video_id=VIDEO_ID,
+            )
+
+        self.assertEqual(fresh_url, result.video_url)
+        self.assertEqual(1, result.candidate_count)
+
+    def test_exact_page_barrier_discards_late_profile_events_and_reloads_media(self) -> None:
+        class CDP:
+            def __init__(self):
+                self.events = queue.Queue()
+                self.events.put({"source": "profile-preview"})
+                self.calls = []
+
+            def call(self, method, params=None):
+                self.calls.append((method, params or {}))
+                if method == "Network.disable":
+                    # Simulate profile responses that arrive after the click
+                    # but before the exact-page event fence is established.
+                    self.events.put({"source": "late-profile-request"})
+                    self.events.put({"source": "late-profile-response"})
+                return {}
+
+        cdp = CDP()
+        logs = []
+        resolver = DouyinResolver.__new__(DouyinResolver)
+        resolver.cdp = cdp
+        resolver.debug_port = None
+        resolver.cancel_event = threading.Event()
+        resolver.log = logs.append
+
+        def evaluate(expression):
+            if expression == "location.href":
+                return f"https://www.douyin.com/video/{VIDEO_ID}"
+            if ".some(visible)" in expression:
+                return True
+            if "link.click()" in expression:
+                return True
+            if "video.load()" in expression:
+                cdp.events.put(
+                    {
+                        "method": "Network.requestWillBeSent",
+                        "params": {"requestId": "fresh-target"},
+                    }
+                )
+                cdp.events.put(
+                    {
+                        "method": "Network.responseReceived",
+                        "params": {"requestId": "fresh-target"},
+                    }
+                )
+                return True
+            return json.dumps(
+                {
+                    "url": "https://www.douyin.com/user/creator",
+                    "href": f"https://www.douyin.com/video/{VIDEO_ID}",
+                    "text": "模型先生主页",
+                }
+            )
+
+        resolver._evaluate = evaluate
+        opened = resolver._open_exact_work_from_profile(
+            "https://www.douyin.com/user/creator",
+            VIDEO_ID,
+            timeout=2,
+        )
+
+        self.assertTrue(opened)
+        self.assertEqual(
+            ("Page.navigate", {"url": "https://www.douyin.com/user/creator"}),
+            cdp.calls[0],
+        )
+        remaining = [cdp.events.get_nowait(), cdp.events.get_nowait()]
+        self.assertEqual(
+            ["Network.requestWillBeSent", "Network.responseReceived"],
+            [event["method"] for event in remaining],
+        )
+        self.assertTrue(any(call[0] == "Network.disable" for call in cdp.calls))
+        self.assertTrue(any("精确作品" in message for message in logs))
+
+    def test_profile_card_is_never_clicked_twice_when_dom_changes(self) -> None:
+        resolver = DouyinResolver.__new__(DouyinResolver)
+        resolver.cdp = SimpleNamespace(events=queue.Queue(), call=Mock(return_value={}))
+        resolver.debug_port = None
+        resolver.cancel_event = threading.Event()
+        resolver.log = Mock()
+        click_count = 0
+
+        def evaluate(expression):
+            nonlocal click_count
+            if "link.click()" in expression:
+                click_count += 1
+                return False
+            return json.dumps(
+                {
+                    "url": "https://www.douyin.com/user/creator",
+                    "href": f"https://www.douyin.com/video/{VIDEO_ID}",
+                    "text": "模型先生主页",
+                }
+            )
+
+        resolver._evaluate = evaluate
+        with self.assertRaisesRegex(ParseError, "不会重复点击"):
+            resolver._open_exact_work_from_profile(
+                "https://www.douyin.com/user/creator",
+                VIDEO_ID,
+                timeout=2,
+            )
+        self.assertEqual(1, click_count)
+
+    def test_profile_click_can_switch_to_exact_id_new_page_target(self) -> None:
+        class Connection:
+            def __init__(self, _url=""):
+                self.events = queue.Queue()
+                self.calls = []
+                self.closed = False
+
+            def call(self, method, params=None):
+                self.calls.append((method, params or {}))
+                return {}
+
+            def close(self):
+                self.closed = True
+
+        old = Connection()
+        replacement = Connection()
+        resolver = DouyinResolver.__new__(DouyinResolver)
+        resolver.cdp = old
+        resolver.debug_port = 12345
+        resolver.cancel_event = threading.Event()
+        resolver.log = Mock()
+        response = Mock()
+        response.json.return_value = [
+            {
+                "type": "page",
+                "url": f"https://www.douyin.com/video/{VIDEO_ID}",
+                "webSocketDebuggerUrl": "ws://exact-target",
+            }
+        ]
+
+        with patch("douyin_core.requests.get", return_value=response), patch(
+            "douyin_core.CDPConnection",
+            return_value=replacement,
+        ) as connection:
+            switched = resolver._switch_to_exact_page_target(VIDEO_ID)
+
+        self.assertTrue(switched)
+        self.assertIs(replacement, resolver.cdp)
+        self.assertTrue(old.closed)
+        connection.assert_called_once_with("ws://exact-target")
+        self.assertEqual(
+            [
+                "Network.enable",
+                "Page.enable",
+                "Runtime.enable",
+                "Network.setCacheDisabled",
+            ],
+            [method for method, _params in replacement.calls],
+        )
+
+    def test_profile_entry_rejects_non_douyin_or_non_user_url(self) -> None:
+        resolver = DouyinResolver.__new__(DouyinResolver)
+        resolver.cdp = SimpleNamespace(events=queue.Queue())
+        resolver.cancel_event = threading.Event()
+        resolver.log = Mock()
+
+        with self.assertRaisesRegex(ParseError, "HTTPS 用户页"):
+            resolver._open_exact_work_from_profile(
+                "https://example.test/user/creator",
+                VIDEO_ID,
+                timeout=1,
+            )
 
 
 class HdRedownloadAuditTests(unittest.TestCase):
@@ -251,8 +536,10 @@ class AtomicHdReplacementTests(unittest.TestCase):
                     pass
 
                 @staticmethod
-                def resolve(_url, timeout=None):
+                def resolve(_url, timeout=None, **kwargs):
                     self.assertEqual(50, timeout)
+                    self.assertEqual(VIDEO_ID, kwargs["expected_video_id"])
+                    self.assertRegex(kwargs["profile_entry_url"], r"/user/")
                     return SimpleNamespace(
                         title="测试作品",
                         video_id=resolved_video_id,
@@ -376,8 +663,10 @@ class AtomicHdReplacementTests(unittest.TestCase):
                     pass
 
                 @staticmethod
-                def resolve(_url, timeout):
+                def resolve(_url, timeout, **kwargs):
                     self.assertEqual(50, timeout)
+                    self.assertEqual(VIDEO_ID, kwargs["expected_video_id"])
+                    self.assertRegex(kwargs["profile_entry_url"], r"/user/")
                     return SimpleNamespace(title="测试作品", video_id=VIDEO_ID)
 
                 @staticmethod

@@ -363,7 +363,12 @@ class CloudMonitor:
                 profile_dir=BROWSER_PROFILE,
             )
             try:
-                result = resolver.resolve(video.url, timeout=50)
+                result = resolver.resolve(
+                    video.url,
+                    timeout=50,
+                    profile_entry_url=PROFILE_URL,
+                    expected_video_id=video_id,
+                )
             finally:
                 resolver.close()
             if str(result.video_id or "") != video_id:

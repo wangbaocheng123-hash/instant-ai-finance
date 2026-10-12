@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import requests
 import websocket
@@ -106,6 +106,29 @@ def canonical_public_video_url(url: str) -> tuple[str, str | None]:
             video_id = match.group(1)
             return f"https://www.douyin.com/video/{video_id}", video_id
     return url, None
+
+
+def douyin_work_id_from_url(url: str) -> str:
+    """Return an exact work ID from a public path or Douyin modal query.
+
+    Creator profile cards sometimes open the work in the same single-page app
+    with ``modal_id`` instead of replacing the path with ``/video/<id>``.
+    Both representations identify the selected work; unrelated recommendation
+    and ``/jingxuan`` pages intentionally return an empty value.
+    """
+
+    parsed = urlparse(str(url or ""))
+    host = (parsed.hostname or "").lower()
+    if host != "douyin.com" and not host.endswith(".douyin.com"):
+        return ""
+    path_match = VIDEO_ID_RE.search(parsed.path)
+    if path_match:
+        return path_match.group(1)
+    for key in ("modal_id", "aweme_id", "item_id"):
+        values = parse_qs(parsed.query).get(key) or []
+        if values and re.fullmatch(r"\d{15,22}", str(values[0])):
+            return str(values[0])
+    return ""
 
 
 def human_size(value: float) -> str:
@@ -500,6 +523,7 @@ class DouyinResolver:
         self.owns_profile_dir = False
         self.chrome: subprocess.Popen | None = None
         self.cdp: CDPConnection | None = None
+        self.debug_port: int | None = None
 
     def _check_cancel(self):
         if self.cancel_event.is_set():
@@ -563,6 +587,7 @@ class DouyinResolver:
                 lines = active_port.read_text(encoding="utf-8").splitlines()
                 if lines:
                     port = int(lines[0])
+                    self.debug_port = port
                     break
             time.sleep(0.1)
         else:
@@ -627,9 +652,331 @@ class DouyinResolver:
         )
         return result.get("result", {}).get("value")
 
-    def resolve(self, share_text: str, timeout: float = 30) -> ParseResult:
+    def _discard_pending_events(self) -> None:
+        """Discard network events produced before the exact work is opened."""
+
+        assert self.cdp
+        while True:
+            try:
+                self.cdp.events.get_nowait()
+            except queue.Empty:
+                return
+
+    def _switch_to_exact_page_target(self, work_id: str) -> bool:
+        """Attach to a newly opened exact-ID page after one profile click."""
+
+        debug_port = getattr(self, "debug_port", None)
+        if not debug_port:
+            return False
+        try:
+            targets = requests.get(
+                f"http://127.0.0.1:{debug_port}/json/list",
+                timeout=1,
+            ).json()
+        except Exception:
+            return False
+        if not isinstance(targets, list):
+            return False
+        target = next(
+            (
+                row
+                for row in targets
+                if isinstance(row, dict)
+                and row.get("type") == "page"
+                and douyin_work_id_from_url(str(row.get("url") or ""))
+                == work_id
+                and row.get("webSocketDebuggerUrl")
+            ),
+            None,
+        )
+        if target is None:
+            return False
+
+        previous = self.cdp
+        replacement: CDPConnection | None = None
+        try:
+            replacement = CDPConnection(str(target["webSocketDebuggerUrl"]))
+            replacement.call(
+                "Network.enable",
+                {
+                    "maxTotalBufferSize": 1000000,
+                    "maxResourceBufferSize": 500000,
+                },
+            )
+            replacement.call("Page.enable")
+            replacement.call("Runtime.enable")
+            replacement.call(
+                "Network.setCacheDisabled",
+                {"cacheDisabled": True},
+            )
+        except Exception:
+            if replacement is not None:
+                try:
+                    replacement.close()
+                except Exception:
+                    pass
+            return False
+        self.cdp = replacement
+        if previous is not None:
+            previous.close()
+        self.log(f"已切换到新窗口中的精确作品 {work_id}。")
+        return True
+
+    def _exact_page_is_active(self, work_id: str) -> bool:
+        try:
+            current_url = str(self._evaluate("location.href") or "")
+        except Exception:
+            current_url = ""
+        if douyin_work_id_from_url(current_url) == work_id:
+            return True
+        return self._switch_to_exact_page_target(work_id)
+
+    def _arm_exact_media_capture(
+        self,
+        work_id: str,
+        *,
+        deadline: float,
+    ) -> bool:
+        """Create a post-navigation event barrier and reload target media.
+
+        The main resolver additionally accepts only response request IDs whose
+        ``requestWillBeSent`` event occurs after this barrier.  A late response
+        from a creator-grid preview therefore cannot become a candidate even
+        if it arrives after the queue was cleared.
+        """
+
+        while time.monotonic() < deadline:
+            self._check_cancel()
+            if not self._exact_page_is_active(work_id):
+                time.sleep(0.2)
+                continue
+            try:
+                has_video = bool(
+                    self._evaluate(
+                        """(()=>{
+                          const visible=v=>{
+                            const r=v.getBoundingClientRect();
+                            const s=getComputedStyle(v);
+                            return r.width>120 && r.height>120 &&
+                              s.display!=='none' && s.visibility!=='hidden';
+                          };
+                          return [...document.querySelectorAll('video')]
+                            .some(visible);
+                        })()"""
+                    )
+                )
+            except Exception:
+                has_video = False
+            if not has_video:
+                time.sleep(0.2)
+                continue
+
+            # This is the event barrier: it is deliberately after exact page
+            # identity is established.  Disabling Network creates a protocol
+            # ordering fence before the queue clear.  Reload/play below then
+            # generates new target requests, which the caller correlates by
+            # their fresh request IDs.
+            self.cdp.call("Network.disable")
+            self._discard_pending_events()
+            self.cdp.call(
+                "Network.enable",
+                {
+                    "maxTotalBufferSize": 1000000,
+                    "maxResourceBufferSize": 500000,
+                },
+            )
+            self.cdp.call(
+                "Network.setCacheDisabled",
+                {"cacheDisabled": True},
+            )
+            self._discard_pending_events()
+            try:
+                triggered = bool(
+                    self._evaluate(
+                        """(()=>{
+                          const videos=[...document.querySelectorAll('video')];
+                          const visible=v=>{
+                            const r=v.getBoundingClientRect();
+                            const s=getComputedStyle(v);
+                            return r.width>120 && r.height>120 &&
+                              s.display!=='none' && s.visibility!=='hidden';
+                          };
+                          const video=videos.filter(visible).sort((a,b)=>{
+                            const ar=a.getBoundingClientRect();
+                            const br=b.getBoundingClientRect();
+                            return br.width*br.height-ar.width*ar.height;
+                          })[0];
+                          if(!video) return false;
+                          try { video.pause(); } catch (_) {}
+                          video.preload='auto';
+                          try { video.load(); } catch (_) {}
+                          video.muted=false;
+                          video.autoplay=true;
+                          video.play().catch(()=>{});
+                          return true;
+                        })()"""
+                    )
+                )
+            except Exception:
+                triggered = False
+            if triggered:
+                self.log(
+                    f"精确作品 {work_id} 已在事件屏障后重新触发媒体加载。"
+                )
+                return True
+            raise ParseError(
+                "精确作品页未能重新触发媒体加载；已停止且不会重复点击。"
+            )
+        return False
+
+    def _open_exact_work_from_profile(
+        self,
+        profile_url: str,
+        work_id: str,
+        *,
+        timeout: float,
+    ) -> bool:
+        """Open one exact creator card inside the authenticated profile SPA.
+
+        Douyin can redirect a cold direct ``/video/<id>`` navigation to
+        ``/jingxuan`` even though the same persistent browser can still read
+        the creator profile.  Entering through the exact profile card preserves
+        that authenticated SPA context.  After the exact page or new window is
+        confirmed, a protocol event fence and a fresh video load ensure profile
+        preview responses cannot become candidates for the requested work.
+        """
+
+        assert self.cdp
+        if not re.fullmatch(r"\d{15,22}", str(work_id or "")):
+            raise ParseError("从主页打开作品时缺少精确作品 ID。")
+        parsed_profile = urlparse(str(profile_url or ""))
+        if (
+            parsed_profile.scheme != "https"
+            or (parsed_profile.hostname or "").lower()
+            not in {"douyin.com", "www.douyin.com"}
+            or not parsed_profile.path.startswith("/user/")
+        ):
+            raise ParseError("模型先生主页地址不是受支持的抖音 HTTPS 用户页。")
+
+        self.cdp.call("Page.navigate", {"url": profile_url})
+        self.log(f"直达作品页可能受限，正在从模型先生主页定位作品 {work_id}…")
+        started = time.monotonic()
+        deadline = started + max(1.0, float(timeout))
+        reload_at = started + min(14.0, max(4.0, float(timeout) / 2))
+        reloaded = False
+        click_attempted = False
+        while time.monotonic() < deadline:
+            self._check_cancel()
+            try:
+                raw = self._evaluate(
+                    f"""JSON.stringify((()=>{{
+                      const target={json.dumps(work_id)};
+                      const links=[...document.querySelectorAll(
+                        'a[href*="/video/"],a[href*="/note/"],a[href*="/article/"]'
+                      )];
+                      const link=links.find(a=>{{
+                        try {{
+                          const u=new URL(a.href,location.href);
+                          return new RegExp('/(?:video|note|article)/'+target+'(?:/|$)').test(u.pathname);
+                        }} catch (_) {{ return false; }}
+                      }});
+                      return {{
+                        url:location.href,
+                        href:link ? link.href : '',
+                        text:(document.body&&document.body.innerText||'').slice(0,500)
+                      }};
+                    }})())"""
+                )
+                snapshot = json.loads(str(raw or "{}"))
+            except Exception:
+                snapshot = {}
+
+            href = str(snapshot.get("href") or "")
+            if douyin_work_id_from_url(href) == work_id:
+                if click_attempted:
+                    raise ParseError(
+                        "精确作品卡片已经点击一次，已拒绝重复点击。"
+                    )
+                click_attempted = True
+                self._discard_pending_events()
+                clicked = bool(
+                    self._evaluate(
+                        f"""(()=>{{
+                          const target={json.dumps(work_id)};
+                          const link=[...document.querySelectorAll(
+                            'a[href*="/video/"],a[href*="/note/"],a[href*="/article/"]'
+                          )].find(a=>{{
+                            try {{
+                              const u=new URL(a.href,location.href);
+                              return new RegExp('/(?:video|note|article)/'+target+'(?:/|$)').test(u.pathname);
+                            }} catch (_) {{ return false; }}
+                          }});
+                          if(!link) return false;
+                          link.removeAttribute('target');
+                          link.scrollIntoView({{block:'center'}});
+                          link.click();
+                          return true;
+                        }})()"""
+                    )
+                )
+                if not clicked:
+                    raise ParseError(
+                        "精确作品卡片在点击前消失；已停止且不会重复点击。"
+                    )
+                route_deadline = min(deadline, time.monotonic() + 12)
+                if self._arm_exact_media_capture(
+                    work_id,
+                    deadline=route_deadline,
+                ):
+                    self.log(
+                        f"已从模型先生主页打开精确作品 {work_id}。"
+                    )
+                    return True
+                raise ParseError(
+                    "点击精确作品卡片后未进入对应页面或窗口；"
+                    "已停止且不会重复点击。"
+                )
+
+            body_text = str(snapshot.get("text") or "")
+            if (
+                not reloaded
+                and (
+                    "服务异常，重新刷新拉取数据" in body_text
+                    or time.monotonic() >= reload_at
+                )
+                and time.monotonic() + 5 < deadline
+            ):
+                reloaded = True
+                self.log("主页暂未出现精确作品卡片，正在刷新后再定位一次…")
+                self.cdp.call("Page.reload", {"ignoreCache": True})
+                time.sleep(2)
+                continue
+            time.sleep(0.5)
+
+        self.log(
+            f"主页当前可见卡片未能打开精确作品 {work_id}，"
+            "将以已刷新登录态再试一次原作品地址。"
+        )
+        return False
+
+    def resolve(
+        self,
+        share_text: str,
+        timeout: float = 30,
+        *,
+        profile_entry_url: str | None = None,
+        expected_video_id: str | None = None,
+    ) -> ParseResult:
         share_url = extract_douyin_url(share_text)
         self.log(f"已提取链接：{share_url}")
+        expected_id = str(expected_video_id or "")
+        if expected_id and not re.fullmatch(r"\d{15,22}", expected_id):
+            raise ValueError("expected_video_id 必须是 15–22 位抖音作品 ID。")
+        share_work_id = douyin_work_id_from_url(share_url)
+        if expected_id and share_work_id and share_work_id != expected_id:
+            raise ParseError(
+                "请求链接与精确目标作品 ID 不一致，已拒绝打开页面。"
+            )
         navigation_url = share_url
         # Since July 2026 some v.douyin.com links redirect to an empty
         # iesdouyin application/json landing response. Expand the redirect
@@ -658,8 +1005,21 @@ class DouyinResolver:
         self.cdp.call("Page.enable")
         self.cdp.call("Runtime.enable")
         self.cdp.call("Network.setCacheDisabled", {"cacheDisabled": True})
-        self.cdp.call("Page.navigate", {"url": navigation_url})
-        self.log("正在打开公开作品页并监听媒体请求…")
+        opened_from_profile = False
+        if profile_entry_url and expected_id:
+            opened_from_profile = self._open_exact_work_from_profile(
+                profile_entry_url,
+                expected_id,
+                timeout=min(32.0, max(12.0, float(timeout) * 0.64)),
+            )
+        if not opened_from_profile:
+            # No profile-grid media response may leak into the direct-page
+            # candidate set when the exact card was not found.
+            self._discard_pending_events()
+            self.cdp.call("Page.navigate", {"url": navigation_url})
+            self.log("正在打开公开作品页并监听媒体请求…")
+        else:
+            self.log("正在监听精确作品页的最高画质媒体请求…")
 
         candidates: dict[str, VideoCandidate] = {}
         request_urls: dict[str, str] = {}
@@ -670,12 +1030,36 @@ class DouyinResolver:
         last_play_attempt = 0.0
         media_hosts_seen: set[str] = set()
         canonical_redirect_done = navigation_url != share_url
+        fresh_request_ids: set[str] = set()
         while time.monotonic() < deadline:
             self._check_cancel()
             if time.monotonic() - last_play_attempt > 1.5:
                 last_play_attempt = time.monotonic()
                 try:
-                    self._evaluate("(()=>{const v=document.querySelector('video');if(v){v.muted=false;v.autoplay=true;v.play().catch(()=>{});return v.currentSrc||v.src||'video-found'}return 'no-video'})()")
+                    if opened_from_profile:
+                        self._evaluate(
+                            """(()=>{
+                              const visible=v=>{
+                                const r=v.getBoundingClientRect();
+                                const s=getComputedStyle(v);
+                                return r.width>120 && r.height>120 &&
+                                  s.display!=='none' && s.visibility!=='hidden';
+                              };
+                              const videos=[...document.querySelectorAll('video')]
+                                .filter(visible).sort((a,b)=>{
+                                  const ar=a.getBoundingClientRect();
+                                  const br=b.getBoundingClientRect();
+                                  return br.width*br.height-ar.width*ar.height;
+                                });
+                              const v=videos[0];
+                              if(!v) return 'no-video';
+                              v.muted=false; v.autoplay=true;
+                              v.play().catch(()=>{});
+                              return v.currentSrc||v.src||'video-found';
+                            })()"""
+                        )
+                    else:
+                        self._evaluate("(()=>{const v=document.querySelector('video');if(v){v.muted=false;v.autoplay=true;v.play().catch(()=>{});return v.currentSrc||v.src||'video-found'}return 'no-video'})()")
                 except Exception:
                     pass
             try:
@@ -686,7 +1070,21 @@ class DouyinResolver:
                 continue
             method = event.get("method")
             params = event.get("params", {})
-            if method == "Network.responseReceived":
+            if method == "Network.requestWillBeSent":
+                if opened_from_profile:
+                    request_id = str(params.get("requestId") or "")
+                    if request_id:
+                        fresh_request_ids.add(request_id)
+            elif method == "Network.responseReceived":
+                request_id = str(params.get("requestId") or "")
+                if (
+                    opened_from_profile
+                    and request_id not in fresh_request_ids
+                ):
+                    # A profile preview response may complete after the queue
+                    # barrier.  It is accepted only when its request also
+                    # started after the exact-page media reload.
+                    continue
                 response = params.get("response", {})
                 url = response.get("url", "")
                 mime = response.get("mimeType", "")
@@ -706,7 +1104,6 @@ class DouyinResolver:
                             response_headers=headers,
                             encoded_length=length,
                         )
-                        request_id = str(params.get("requestId") or "")
                         if request_id:
                             request_urls[request_id] = url
                         last_new = time.monotonic()
@@ -739,11 +1136,23 @@ class DouyinResolver:
                         final_url = canonical
 
         if not candidates:
+            diagnosed_url = ""
             try:
                 diagnosis = self._evaluate("JSON.stringify({url:location.href,title:document.title,videoCount:document.querySelectorAll('video').length,text:(document.body&&document.body.innerText||'').slice(0,240)})")
                 self.log(f"页面诊断：{diagnosis}")
+                diagnosed_url = str(
+                    json.loads(str(diagnosis or "{}")).get("url") or ""
+                )
             except Exception:
                 pass
+            if (
+                expected_id
+                and douyin_work_id_from_url(diagnosed_url) != expected_id
+            ):
+                raise ParseError(
+                    "抖音没有打开精确目标作品页，已拒绝精选页或推荐页媒体；"
+                    "现有文件保持不变。"
+                )
             raise ParseError("解析超时：没有捕获到可下载的作品 MP4。请确认作品公开且链接有效。")
 
         # Obtain page metadata and the temporary browser session before probing URLs.
@@ -753,6 +1162,12 @@ class DouyinResolver:
             final_url = meta.get("url") or final_url
         except Exception:
             meta = {}
+        final_work_id = douyin_work_id_from_url(final_url)
+        if expected_id and final_work_id != expected_id:
+            raise ParseError(
+                "抖音最终页面不是精确目标作品，已拒绝精选页或推荐页媒体；"
+                "现有文件保持不变。"
+            )
         cookie_rows = self.cdp.call("Network.getAllCookies").get("cookies", [])
         cookies = {row["name"]: row["value"] for row in cookie_rows if row.get("name")}
         ua = str(self._evaluate("navigator.userAgent") or "Mozilla/5.0")
@@ -791,10 +1206,13 @@ class DouyinResolver:
             else None
         )
 
-        id_match = VIDEO_ID_RE.search(final_url)
-        if not id_match:
-            id_match = re.search(r"(?:aweme_id|item_id)[=/](\d{15,22})", best.url)
-        video_id = id_match.group(1) if id_match else str(int(time.time()))
+        video_id = final_work_id
+        if not video_id:
+            id_match = re.search(
+                r"(?:aweme_id|item_id)[=/](\d{15,22})",
+                best.url,
+            )
+            video_id = id_match.group(1) if id_match else str(int(time.time()))
         # document.title is normally the concise work caption; og/description often
         # append author, date and engagement statistics and make poor filenames.
         title = meta.get("title") or meta.get("og") or meta.get("description") or "抖音视频"
@@ -1000,6 +1418,7 @@ class DouyinResolver:
                 except Exception:
                     pass
         self.chrome = None
+        self.debug_port = None
         if self.profile_dir and self.owns_profile_dir:
             for _ in range(5):
                 try:
