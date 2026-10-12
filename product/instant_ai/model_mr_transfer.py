@@ -111,6 +111,7 @@ class ModelMrTransferProjector:
             source_url=str(work.get("source_url") or ""),
             published_at=str(work.get("published_at") or ""),
             work_type=work_type,
+            media_update_kind=str(work.get("media_update_kind") or ""),
             comments=self._comments(
                 self._artifact_path(comment_artifact),
                 bundle_descriptor,
@@ -118,7 +119,11 @@ class ModelMrTransferProjector:
             media_items=resolved_media,
             comments_observer=self.comments_observer,
         )
-        if imported.get("status") == "imported" and expected_role == "video":
+        if (
+            imported.get("status") == "imported"
+            and expected_role == "video"
+            and imported.get("processing_required", True) is not False
+        ):
             from .model_mr_processing import ModelMrProcessor
             # The request only records intent. Paid work runs on the serial worker.
             ModelMrProcessor(self.model_mr).enqueue_arrival(

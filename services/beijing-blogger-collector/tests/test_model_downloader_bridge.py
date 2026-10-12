@@ -349,6 +349,153 @@ class ModelDownloaderBridgeTests(unittest.TestCase):
                 )
             )
 
+    def test_hd_running_is_skipped_then_completed_revision_is_explicitly_marked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media_root = root / "videos"
+            artifact_root = root / "outbox" / "artifacts"
+            media_root.mkdir()
+            artifact_root.mkdir(parents=True)
+            video = media_root / "work.mp4"
+            video.write_bytes(b"compact-video")
+            database = root / "library.sqlite3"
+            with sqlite3.connect(database) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE videos(
+                        video_id TEXT, creator TEXT, title TEXT, source_url TEXT,
+                        published_at TEXT, discovered_at TEXT, downloaded_at TEXT,
+                        file_path TEXT, file_size INTEGER, duration_seconds REAL,
+                        download_status TEXT, comments_collected_at TEXT,
+                        comment_count INTEGER, updated_at TEXT
+                    );
+                    CREATE TABLE comments(
+                        video_id TEXT, comment_id TEXT, parent_comment_id TEXT,
+                        author_name TEXT, text TEXT, created_at TEXT,
+                        digg_count INTEGER, reply_count INTEGER, ip_label TEXT,
+                        is_creator INTEGER, is_author_digged INTEGER,
+                        reply_to_comment_id TEXT, reply_to_user_name TEXT,
+                        label_text TEXT, collected_at TEXT
+                    );
+                    CREATE TABLE hd_redownload_runs(
+                        video_id TEXT PRIMARY KEY,
+                        status TEXT NOT NULL,
+                        finished_at TEXT,
+                        result_file_size INTEGER
+                    );
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO videos VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        "7695675202135444145",
+                        "模型先生",
+                        "刚刚发布的作品",
+                        "https://www.douyin.com/video/7695675202135444145",
+                        "2026-10-12T15:10:10+08:00",
+                        "",
+                        "",
+                        str(video),
+                        video.stat().st_size,
+                        188.6,
+                        "downloaded",
+                        "2026-10-12T15:12:00+08:00",
+                        0,
+                        "2026-10-12T15:12:00+08:00",
+                    ),
+                )
+
+            outbox = TransferOutbox(
+                root / "outbox" / "transfer.sqlite3",
+                allowed_artifact_roots=(artifact_root,),
+            )
+            bridge = ModelDownloaderBridge(
+                outbox=outbox,
+                artifact_dir=artifact_root,
+                collector_node_id="beijing-1",
+                collector_key_id="key-1",
+                collector_version="test",
+                database_path=database,
+                media_root=media_root,
+                state_path=root / "state.json",
+            )
+
+            self.assertEqual(bridge.scan_once()["enqueued"], 1)
+            baseline = outbox.get(outbox.list_recent(limit=1)[0]["transfer_id"])
+            self.assertNotIn("media_update_kind", baseline["manifest"]["work"])
+
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "INSERT INTO hd_redownload_runs(video_id,status) VALUES(?, 'running')",
+                    ("7695675202135444145",),
+                )
+                connection.commit()
+            # Simulate the narrow os.replace-before-DB-commit interval.  The
+            # bridge must not turn these new bytes into an unmarked revision.
+            video.write_bytes(b"source-quality-video-with-more-bytes")
+            running = bridge.scan_once()
+            self.assertEqual(running["skipped"], 1)
+            self.assertEqual(len(outbox.list_recent(limit=10)), 1)
+
+            with sqlite3.connect(database) as connection:
+                completed_at = "2026-10-12T15:20:00+08:00"
+                connection.execute(
+                    "UPDATE hd_redownload_runs "
+                    "SET status='completed', finished_at=?, result_file_size=? "
+                    "WHERE video_id=?",
+                    (
+                        completed_at,
+                        video.stat().st_size,
+                        "7695675202135444145",
+                    ),
+                )
+                connection.execute(
+                    "UPDATE videos SET downloaded_at=?, file_size=?, updated_at=? "
+                    "WHERE video_id=?",
+                    (
+                        completed_at,
+                        video.stat().st_size,
+                        completed_at,
+                        "7695675202135444145",
+                    ),
+                )
+                connection.commit()
+            completed = bridge.scan_once()
+            rows = outbox.list_recent(limit=10)
+            latest = outbox.get(rows[0]["transfer_id"])
+            self.assertEqual(completed["enqueued"], 1)
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(latest["manifest"]["work"]["revision"], 2)
+            self.assertEqual(
+                latest["manifest"]["work"]["media_update_kind"],
+                "source_quality_replacement",
+            )
+
+            # A later ordinary repair must not inherit the old completed HD
+            # marker merely because the audit row is retained.
+            video.write_bytes(b"later-ordinary-media-repair")
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE videos SET downloaded_at=?, file_size=?, updated_at=? "
+                    "WHERE video_id=?",
+                    (
+                        "2026-10-12T16:00:00+08:00",
+                        video.stat().st_size,
+                        "2026-10-12T16:00:00+08:00",
+                        "7695675202135444145",
+                    ),
+                )
+                connection.commit()
+            ordinary = bridge.scan_once()
+            ordinary_rows = outbox.list_recent(limit=10)
+            ordinary_latest = outbox.get(ordinary_rows[0]["transfer_id"])
+            self.assertEqual(ordinary["enqueued"], 1)
+            self.assertEqual(ordinary_latest["manifest"]["work"]["revision"], 3)
+            self.assertNotIn(
+                "media_update_kind",
+                ordinary_latest["manifest"]["work"],
+            )
+
     def test_downloaded_image_post_enqueues_caption_and_ordered_gallery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

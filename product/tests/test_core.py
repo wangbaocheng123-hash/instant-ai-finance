@@ -1077,7 +1077,7 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("url.pathname.startsWith('/media/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.28.1", worker)
+        self.assertIn("instant-ai-shell-v0.28.2", worker)
         self.assertIn("showNotification", worker)
         self.assertIn("notificationclick", worker)
         self.assertIn("手机通知", app)

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import logging
 import os
 import re
+import secrets
 import signal
+import shutil
+import stat
+import tempfile
 import threading
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
@@ -21,6 +27,7 @@ from douyin_core import (
     download_video,
     image_mime_type,
     inspect_mp4,
+    video_dimensions,
 )
 from library_store import LibraryStore
 from profile_monitor import ProfileScanError, ProfileScanner, ProfileVideo
@@ -184,13 +191,18 @@ def setup_logging() -> logging.Logger:
 
 
 class CloudMonitor:
-    def __init__(self, logger: logging.Logger):
+    def __init__(
+        self,
+        logger: logging.Logger,
+        *,
+        library: LibraryStore | None = None,
+    ):
         self.logger = logger
         self.stop_event = threading.Event()
         self.cancel_event = threading.Event()
         self.maintenance_cancel_event = threading.Event()
         self.downloaded_ids = load_state()
-        self.library = LibraryStore(DATABASE_FILE, COMMENTS_ROOT)
+        self.library = library or LibraryStore(DATABASE_FILE, COMMENTS_ROOT)
         self.consecutive_scan_failures = 0
 
     def log(self, message: str, *args: object) -> None:
@@ -228,6 +240,230 @@ class CloudMonitor:
         if existing and existing.stat().st_size > 1024:
             return existing
         return None
+
+    @staticmethod
+    def managed_video_path(raw_path: str) -> Path:
+        """Resolve one database media path without escaping the video root."""
+
+        if not raw_path:
+            raise ValueError("作品没有已保存的视频路径。")
+        try:
+            root = DOWNLOAD_ROOT.resolve(strict=True)
+            candidate = Path(raw_path)
+            if candidate.is_symlink():
+                raise ValueError("视频路径不能是符号链接。")
+            candidate = candidate.resolve(strict=True)
+            candidate.relative_to(root)
+        except (OSError, ValueError) as exc:
+            raise ValueError("视频路径不在模型下载器安全媒体目录内。") from exc
+        if not candidate.is_file() or candidate.stat().st_size <= 1024:
+            raise ValueError("现有视频不存在或文件过小。")
+        return candidate
+
+    @staticmethod
+    @contextlib.contextmanager
+    def hd_redownload_lock(existing: Path, video_id: str):
+        """Serialize one work's explicit HD replacement across processes.
+
+        The lock file deliberately remains beside the managed video.  Removing
+        a flock path after release would let a third process lock a new inode
+        while an earlier waiter still holds the old one.
+        """
+
+        lock_path = existing.parent / f".{video_id}.hd-redownload.lock"
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(lock_path, flags, 0o600)
+        except OSError as exc:
+            raise RuntimeError("无法建立高清重下互斥锁，已保留现有文件。") from exc
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise RuntimeError("高清重下互斥锁不是普通文件，已拒绝执行。")
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError(
+                    f"作品 {video_id} 正在执行另一次高清重下；本次未修改文件。"
+                ) from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+    def redownload_hd_now(self, video_id: str) -> dict[str, object]:
+        """Synchronously replace exactly one compact video with source quality.
+
+        Network download, stream-copy remux and all probes happen in a hidden
+        directory beside the existing file.  The public path keeps serving the
+        compact file until the replacement is fully verified.  A hard-link (or
+        same-directory copy fallback) retains the old bytes for DB rollback,
+        then ``os.replace`` performs the only visible switch atomically.
+        """
+
+        if not re.fullmatch(r"\d{15,22}", str(video_id or "")):
+            raise ValueError("必须提供精确的 15–22 位抖音作品 ID。")
+        row = self.library.video_for_hd_redownload(video_id)
+        if row is None:
+            raise ValueError(f"作品不存在：{video_id}")
+        if str(row["work_type"] or "video") != "video":
+            raise ValueError("图文作品不能执行高清视频重下。")
+
+        existing = self.managed_video_path(str(row["file_path"] or ""))
+        with self.hd_redownload_lock(existing, video_id):
+            return self._redownload_hd_locked(video_id, row, existing)
+
+    def _redownload_hd_locked(
+        self,
+        video_id: str,
+        row,
+        existing: Path,
+    ) -> dict[str, object]:
+        """Execute one HD replacement while the per-work process lock is held."""
+
+        previous_inspection = inspect_mp4(existing)
+        if not (
+            previous_inspection["has_mdat"]
+            and previous_inspection["has_video"]
+            and previous_inspection["has_audio"]
+        ):
+            raise ValueError("现有视频不完整，应先执行普通媒体修复。")
+        previous_dimensions = video_dimensions(existing)
+        self.library.start_hd_redownload(
+            video_id,
+            now_china(),
+            previous_dimensions,
+        )
+
+        staging: Path | None = None
+        backup = existing.with_name(
+            f".{existing.name}.hd-backup-{secrets.token_hex(6)}"
+        )
+        replacement_installed = False
+        database_committed = False
+        try:
+            staging = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{video_id}.hd-redownload-",
+                    dir=existing.parent,
+                )
+            )
+            video = self._stored_video(row)
+            self.log(
+                "作品 %s 开始精确高清重下；现有分辨率 %dx%d，"
+                "正式文件在全部校验前保持不动。",
+                video_id,
+                previous_dimensions[0],
+                previous_dimensions[1],
+            )
+            resolver = DouyinResolver(
+                log=self.log,
+                cancel_event=self.cancel_event,
+                profile_dir=BROWSER_PROFILE,
+            )
+            try:
+                result = resolver.resolve(video.url, timeout=50)
+            finally:
+                resolver.close()
+            if str(result.video_id or "") != video_id:
+                raise ParseError(
+                    "解析到的作品 ID 与精确目标不一致："
+                    f"目标 {video_id}，页面媒体 {result.video_id or '未知'}；"
+                    "已拒绝下载和覆盖。"
+                )
+            if video.title and not video.title.startswith("抖音作品_"):
+                result.title = video.title
+
+            staged_output = download_video(
+                result,
+                staging,
+                cancel_event=self.cancel_event,
+                custom_filename=existing.stem,
+                source_quality=True,
+                minimum_video_dimensions=previous_dimensions,
+            )
+            replacement_inspection = inspect_mp4(staged_output)
+            result_dimensions = video_dimensions(staged_output)
+            previous_duration = previous_inspection["duration_seconds"]
+            result_duration = replacement_inspection["duration_seconds"]
+            if previous_duration is not None and float(previous_duration) > 0:
+                if result_duration is None or float(result_duration) <= 0:
+                    raise ParseError(
+                        "高清候选缺少有效时长，无法核对是否为同一作品；"
+                        "已保留现有文件。"
+                    )
+                tolerance = max(2.0, float(previous_duration) * 0.02)
+                if abs(float(result_duration) - float(previous_duration)) > tolerance:
+                    raise ParseError(
+                        "高清候选与现有视频时长不一致："
+                        f"现有 {float(previous_duration):.2f} 秒，"
+                        f"候选 {float(result_duration):.2f} 秒；"
+                        "已保留现有文件。"
+                    )
+
+            try:
+                os.link(existing, backup)
+            except OSError:
+                shutil.copy2(existing, backup)
+            os.replace(staged_output, existing)
+            replacement_installed = True
+            try:
+                self.library.complete_hd_redownload(
+                    video_id=video_id,
+                    title=result.title,
+                    file_path=existing,
+                    file_size=int(replacement_inspection["size"]),
+                    duration_seconds=replacement_inspection["duration_seconds"],
+                    completed_at=now_china(),
+                    previous_dimensions=previous_dimensions,
+                    result_dimensions=result_dimensions,
+                )
+            except Exception:
+                os.replace(backup, existing)
+                replacement_installed = False
+                raise
+            database_committed = True
+            try:
+                backup.unlink(missing_ok=True)
+            except OSError:
+                self.logger.warning(
+                    "高清替换已完成，但旧片隐藏备份暂未清理：%s",
+                    backup,
+                )
+            self.log(
+                "作品 %s 高清重下完成：%dx%d -> %dx%d，%d 字节。",
+                video_id,
+                previous_dimensions[0],
+                previous_dimensions[1],
+                result_dimensions[0],
+                result_dimensions[1],
+                int(replacement_inspection["size"]),
+            )
+            return {
+                "video_id": video_id,
+                "previous_dimensions": previous_dimensions,
+                "result_dimensions": result_dimensions,
+                "file_path": existing,
+                "file_size": int(replacement_inspection["size"]),
+            }
+        except Exception as exc:
+            if replacement_installed and not database_committed and backup.exists():
+                os.replace(backup, existing)
+            elif not replacement_installed:
+                backup.unlink(missing_ok=True)
+            try:
+                self.library.fail_hd_redownload(
+                    video_id,
+                    now_china(),
+                    str(exc),
+                )
+            except Exception:
+                self.logger.exception("无法保存作品 %s 的高清重下失败状态。", video_id)
+            raise
+        finally:
+            if staging is not None:
+                shutil.rmtree(staging, ignore_errors=True)
 
     def existing_images(
         self,

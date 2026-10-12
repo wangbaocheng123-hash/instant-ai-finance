@@ -199,6 +199,166 @@ class ModelMrGatewayTests(unittest.TestCase):
                 self.assertIs(detail["comments"][0]["author_liked"], False)
                 self.assertIsNotNone(client.video_path(first["work_id"]))
 
+    def test_completed_work_quality_replacement_keeps_processing_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "public-snapshot.json"
+            snapshot.write_text(
+                json.dumps({"version": 2, "works": [], "thoughts": [], "counts": {}}),
+                encoding="utf-8",
+            )
+            compact = root / "compact.mp4"
+            compact.write_bytes(b"verified-compact-video")
+            compact_digest = hashlib.sha256(compact.read_bytes()).hexdigest()
+            high_definition = root / "high-definition.mp4"
+            high_definition.write_bytes(b"verified-high-definition-video")
+            high_definition_digest = hashlib.sha256(high_definition.read_bytes()).hexdigest()
+            client = ModelMrClient("http://127.0.0.1:9", snapshot, root / "media")
+            first = client.import_beijing_work(
+                source_work_id="778899-hd",
+                source_revision=1,
+                title="同一作品的压缩版",
+                description="",
+                source_url="https://www.douyin.com/video/778899",
+                published_at="2026-10-12T09:00:00+08:00",
+                comments=[],
+                media_path=compact,
+                media_sha256=compact_digest,
+            )
+            client.save_video_text(first["work_id"], "已经保存的正式原文")
+            from instant_ai.model_mr_metadata import keyword_revision
+
+            client.save_keywords(
+                first["work_id"],
+                {"行业与板块": ["半导体"]},
+                [],
+                keyword_revision(None, []),
+            )
+
+            replacement = client.import_beijing_work(
+                source_work_id="778899-hd",
+                source_revision=2,
+                title="同一作品的压缩版",
+                description="",
+                source_url="https://www.douyin.com/video/778899",
+                published_at="2026-10-12T09:00:00+08:00",
+                comments=[],
+                media_path=high_definition,
+                media_sha256=high_definition_digest,
+                media_update_kind="source_quality_replacement",
+            )
+
+            self.assertFalse(replacement["processing_required"])
+            self.assertEqual(
+                client.beijing_processing_candidate(
+                    source_work_id="778899-hd",
+                    source_revision=2,
+                    media_hash=high_definition_digest,
+                ),
+                {
+                    "work_id": first["work_id"],
+                    "media_hash": high_definition_digest,
+                    "processing_required": False,
+                },
+            )
+            detail = client.processing_detail(first["work_id"])
+            self.assertEqual(detail["video_text"]["text"], "已经保存的正式原文")
+            self.assertEqual(detail["work"]["keyword_info"]["keywords"], ["半导体"])
+
+            later_comments = client.import_beijing_work(
+                source_work_id="778899-hd",
+                source_revision=3,
+                title="同一作品的压缩版",
+                description="",
+                source_url="https://www.douyin.com/video/778899",
+                published_at="2026-10-12T09:00:00+08:00",
+                comments=[{"author": "读者", "text": "只更新评论"}],
+                media_path=high_definition,
+                media_sha256=high_definition_digest,
+            )
+            self.assertFalse(later_comments["processing_required"])
+            self.assertFalse(
+                client.beijing_processing_candidate(
+                    source_work_id="778899-hd",
+                    source_revision=3,
+                    media_hash=high_definition_digest,
+                )["processing_required"]
+            )
+
+            unmarked_repair = root / "unmarked-repair.mp4"
+            unmarked_repair.write_bytes(b"different-unmarked-repair-video")
+            unmarked_digest = hashlib.sha256(unmarked_repair.read_bytes()).hexdigest()
+            unmarked = client.import_beijing_work(
+                source_work_id="778899-hd",
+                source_revision=4,
+                title="同一作品的无标记修复",
+                description="",
+                source_url="https://www.douyin.com/video/778899",
+                published_at="2026-10-12T09:00:00+08:00",
+                comments=[],
+                media_path=unmarked_repair,
+                media_sha256=unmarked_digest,
+            )
+            self.assertTrue(unmarked["processing_required"])
+            self.assertEqual(
+                client.beijing_processing_candidate(
+                    source_work_id="778899-hd",
+                    source_revision=4,
+                    media_hash=unmarked_digest,
+                ),
+                {"work_id": first["work_id"], "media_hash": unmarked_digest},
+            )
+
+    def test_incomplete_work_quality_replacement_still_requires_processing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "public-snapshot.json"
+            snapshot.write_text(
+                json.dumps({"version": 2, "works": [], "thoughts": [], "counts": {}}),
+                encoding="utf-8",
+            )
+            compact = root / "compact.mp4"
+            compact.write_bytes(b"incomplete-compact-video")
+            high_definition = root / "high-definition.mp4"
+            high_definition.write_bytes(b"incomplete-high-definition-video")
+            client = ModelMrClient("http://127.0.0.1:9", snapshot, root / "media")
+            first = client.import_beijing_work(
+                source_work_id="778899-incomplete",
+                source_revision=1,
+                title="资料还未完成的作品",
+                description="",
+                source_url="https://www.douyin.com/video/778899",
+                published_at="2026-10-12T10:00:00+08:00",
+                comments=[],
+                media_path=compact,
+                media_sha256=hashlib.sha256(compact.read_bytes()).hexdigest(),
+            )
+            client.save_video_text(first["work_id"], "只有原文，关键词尚未保存")
+            high_definition_digest = hashlib.sha256(high_definition.read_bytes()).hexdigest()
+
+            replacement = client.import_beijing_work(
+                source_work_id="778899-incomplete",
+                source_revision=2,
+                title="资料还未完成的作品",
+                description="",
+                source_url="https://www.douyin.com/video/778899",
+                published_at="2026-10-12T10:00:00+08:00",
+                comments=[],
+                media_path=high_definition,
+                media_sha256=high_definition_digest,
+                media_update_kind="source_quality_replacement",
+            )
+
+            self.assertTrue(replacement["processing_required"])
+            self.assertEqual(
+                client.beijing_processing_candidate(
+                    source_work_id="778899-incomplete",
+                    source_revision=2,
+                    media_hash=high_definition_digest,
+                ),
+                {"work_id": first["work_id"], "media_hash": high_definition_digest},
+            )
+
     def test_transferred_title_priority_is_manual_source_cover_ai_placeholder(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -504,6 +664,59 @@ class ModelMrGatewayTests(unittest.TestCase):
             creator_id=MODEL_MR_TRANSFER_CREATOR_ID,
             completed_since=100,
             limit=25,
+        )
+
+    def test_projector_does_not_enqueue_completed_quality_replacement(self) -> None:
+        model_mr = Mock()
+        model_mr.import_beijing_work.return_value = {
+            "status": "imported",
+            "work_id": 1001,
+            "processing_required": False,
+        }
+        projector = ModelMrTransferProjector(
+            blogger_root=Path("/not-used"),
+            model_mr=model_mr,
+        )
+        transfer = {
+            "transport_status": "transport_completed",
+            "manifest": {
+                "creator": {"creator_id": MODEL_MR_TRANSFER_CREATOR_ID},
+                "work": {
+                    "source_work_id": "778905",
+                    "revision": 2,
+                    "work_type": "video",
+                    "media_update_kind": "source_quality_replacement",
+                },
+                "media": [
+                    {
+                        "media_id": "video-1",
+                        "role": "video",
+                        "mime_type": "video/mp4",
+                        "sha256": "c" * 64,
+                        "ordinal": 0,
+                    }
+                ],
+                "comment_snapshot": {"bundle": {"bundle_id": "comments-1"}},
+            },
+            "artifacts": [
+                {"artifact_id": "video-1"},
+                {"artifact_id": "comments-1"},
+            ],
+        }
+        store = Mock()
+        store.get_transfer.return_value = transfer
+        with (
+            patch.object(projector, "_store", return_value=store),
+            patch.object(projector, "_artifact_path", return_value=Path("verified-artifact")),
+            patch.object(projector, "_comments", return_value=[]),
+            patch("instant_ai.model_mr_processing.ModelMrProcessor.enqueue_arrival") as enqueue,
+        ):
+            projector.project("quality-replacement")
+
+        enqueue.assert_not_called()
+        self.assertEqual(
+            model_mr.import_beijing_work.call_args.kwargs["media_update_kind"],
+            "source_quality_replacement",
         )
 
     def test_work_summary_removes_local_paths_raw_payload_and_admin_fields(self) -> None:

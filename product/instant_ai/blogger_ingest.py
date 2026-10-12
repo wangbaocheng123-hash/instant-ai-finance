@@ -43,6 +43,7 @@ _SAFE_NONCE = re.compile(r"[A-Za-z0-9._:-]{16,128}")
 _HTTP_METHOD = re.compile(r"[A-Z]{3,16}")
 _CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 _ALLOWED_WORK_TYPES = {"video", "image", "gallery"}
+SOURCE_QUALITY_REPLACEMENT = "source_quality_replacement"
 V1_MEDIA_MIME_TYPES = {
     "video": frozenset({"video/mp4"}),
     "image": frozenset({"image/jpeg", "image/png", "image/webp"}),
@@ -692,6 +693,7 @@ def decode_manifest(body: bytes) -> ValidatedManifest:
             "source_url",
             "cover_url",
             "published_at",
+            "media_update_kind",
         },
         "work",
     )
@@ -709,6 +711,18 @@ def decode_manifest(body: bytes) -> ValidatedManifest:
         "cover_url": _text(work.get("cover_url"), "work.cover_url", maximum=4000, required=False),
         "published_at": _timestamp(work.get("published_at"), "work.published_at", required=False),
     }
+    if "media_update_kind" in work:
+        media_update_kind = _text(
+            work.get("media_update_kind"),
+            "work.media_update_kind",
+            maximum=64,
+        )
+        if media_update_kind != SOURCE_QUALITY_REPLACEMENT:
+            raise BloggerIngestError(
+                "invalid_manifest",
+                "work.media_update_kind 无效。",
+            )
+        normalized_work["media_update_kind"] = media_update_kind
 
     normalized_media = _sanitize_media(payload.get("media"))
     normalized_comments = _sanitize_comment_snapshot(payload.get("comment_snapshot"))

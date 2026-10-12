@@ -33,6 +33,7 @@ DEFAULT_ORIGIN = "http://127.0.0.1:8787"
 SNAPSHOT_VERSION = 3
 SUPPORTED_SNAPSHOT_VERSIONS = {1, 2, SNAPSHOT_VERSION}
 BEIJING_COMMENT_PROJECTION_VERSION = 2
+SOURCE_QUALITY_REPLACEMENT = "source_quality_replacement"
 _DETAIL_LOCK = threading.RLock()
 
 
@@ -728,7 +729,20 @@ class ModelMrClient:
                 return None
             if not media_file or not target.is_file():
                 return None
-            return {"work_id": work_id, "media_hash": digest}
+            candidate = {"work_id": work_id, "media_hash": digest}
+            if (
+                entry.get("auto_processing_required") is False
+                and str(entry.get("auto_processing_skip_media_sha256") or "").lower()
+                == digest
+                and self._processing_outputs_complete(detail)
+            ):
+                # A higher-quality replacement for an already processed source
+                # work is still a ready, fully projected arrival.  Mark it as
+                # consumed without turning the new media SHA into a second paid
+                # ASR/keyword task.  Keeping this decision in the transfer map
+                # makes callback-loss reconciliation reach the same result.
+                candidate["processing_required"] = False
+            return candidate
 
     def import_beijing_work(
         self,
@@ -743,6 +757,7 @@ class ModelMrClient:
         media_path: Path | None = None,
         media_sha256: str = "",
         work_type: str = "video",
+        media_update_kind: str = "",
         media_items: list[Mapping[str, Any]] | None = None,
         comments_observer: Callable[[str, int, list[dict[str, Any]]], Any] | None = None,
     ) -> dict[str, Any]:
@@ -755,6 +770,9 @@ class ModelMrClient:
         normalized_work_type = str(work_type or "video").strip().lower()
         if normalized_work_type not in {"video", "image", "gallery"}:
             raise ValueError("来源作品类型无效。")
+        normalized_media_update_kind = str(media_update_kind or "").strip()
+        if normalized_media_update_kind not in {"", SOURCE_QUALITY_REPLACEMENT}:
+            raise ValueError("来源媒体更新类型无效。")
         normalized_media: list[dict[str, Any]] = []
         source_items = list(media_items or [])
         if len(source_items) > 100:
@@ -916,6 +934,41 @@ class ModelMrClient:
                     ),
                     {},
                 )
+            previous_media_hash = str(entry.get("media_sha256") or "").strip().lower()
+            previous_processing_complete = self._processing_outputs_complete(previous)
+            previous_work_type = str(
+                entry.get("work_type") or previous_work.get("work_type") or ""
+            ).strip().lower()
+            previous_skip_hash = str(
+                entry.get("auto_processing_skip_media_sha256") or ""
+            ).strip().lower()
+            auto_processing_required = True
+            processing_skip_media_sha256 = ""
+            if (
+                normalized_work_type == "video"
+                and previous_work_type == "video"
+                and entry
+                and previous_processing_complete
+            ):
+                if (
+                    entry.get("auto_processing_required") is False
+                    and previous_skip_hash == revision_digest
+                    and previous_media_hash == revision_digest
+                ):
+                    # Once an explicit replacement establishes the exemption,
+                    # later comment-only revisions for that exact media object
+                    # retain it without reinterpreting a different SHA.
+                    auto_processing_required = False
+                    processing_skip_media_sha256 = revision_digest
+                elif (
+                    normalized_media_update_kind == SOURCE_QUALITY_REPLACEMENT
+                    and previous_media_hash
+                    and previous_media_hash != revision_digest
+                ):
+                    # Only the signed, explicit source-quality marker may turn
+                    # a changed media SHA into a no-repeat replacement.
+                    auto_processing_required = False
+                    processing_skip_media_sha256 = revision_digest
             previous_title = str(previous_work.get("title") or "").strip()
             incoming_title = (str(title or "").strip() or f"抖音作品 {source_id}")[:120]
             previous_title_source = self._effective_title_source(
@@ -1023,6 +1076,8 @@ class ModelMrClient:
                 "source_revision": revision,
                 "imported_title": incoming_title,
                 "media_sha256": revision_digest,
+                "auto_processing_required": auto_processing_required,
+                "auto_processing_skip_media_sha256": processing_skip_media_sha256,
                 "work_type": normalized_work_type,
                 "comment_projection_version": BEIJING_COMMENT_PROJECTION_VERSION,
             }
@@ -1030,7 +1085,33 @@ class ModelMrClient:
             self._write_json(self.transfer_map_path, mapping)
             if comments_observer is not None:
                 comments_observer("saved", work_id, clean_comments)
-            return {"ok": True, "work_id": work_id, "status": "imported"}
+            return {
+                "ok": True,
+                "work_id": work_id,
+                "status": "imported",
+                "processing_required": auto_processing_required,
+            }
+
+    @staticmethod
+    def _processing_outputs_complete(detail: Mapping[str, Any]) -> bool:
+        """Whether a projected video already owns both paid pipeline outputs."""
+
+        if not isinstance(detail, Mapping):
+            return False
+        original = str(
+            (detail.get("video_text") if isinstance(detail.get("video_text"), Mapping) else {}).get(
+                "text"
+            )
+            or ""
+        ).strip()
+        work = detail.get("work") if isinstance(detail.get("work"), Mapping) else {}
+        keyword_info = clean_keyword_info(work.get("keyword_info"), work.get("keywords"))
+        has_keyword_metadata = bool(
+            keyword_info["keywords"]
+            or keyword_info["confirmed_at"]
+            or keyword_info["schema_version"]
+        )
+        return bool(original and has_keyword_metadata)
 
     def pending_beijing_comment_projection_sources(self) -> list[str]:
         """Return transferred works whose saved comment threads use the old projection."""

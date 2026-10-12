@@ -149,6 +149,34 @@ class TransferContractTests(unittest.TestCase):
         self.assertEqual(first["work"]["revision"], 7)
         self.assertEqual([item["role"] for item in first["media"]], ["video", "cover"])
 
+    def test_source_quality_marker_is_optional_exact_and_legacy_digest_stable(self) -> None:
+        legacy = sample_manifest()
+        self.assertNotIn("media_update_kind", legacy["work"])
+        self.assertEqual(
+            legacy["revision_sha256"],
+            "ead3e88d4191df42f4950e336c8ad891717b8248952e6d4bbf019b46204fa00b",
+        )
+        work = {
+            "platform": "douyin",
+            "source_work_id": "7654321098765432100",
+            "work_type": "video",
+            "title": "示例作品",
+            "description": "公开作品说明",
+            "source_url": "https://www.douyin.com/video/7654321098765432100",
+            "published_at": "2026-08-30T10:00:00+08:00",
+            "media_update_kind": "source_quality_replacement",
+        }
+        marked = sample_manifest(work=work)
+        self.assertEqual(
+            marked["work"]["media_update_kind"],
+            "source_quality_replacement",
+        )
+        self.assertNotEqual(marked["revision_sha256"], legacy["revision_sha256"])
+
+        work["media_update_kind"] = "generic_media_repair"
+        with self.assertRaises(TransferContractError):
+            sample_manifest(work=work)
+
     def test_comment_bundle_is_stable_sorted_and_preserves_tree_and_tristate(self) -> None:
         first_bytes, first_descriptor = build_comment_bundle(sample_comments())
         second_bytes, second_descriptor = build_comment_bundle(reversed(sample_comments()))

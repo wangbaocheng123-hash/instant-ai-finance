@@ -21,6 +21,20 @@ H.264/AAC、`yuv420p` 和网页快启 MP4；画面长宽通常各缩小约一半
 `comments_collected_at`。发布器还必须在新进程启动后看到一次真实成功主页检查，不能再把
 “进程处于 active”误当成采集正常。
 
+只有所有者明确指定一条已经入库的视频时，运维端才可用精确作品 ID 执行一次源清晰度
+重下：
+
+```bash
+python3 library_admin.py redownload-hd <15至22位抖音作品ID>
+python3 library_admin.py hd-redownload-status <同一作品ID>
+```
+
+该命令不改变默认半尺寸策略，不接受“最新”等模糊目标。它先在同目录隐藏暂存区下载
+最高画质候选，以 stream copy 生成 `+faststart` MP4，核对作品 ID、视频/音频、编码、
+像素格式、分辨率严格提升及允许范围内的相同时长后才原子替换；失败恢复旧文件。同一作品
+跨进程互斥，完成状态写入 Git 外 `hd_redownload_runs`，供签名桥把这类媒体修订明确标记为
+`source_quality_replacement`，新加坡据此保留既有原文与关键词且不重复通知。
+
 运行测试：
 
 ```bash

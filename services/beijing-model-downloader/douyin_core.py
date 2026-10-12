@@ -190,9 +190,87 @@ def inspect_mp4(path: Path) -> dict[str, object]:
         "duration_seconds": duration,
         "has_moov": b"moov" in data,
         "has_mdat": b"mdat" in data,
+        "fast_start": 0 <= head.find(b"moov") < head.find(b"mdat"),
         "has_video": has_video,
         "has_audio": has_audio,
     }
+
+
+def probe_media_streams(path: Path) -> dict[str, dict[str, object]]:
+    """Return the first video and audio stream signatures from a media file.
+
+    The source-quality re-download path uses this strict probe both to prove
+    that stream copy did not change the selected video and to prevent an
+    equal-or-lower-resolution result from replacing the existing compact copy.
+    """
+
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise ParseError("服务器缺少 ffprobe，无法核验高清原视频。")
+    try:
+        completed = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,codec_name,width,height,pix_fmt",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        rows = json.loads(completed.stdout or "{}").get("streams", [])
+    except (
+        OSError,
+        ValueError,
+        subprocess.SubprocessError,
+        json.JSONDecodeError,
+    ) as exc:
+        raise ParseError(f"无法核验媒体流信息：{exc}") from exc
+
+    signatures: dict[str, dict[str, object]] = {}
+    for row in rows:
+        stream_type = str(row.get("codec_type") or "")
+        if stream_type not in {"video", "audio"} or stream_type in signatures:
+            continue
+        signatures[stream_type] = {
+            "codec_name": str(row.get("codec_name") or ""),
+            "width": int(row.get("width") or 0),
+            "height": int(row.get("height") or 0),
+            "pix_fmt": str(row.get("pix_fmt") or ""),
+        }
+    return signatures
+
+
+def video_dimensions(path: Path) -> tuple[int, int]:
+    video = probe_media_streams(path).get("video", {})
+    width = int(video.get("width") or 0)
+    height = int(video.get("height") or 0)
+    if width <= 0 or height <= 0:
+        raise ParseError("无法取得有效视频分辨率，已拒绝替换现有文件。")
+    return width, height
+
+
+def source_quality_improves(
+    previous: tuple[int, int],
+    replacement: tuple[int, int],
+) -> bool:
+    """Require a strictly larger image without shrinking either dimension."""
+
+    old_width, old_height = previous
+    new_width, new_height = replacement
+    if min(old_width, old_height, new_width, new_height) <= 0:
+        return False
+    return (
+        new_width >= old_width
+        and new_height >= old_height
+        and new_width * new_height > old_width * old_height
+    )
 
 
 def compact_video_command(
@@ -246,6 +324,49 @@ def compact_video_command(
             "64k",
             "-ac",
             "2",
+            "-movflags",
+            "+faststart",
+            str(output),
+        ]
+    )
+    return command
+
+
+def source_quality_video_command(
+    ffmpeg: str,
+    video_input: Path,
+    output: Path,
+    *,
+    audio_input: Path | None = None,
+) -> list[str]:
+    """Build a lossless remux command for one explicit HD re-download.
+
+    This command intentionally contains no scale, codec, pixel-format or
+    bitrate conversion.  The selected highest-quality Douyin video stream and
+    its audio are copied as-is; ffmpeg only rebuilds the MP4 container so its
+    index is at the front for mobile playback.
+    """
+
+    command = [
+        ffmpeg,
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        str(video_input),
+    ]
+    if audio_input is not None:
+        command.extend(["-i", str(audio_input)])
+    command.extend(
+        [
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0" if audio_input is not None else "0:a:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "copy",
             "-movflags",
             "+faststart",
             str(output),
@@ -1185,6 +1306,9 @@ def download_video(
     progress: Callable[[int, int, float], None] | None = None,
     cancel_event: threading.Event | None = None,
     custom_filename: str | None = None,
+    *,
+    source_quality: bool = False,
+    minimum_video_dimensions: tuple[int, int] | None = None,
 ) -> Path:
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
@@ -1283,24 +1407,95 @@ def download_video(
             separate_audio = audio_part
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
-            raise ParseError("服务器缺少 ffmpeg，无法生成手机轻量视频。")
-        completed = subprocess.run(
-            compact_video_command(
+            purpose = "高清原视频" if source_quality else "手机轻量视频"
+            raise ParseError(f"服务器缺少 ffmpeg，无法生成{purpose}。")
+        source_video_streams: dict[str, dict[str, object]] = {}
+        source_audio_streams: dict[str, dict[str, object]] = {}
+        if source_quality:
+            source_video_streams = probe_media_streams(part)
+            source_audio_streams = (
+                probe_media_streams(separate_audio)
+                if separate_audio is not None
+                else source_video_streams
+            )
+            source_video = source_video_streams.get("video", {})
+            source_audio = source_audio_streams.get("audio", {})
+            if not (
+                source_video.get("codec_name")
+                and int(source_video.get("width") or 0) > 0
+                and int(source_video.get("height") or 0) > 0
+                and source_video.get("pix_fmt")
+                and source_audio.get("codec_name")
+            ):
+                raise ParseError(
+                    "最高画质候选的编解码器、像素格式或分辨率不完整，"
+                    "已拒绝替换现有文件。"
+                )
+        command = (
+            source_quality_video_command(
                 ffmpeg,
                 part,
                 mux_part,
                 audio_input=separate_audio,
-            ),
+            )
+            if source_quality
+            else compact_video_command(
+                ffmpeg,
+                part,
+                mux_part,
+                audio_input=separate_audio,
+            )
+        )
+        completed = subprocess.run(
+            command,
             capture_output=True,
             text=True,
             timeout=600,
         )
         if completed.returncode != 0:
             detail = (completed.stderr or "未知错误").strip()[-500:]
-            raise ParseError(f"手机轻量视频生成失败：{detail}")
+            purpose = "高清原视频无损封装" if source_quality else "手机轻量视频生成"
+            raise ParseError(f"{purpose}失败：{detail}")
         merged = inspect_mp4(mux_part)
         if not merged["has_video"] or not merged["has_audio"]:
-            raise ParseError("轻量 MP4 未同时包含画面和声音。")
+            purpose = "高清 MP4" if source_quality else "轻量 MP4"
+            raise ParseError(f"{purpose} 未同时包含画面和声音。")
+        if source_quality:
+            output_streams = probe_media_streams(mux_part)
+            source_video = source_video_streams["video"]
+            source_audio = source_audio_streams["audio"]
+            output_video = output_streams.get("video", {})
+            output_audio = output_streams.get("audio", {})
+            video_fields = ("codec_name", "width", "height", "pix_fmt")
+            if any(
+                output_video.get(field) != source_video.get(field)
+                for field in video_fields
+            ):
+                raise ParseError(
+                    "高清封装改变了源视频编解码器、像素格式或分辨率，"
+                    "已拒绝替换现有文件。"
+                )
+            if output_audio.get("codec_name") != source_audio.get("codec_name"):
+                raise ParseError(
+                    "高清封装改变了源音频编解码器，已拒绝替换现有文件。"
+                )
+            replacement_dimensions = (
+                int(output_video.get("width") or 0),
+                int(output_video.get("height") or 0),
+            )
+            if minimum_video_dimensions is not None and not source_quality_improves(
+                minimum_video_dimensions,
+                replacement_dimensions,
+            ):
+                old_width, old_height = minimum_video_dimensions
+                new_width, new_height = replacement_dimensions
+                raise ParseError(
+                    "最高画质候选没有高于现有压缩版："
+                    f"现有 {old_width}x{old_height}，候选 {new_width}x{new_height}；"
+                    "已保留现有文件。"
+                )
+            if not bool(merged["fast_start"]):
+                raise ParseError("高清 MP4 未生成网页快启索引，已拒绝替换现有文件。")
         os.replace(mux_part, output)
         return output
     except Exception:

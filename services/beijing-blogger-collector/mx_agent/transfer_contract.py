@@ -27,6 +27,7 @@ SAFE_NONCE_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 HTTP_METHOD_PATTERN = re.compile(r"^[A-Z]{3,16}$")
 CONTROL_CHARACTER_PATTERN = re.compile(r"[\x00-\x1f\x7f]")
 ALLOWED_WORK_TYPES = {"video", "image", "gallery"}
+SOURCE_QUALITY_REPLACEMENT = "source_quality_replacement"
 V1_MEDIA_MIME_TYPES = {
     "video": frozenset({"video/mp4"}),
     "image": frozenset({"image/jpeg", "image/png", "image/webp"}),
@@ -560,6 +561,56 @@ def sanitize_manifest(value: Mapping[str, Any]) -> dict[str, Any]:
     if work_type not in ALLOWED_WORK_TYPES:
         raise TransferContractError("work.work_type 无效。")
 
+    sanitized_work = {
+        "platform": _safe_text(
+            work.get("platform") or "douyin",
+            limit=32,
+            field="work.platform",
+            required=True,
+        ),
+        "source_work_id": _safe_id(
+            work.get("source_work_id"),
+            field="work.source_work_id",
+        ),
+        "revision": _safe_int(
+            work.get("revision"),
+            field="work.revision",
+            minimum=1,
+        ),
+        "work_type": work_type,
+        "title": _safe_text(work.get("title"), limit=1000, field="work.title"),
+        "description": _safe_text(
+            work.get("description"),
+            limit=20_000,
+            field="work.description",
+        ),
+        "source_url": _safe_text(
+            work.get("source_url"),
+            limit=4000,
+            field="work.source_url",
+        ),
+        "cover_url": _safe_text(
+            work.get("cover_url"),
+            limit=4000,
+            field="work.cover_url",
+        ),
+        "published_at": _safe_iso_datetime(
+            work.get("published_at"),
+            field="work.published_at",
+            required=False,
+        ),
+    }
+    if "media_update_kind" in work:
+        media_update_kind = _safe_text(
+            work.get("media_update_kind"),
+            limit=64,
+            field="work.media_update_kind",
+            required=True,
+        )
+        if media_update_kind != SOURCE_QUALITY_REPLACEMENT:
+            raise TransferContractError("work.media_update_kind 无效。")
+        sanitized_work["media_update_kind"] = media_update_kind
+
     sanitized = {
         "schema_version": SCHEMA_VERSION,
         "captured_at": _safe_iso_datetime(value.get("captured_at"), field="captured_at"),
@@ -597,45 +648,7 @@ def sanitize_manifest(value: Mapping[str, Any]) -> dict[str, Any]:
                 field="creator.platform_user_id",
             ),
         },
-        "work": {
-            "platform": _safe_text(
-                work.get("platform") or "douyin",
-                limit=32,
-                field="work.platform",
-                required=True,
-            ),
-            "source_work_id": _safe_id(
-                work.get("source_work_id"),
-                field="work.source_work_id",
-            ),
-            "revision": _safe_int(
-                work.get("revision"),
-                field="work.revision",
-                minimum=1,
-            ),
-            "work_type": work_type,
-            "title": _safe_text(work.get("title"), limit=1000, field="work.title"),
-            "description": _safe_text(
-                work.get("description"),
-                limit=20_000,
-                field="work.description",
-            ),
-            "source_url": _safe_text(
-                work.get("source_url"),
-                limit=4000,
-                field="work.source_url",
-            ),
-            "cover_url": _safe_text(
-                work.get("cover_url"),
-                limit=4000,
-                field="work.cover_url",
-            ),
-            "published_at": _safe_iso_datetime(
-                work.get("published_at"),
-                field="work.published_at",
-                required=False,
-            ),
-        },
+        "work": sanitized_work,
         "media": _sanitize_media(value.get("media")),
         "comment_snapshot": _sanitize_comment_snapshot(value.get("comment_snapshot")),
     }

@@ -4,15 +4,25 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import re
+import signal
 import sqlite3
 import sys
 from pathlib import Path
+
+from library_store import LibraryStore
 
 
 DEFAULT_DATABASE = Path(
     os.environ.get(
         "MODEL_DOWNLOADER_DATABASE",
         "/var/lib/model-downloader/library.sqlite3",
+    )
+)
+DEFAULT_COMMENTS = Path(
+    os.environ.get(
+        "MODEL_DOWNLOADER_COMMENTS",
+        "/srv/model-downloader/comments",
     )
 )
 
@@ -121,6 +131,59 @@ def export_comments(
     print(f"已导出 {len(rows)} 条评论：{output}")
 
 
+def show_hd_redownload_status(
+    connection: sqlite3.Connection,
+    video_id: str | None,
+) -> None:
+    table = connection.execute(
+        """
+        SELECT 1 FROM sqlite_master
+        WHERE type = 'table' AND name = 'hd_redownload_runs'
+        """
+    ).fetchone()
+    if table is None:
+        print("没有高清重下运行记录。")
+        return
+    where = "WHERE runs.video_id = ?" if video_id else ""
+    values: tuple[str, ...] = (video_id,) if video_id else ()
+    rows = connection.execute(
+        f"""
+        SELECT runs.video_id, videos.title, runs.status,
+               runs.requested_at, runs.started_at, runs.finished_at,
+               runs.previous_width, runs.previous_height,
+               runs.result_width, runs.result_height,
+               runs.result_file_size, runs.message
+        FROM hd_redownload_runs AS runs
+        JOIN videos ON videos.video_id = runs.video_id
+        {where}
+        ORDER BY runs.requested_at DESC
+        """,
+        values,
+    ).fetchall()
+    if not rows:
+        print("没有高清重下运行记录。")
+        return
+    for row in rows:
+        previous = (
+            f"{row['previous_width']}x{row['previous_height']}"
+            if row["previous_width"] and row["previous_height"]
+            else "未知"
+        )
+        result = (
+            f"{row['result_width']}x{row['result_height']}"
+            if row["result_width"] and row["result_height"]
+            else "未生成"
+        )
+        print(
+            f"{row['video_id']}  {row['status']}  "
+            f"{previous} -> {result}  "
+            f"请求 {row['requested_at']}  完成 {row['finished_at'] or '-'}"
+        )
+        print(f"  {row['title']}")
+        if row["message"]:
+            print(f"  {row['message']}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="模型下载器视频与评论库工具")
     parser.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
@@ -134,11 +197,51 @@ def main() -> int:
     )
     export_parser.add_argument("video_id")
     export_parser.add_argument("output", type=Path)
+    hd_parser = subparsers.add_parser(
+        "redownload-hd",
+        help="同步把精确作品 ID 重下为经校验的源清晰度视频",
+    )
+    hd_parser.add_argument("video_id")
+    hd_status_parser = subparsers.add_parser(
+        "hd-redownload-status",
+        help="只读查看高清重下成功或失败记录",
+    )
+    hd_status_parser.add_argument("video_id", nargs="?")
     args = parser.parse_args()
 
     if not args.database.exists():
         print(f"数据库尚不存在：{args.database}", file=sys.stderr)
         return 1
+    if args.command in {"redownload-hd", "hd-redownload-status"}:
+        video_id = getattr(args, "video_id", None)
+        if video_id and not re.fullmatch(r"\d{15,22}", video_id):
+            print("必须提供精确的 15–22 位抖音作品 ID。", file=sys.stderr)
+            return 2
+        if args.command == "hd-redownload-status":
+            with connect(args.database) as connection:
+                show_hd_redownload_status(connection, video_id)
+            return 0
+        store = LibraryStore(args.database, DEFAULT_COMMENTS)
+        from model_downloader_daemon import CloudMonitor, setup_logging
+
+        logger = setup_logging()
+        monitor = CloudMonitor(logger, library=store)
+        signal.signal(signal.SIGTERM, monitor.stop)
+        signal.signal(signal.SIGINT, monitor.stop)
+        try:
+            result = monitor.redownload_hd_now(video_id)
+        except Exception as exc:
+            logger.exception("作品 %s 高清重下失败。", video_id)
+            print(f"高清重下失败：{exc}", file=sys.stderr)
+            return 3
+        previous = result["previous_dimensions"]
+        current = result["result_dimensions"]
+        print(
+            f"高清重下完成：{video_id}，"
+            f"{previous[0]}x{previous[1]} -> {current[0]}x{current[1]}，"
+            f"{result['file_size']} 字节。"
+        )
+        return 0
     with connect(args.database) as connection:
         if args.command == "status":
             status(connection)

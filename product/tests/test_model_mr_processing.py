@@ -12,7 +12,7 @@ import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from instant_ai.auth import OwnerAuth
 from instant_ai.model_mr import ModelMrClient
@@ -147,6 +147,59 @@ class ProcessingTests(unittest.TestCase):
             ).fetchone()
         self.assertGreaterEqual(cursor, boundary)
         self.assertLess(cursor, completed)
+
+    def test_reconciliation_consumes_completed_quality_replacement_without_paid_work_or_event(self):
+        completed = int(time.time())
+        event_sink = Mock()
+        processor = ModelMrProcessor(
+            self.client,
+            lambda since, limit: [
+                {
+                    'ready': True,
+                    'work_id': 1,
+                    'media_hash': 'c' * 64,
+                    'processing_required': False,
+                    'completed_at': completed,
+                }
+            ],
+            event_sink,
+        )
+
+        self.assertEqual(processor.reconcile_new_arrivals(), 0)
+        self.assertFalse(processor.process_one())
+        with processor.db() as connection:
+            jobs = connection.execute('SELECT count(*) FROM jobs').fetchone()[0]
+            watermark = connection.execute(
+                'SELECT last_reconciled FROM settings WHERE id=1'
+            ).fetchone()[0]
+        self.assertEqual(jobs, 0)
+        self.assertGreaterEqual(watermark, completed)
+        self.asr.assert_not_called()
+        self.kw.assert_not_called()
+        event_sink.assert_not_called()
+
+    def test_reconciliation_still_processes_new_or_incomplete_arrival(self):
+        completed = int(time.time())
+        events = []
+        processor = ModelMrProcessor(
+            self.client,
+            lambda since, limit: [
+                {
+                    'ready': True,
+                    'work_id': 1,
+                    'media_hash': 'd' * 64,
+                    'completed_at': completed,
+                }
+            ],
+            lambda work_id, text: events.append((work_id, text)),
+        )
+
+        self.assertEqual(processor.reconcile_new_arrivals(), 1)
+        self.assertTrue(processor.process_one())
+        self.assertEqual(processor.status()['items'][0]['state'], 'done')
+        self.asr.assert_called_once()
+        self.kw.assert_called_once_with('科技股原文')
+        self.assertEqual(events, [(1, '科技股原文')])
 
     def test_arrival_pipeline_persists_original_keywords_and_deduplicates(self):
         self.enqueue()

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class LibraryStore:
@@ -179,6 +179,22 @@ class LibraryStore:
                     title TEXT NOT NULL DEFAULT '',
                     published_at TEXT NOT NULL DEFAULT '',
                     deleted_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS hd_redownload_runs (
+                    video_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    requested_at TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    previous_width INTEGER,
+                    previous_height INTEGER,
+                    result_width INTEGER,
+                    result_height INTEGER,
+                    result_file_size INTEGER,
+                    message TEXT NOT NULL DEFAULT '',
+                    FOREIGN KEY(video_id) REFERENCES videos(video_id)
+                        ON DELETE CASCADE
                 );
                 """
             )
@@ -443,6 +459,167 @@ class LibraryStore:
                 """,
                 (self._iso(now), video_id),
             )
+
+    def video_for_hd_redownload(self, video_id: str) -> sqlite3.Row | None:
+        with self._connect() as connection:
+            return connection.execute(
+                """
+                SELECT video_id, title, description, source_url, published_at,
+                       file_path, file_size, duration_seconds, work_type,
+                       download_status
+                FROM videos
+                WHERE video_id = ?
+                """,
+                (video_id,),
+            ).fetchone()
+
+    def start_hd_redownload(
+        self,
+        video_id: str,
+        now: datetime,
+        previous_dimensions: tuple[int, int],
+    ) -> None:
+        timestamp = self._iso(now)
+        width, height = previous_dimensions
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT work_type FROM videos WHERE video_id = ?",
+                (video_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"作品不存在：{video_id}")
+            if str(row["work_type"] or "video") != "video":
+                raise ValueError("图文作品不能执行高清视频重下。")
+            connection.execute(
+                """
+                INSERT INTO hd_redownload_runs(
+                    video_id, status, requested_at, started_at,
+                    previous_width, previous_height, message
+                ) VALUES (?, 'running', ?, ?, ?, ?, '')
+                ON CONFLICT(video_id) DO UPDATE SET
+                    status = 'running',
+                    requested_at = excluded.requested_at,
+                    started_at = excluded.started_at,
+                    finished_at = NULL,
+                    previous_width = excluded.previous_width,
+                    previous_height = excluded.previous_height,
+                    result_width = NULL,
+                    result_height = NULL,
+                    result_file_size = NULL,
+                    message = ''
+                """,
+                (video_id, timestamp, timestamp, int(width), int(height)),
+            )
+
+    def fail_hd_redownload(
+        self,
+        video_id: str,
+        now: datetime,
+        message: str,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE hd_redownload_runs
+                SET status = 'failed', finished_at = ?, message = ?
+                WHERE video_id = ?
+                """,
+                (self._iso(now), str(message or "")[:1000], video_id),
+            )
+
+    def complete_hd_redownload(
+        self,
+        *,
+        video_id: str,
+        title: str,
+        file_path: Path,
+        file_size: int,
+        duration_seconds: float | None,
+        completed_at: datetime,
+        previous_dimensions: tuple[int, int],
+        result_dimensions: tuple[int, int],
+    ) -> None:
+        """Commit the new media metadata and audit result together."""
+
+        timestamp = self._iso(completed_at)
+        old_width, old_height = previous_dimensions
+        new_width, new_height = result_dimensions
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE videos SET
+                    title = CASE
+                        WHEN ? LIKE '抖音作品_%' THEN title ELSE ?
+                    END,
+                    work_type = 'video',
+                    downloaded_at = ?,
+                    file_path = ?,
+                    file_size = ?,
+                    duration_seconds = ?,
+                    download_status = 'downloaded',
+                    updated_at = ?
+                WHERE video_id = ?
+                """,
+                (
+                    title,
+                    title,
+                    timestamp,
+                    str(file_path),
+                    int(file_size),
+                    duration_seconds,
+                    timestamp,
+                    video_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError(f"作品不存在：{video_id}")
+            cursor = connection.execute(
+                """
+                UPDATE hd_redownload_runs SET
+                    status = 'completed',
+                    finished_at = ?,
+                    previous_width = ?,
+                    previous_height = ?,
+                    result_width = ?,
+                    result_height = ?,
+                    result_file_size = ?,
+                    message = 'source-quality stream copy verified'
+                WHERE video_id = ? AND status = 'running'
+                """,
+                (
+                    timestamp,
+                    int(old_width),
+                    int(old_height),
+                    int(new_width),
+                    int(new_height),
+                    int(file_size),
+                    video_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("高清重下运行记录不存在或状态异常。")
+
+    def hd_redownload_status(
+        self,
+        video_id: str | None = None,
+    ) -> list[sqlite3.Row]:
+        where = "WHERE runs.video_id = ?" if video_id else ""
+        values: tuple[str, ...] = (video_id,) if video_id else ()
+        with self._connect() as connection:
+            return connection.execute(
+                f"""
+                SELECT runs.video_id, videos.title, runs.status,
+                       runs.requested_at, runs.started_at, runs.finished_at,
+                       runs.previous_width, runs.previous_height,
+                       runs.result_width, runs.result_height,
+                       runs.result_file_size, runs.message
+                FROM hd_redownload_runs AS runs
+                JOIN videos ON videos.video_id = runs.video_id
+                {where}
+                ORDER BY runs.requested_at DESC
+                """,
+                values,
+            ).fetchall()
 
     def mark_downloaded(
         self,

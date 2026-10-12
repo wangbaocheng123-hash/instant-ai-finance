@@ -202,8 +202,9 @@ class ModelMrProcessor:
                 break
             work_id = int(arrival.get("work_id") or 0)
             media_hash = str(arrival.get("media_hash") or "")
-            self._enqueue(work_id, f"arrival:{work_id}:{media_hash}", "arrival", True, "")
-            queued += 1
+            if arrival.get("processing_required", True) is not False:
+                self._enqueue(work_id, f"arrival:{work_id}:{media_hash}", "arrival", True, "")
+                queued += 1
             watermark = max(watermark, completed_at)
         with self.db() as conn:
             conn.execute("UPDATE settings SET last_reconciled=? WHERE id=1", (watermark,))

@@ -14,7 +14,12 @@ from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo
 
-from .transfer_contract import build_comment_bundle, new_manifest, sha256_file
+from .transfer_contract import (
+    SOURCE_QUALITY_REPLACEMENT,
+    build_comment_bundle,
+    new_manifest,
+    sha256_file,
+)
 from .transfer_outbox import TransferOutbox
 
 
@@ -170,6 +175,7 @@ class ModelDownloaderBridge:
             state_dirty = False
             with closing(self._connect()) as connection:
                 video_columns = self._table_columns(connection, "videos")
+                hd_redownload_states = self._hd_redownload_states(connection)
                 work_type_column = (
                     "work_type" if "work_type" in video_columns else "'video' AS work_type"
                 )
@@ -193,9 +199,24 @@ class ModelDownloaderBridge:
                     row = dict(raw)
                     source_id = str(row.get("video_id") or "").strip()
                     try:
+                        hd_redownload_state = hd_redownload_states.get(source_id, {})
+                        hd_redownload_status = str(
+                            hd_redownload_state.get("status") or ""
+                        )
+                        if hd_redownload_status == "running":
+                            # The HD command switches the file before committing
+                            # its audit row.  Never observe that narrow window as
+                            # an ordinary, unmarked media revision.
+                            skipped += 1
+                            continue
                         media = self._media(connection, row)
                         if not media:
                             raise ValueError("model_downloader_media_missing")
+                        media_update_kind = self._media_update_kind(
+                            row,
+                            media,
+                            hd_redownload_state,
+                        )
                         captured_at = next(
                             (
                                 value
@@ -210,7 +231,12 @@ class ModelDownloaderBridge:
                             "1970-01-01T00:00:00+00:00",
                         )
                         comments = self._comments(connection, source_id, captured_at)
-                        signature = self._signature(row, comments, media)
+                        signature = self._signature(
+                            row,
+                            comments,
+                            media,
+                            media_update_kind=media_update_kind,
+                        )
                     except (OSError, ValueError, sqlite3.Error):
                         skipped += 1
                         continue
@@ -244,6 +270,7 @@ class ModelDownloaderBridge:
                             comments,
                             media,
                             captured_at=captured_at,
+                            media_update_kind=media_update_kind,
                         )
                     except (OSError, ValueError, sqlite3.Error):
                         skipped += 1
@@ -335,11 +362,70 @@ class ModelDownloaderBridge:
             }
         ]
 
+    def _hd_redownload_states(
+        self,
+        connection: sqlite3.Connection,
+    ) -> dict[str, dict[str, Any]]:
+        """Load optional HD states once per scan without requiring schema 6."""
+
+        columns = self._table_columns(connection, "hd_redownload_runs")
+        if not {"video_id", "status"}.issubset(columns):
+            return {}
+        finished_at_column = (
+            "finished_at" if "finished_at" in columns else "NULL AS finished_at"
+        )
+        result_size_column = (
+            "result_file_size"
+            if "result_file_size" in columns
+            else "NULL AS result_file_size"
+        )
+        result: dict[str, dict[str, Any]] = {}
+        for row in connection.execute(
+            f"SELECT video_id, status, {finished_at_column}, {result_size_column} "
+            "FROM hd_redownload_runs"
+        ).fetchall():
+            source_id = str(row["video_id"] or "").strip()
+            status = str(row["status"] or "").strip().lower()
+            if source_id and status in {"running", "completed"}:
+                result[source_id] = {
+                    "status": status,
+                    "finished_at": str(row["finished_at"] or ""),
+                    "result_file_size": row["result_file_size"],
+                }
+        return result
+
+    @staticmethod
+    def _media_update_kind(
+        row: Mapping[str, Any],
+        media: list[dict[str, Any]],
+        hd_redownload_state: Mapping[str, Any],
+    ) -> str:
+        """Bind the completed audit marker to the media that operation installed."""
+
+        if (
+            str(hd_redownload_state.get("status") or "") != "completed"
+            or str(row.get("work_type") or "video") != "video"
+            or len(media) != 1
+        ):
+            return ""
+        try:
+            finished_at = _iso(hd_redownload_state.get("finished_at"))
+            downloaded_at = _iso(row.get("downloaded_at"))
+            result_size = int(hd_redownload_state.get("result_file_size"))
+            actual_size = Path(media[0]["path"]).stat().st_size
+        except (OSError, TypeError, ValueError):
+            return ""
+        if finished_at and finished_at == downloaded_at and result_size == actual_size:
+            return SOURCE_QUALITY_REPLACEMENT
+        return ""
+
     def _signature(
         self,
         row: Mapping[str, Any],
         comments: list[dict[str, Any]],
         media: list[dict[str, Any]],
+        *,
+        media_update_kind: str = "",
     ) -> str:
         media_rows = []
         for item in media:
@@ -382,6 +468,8 @@ class ModelDownloaderBridge:
                 row.get("description"),
                 media_rows,
             ]
+        if media_update_kind:
+            value["media_update_kind"] = media_update_kind
         payload = json.dumps(
             value,
             ensure_ascii=False,
@@ -465,6 +553,7 @@ class ModelDownloaderBridge:
         media_items: list[dict[str, Any]],
         *,
         captured_at: str,
+        media_update_kind: str = "",
     ) -> dict[str, Any]:
         source_id = str(row.get("video_id") or "").strip()
         if not source_id:
@@ -528,6 +617,27 @@ class ModelDownloaderBridge:
             platform="douyin",
             source_work_id=source_id,
         )
+        work_manifest = {
+            "platform": "douyin",
+            "source_work_id": source_id,
+            "work_type": (
+                "gallery"
+                if work_type == "image" and len(media_descriptors) > 1
+                else "image"
+                if work_type == "image"
+                else "video"
+            ),
+            "title": _wire_text(row.get("title"), 1000),
+            "description": _wire_text(row.get("description"), 20000),
+            "source_url": str(
+                row.get("source_url")
+                or f"https://www.douyin.com/{'note' if work_type == 'image' else 'video'}/{source_id}"
+            ),
+            "cover_url": "",
+            "published_at": _iso(row.get("published_at")) or None,
+        }
+        if media_update_kind:
+            work_manifest["media_update_kind"] = media_update_kind
         manifest = new_manifest(
             collector_node_id=self.collector_node_id,
             collector_key_id=self.collector_key_id,
@@ -539,25 +649,7 @@ class ModelDownloaderBridge:
                 "platform": "douyin",
                 "platform_user_id": "model-mr",
             },
-            work={
-                "platform": "douyin",
-                "source_work_id": source_id,
-                "work_type": (
-                    "gallery"
-                    if work_type == "image" and len(media_descriptors) > 1
-                    else "image"
-                    if work_type == "image"
-                    else "video"
-                ),
-                "title": _wire_text(row.get("title"), 1000),
-                "description": _wire_text(row.get("description"), 20000),
-                "source_url": str(
-                    row.get("source_url")
-                    or f"https://www.douyin.com/{'note' if work_type == 'image' else 'video'}/{source_id}"
-                ),
-                "cover_url": "",
-                "published_at": _iso(row.get("published_at")) or None,
-            },
+            work=work_manifest,
             work_revision=reservation.work_revision,
             media=media_descriptors,
             comment_snapshot={

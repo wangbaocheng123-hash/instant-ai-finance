@@ -223,6 +223,27 @@ class BloggerManifestIngestTests(unittest.TestCase):
         self.assertEqual(stored["manifest"]["media"][0]["role"], "video")
         self.assertEqual(stored["manifest"]["comment_snapshot"]["captured_count"], 2)
 
+    def test_optional_source_quality_marker_is_exact_and_legacy_body_stays_compatible(self) -> None:
+        legacy = decode_manifest(GOLDEN_BODY)
+        self.assertNotIn("media_update_kind", legacy.normalized["work"])
+        self.assertEqual(legacy.revision_sha256, GOLDEN_REVISION_SHA256)
+
+        marked = _manifest(revision=8, sequence=42)
+        marked["work"]["media_update_kind"] = "source_quality_replacement"
+        marked = _rehash(marked)
+        validated = decode_manifest(_canonical(marked))
+        self.assertEqual(
+            validated.normalized["work"]["media_update_kind"],
+            "source_quality_replacement",
+        )
+
+        marked["work"]["media_update_kind"] = "generic_media_repair"
+        marked = _rehash(marked)
+        self._assert_error(
+            "invalid_manifest",
+            lambda: decode_manifest(_canonical(marked)),
+        )
+
     def test_manifest_limit_allows_exactly_one_mib_and_rejects_one_byte_more(self) -> None:
         exact = GOLDEN_BODY + (b" " * (MAX_MANIFEST_BYTES - len(GOLDEN_BODY)))
         self.assertEqual(len(exact), MAX_MANIFEST_BYTES)
