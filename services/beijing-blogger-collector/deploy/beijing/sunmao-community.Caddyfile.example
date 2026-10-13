@@ -1,0 +1,19 @@
+# Public, read-only entrance for the mortise-and-tenon community. The site is
+# intentionally separate from collector.amuyeye.com: it has no owner login,
+# no collector API route and no access to either Beijing runtime data root.
+
+xn--4pv19va7008a.com {
+    encode zstd gzip
+
+    rewrite * /community{uri}
+    reverse_proxy 127.0.0.1:18797
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+}

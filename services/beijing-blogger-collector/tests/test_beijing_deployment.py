@@ -140,6 +140,20 @@ class BeijingDeploymentContractTests(unittest.TestCase):
         self.assertIn("systemctl reload caddy.service", script)
         self.assertNotIn("systemctl restart blogger-collector", script)
 
+    def test_public_sunmao_domain_only_exposes_the_community_surface(self) -> None:
+        caddy = self.read("sunmao-community.Caddyfile.example")
+        script = self.read("apply-sunmao-community-caddy.sh")
+        self.assertIn("xn--4pv19va7008a.com", caddy)
+        self.assertIn("rewrite * /community{uri}", caddy)
+        self.assertIn("reverse_proxy 127.0.0.1:18797", caddy)
+        self.assertNotIn("forward_auth", caddy)
+        self.assertNotIn("/api/collector", caddy)
+        self.assertNotIn("127.0.0.1:8787", caddy)
+        self.assertIn("caddy validate --adapter caddyfile", script)
+        self.assertIn("restore_previous_config", script)
+        self.assertIn("systemctl reload caddy.service", script)
+        self.assertNotIn("systemctl restart blogger-collector", script)
+
 
 if __name__ == "__main__":
     unittest.main()

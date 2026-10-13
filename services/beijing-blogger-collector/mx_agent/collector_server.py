@@ -33,6 +33,7 @@ DEFAULT_PORT = 18797
 MAX_REQUEST_BODY_BYTES = 16 * 1024
 SAFE_TRANSFER_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}")
 COLLECTOR_WEB_DIR = ROOT_DIR / "collector_web"
+COMMUNITY_WEB_DIR = ROOT_DIR / "community_web"
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
@@ -49,6 +50,14 @@ STATIC_FILES = {
     "/north-pole-collector-icon-1024.png": ("north-pole-collector-icon-1024.png", "image/png"),
     "/north-pole-collector-icon-192.png": ("north-pole-collector-icon-192.png", "image/png"),
     "/north-pole-collector-icon-512.png": ("north-pole-collector-icon-512.png", "image/png"),
+}
+COMMUNITY_STATIC_FILES = {
+    "/community": ("index.html", "text/html; charset=utf-8"),
+    "/community/": ("index.html", "text/html; charset=utf-8"),
+    "/community/index.html": ("index.html", "text/html; charset=utf-8"),
+    "/community/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/community/styles.css": ("styles.css", "text/css; charset=utf-8"),
+    "/community/videos.json": ("videos.json", "application/json; charset=utf-8"),
 }
 ROOT_STATIC_FILES: dict[str, tuple[Path, str]] = {}
 ASSET_ROUTE = re.compile(r"^/api/collector/assets/([1-9][0-9]*)/content$")
@@ -877,11 +886,16 @@ class CollectorRequestHandler(BaseHTTPRequestHandler):
 
     def _static(self, path: str) -> bool:
         descriptor = STATIC_FILES.get(path)
+        community_descriptor = COMMUNITY_STATIC_FILES.get(path)
         root_descriptor = ROOT_STATIC_FILES.get(path)
-        if descriptor is None and root_descriptor is None:
+        if descriptor is None and community_descriptor is None and root_descriptor is None:
             return False
+        is_community = community_descriptor is not None
         if root_descriptor is not None:
             source_path, content_type = root_descriptor
+        elif community_descriptor is not None:
+            filename, content_type = community_descriptor
+            source_path = COMMUNITY_WEB_DIR / filename
         else:
             filename, content_type = descriptor  # type: ignore[misc]
             source_path = COLLECTOR_WEB_DIR / filename
@@ -899,9 +913,17 @@ class CollectorRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'self'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' data:; media-src 'self'; connect-src 'self'; "
-            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+            (
+                "default-src 'self'; script-src 'self'; style-src 'self'; "
+                "img-src 'self' data: https://*.douyinpic.com; "
+                "media-src 'none'; connect-src 'self'; object-src 'none'; "
+                "base-uri 'none'; frame-ancestors 'none'"
+                if is_community
+                else
+                "default-src 'self'; script-src 'self'; style-src 'self'; "
+                "img-src 'self' data:; media-src 'self'; connect-src 'self'; "
+                "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+            ),
         )
         self.end_headers()
         self.wfile.write(body)
