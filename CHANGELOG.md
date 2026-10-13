@@ -2,6 +2,7 @@
 
 ## 2026-10-13 — 榫卯 AI 社区改为独立并列服务（0.2.0，本地就绪、未迁移生产）
 
+- 所有者随后明确授权首次独立迁移发布；`sunmao-production`已创建并指向`c74aec4403d1aee3a1caa90fad161da85debb2a4`，`beijing-production`保持`10fdb3a`。Alibaba Cloud Client窗口可识别但连续两次状态捕获超时，按安全规则没有盲发命令或回退网页控制台；服务器与Caddy尚未改变，公网仍是首版，等待客户端重开后续作业。
 - 所有者明确纠正：榫卯AI社区与北京博主采集器是并列应用，只是共用同一Git仓库和北京服务器。新增ADR-0067，把社区页面、交流存储和HTTP接口迁至`services/sunmao-ai-community/`；采集器删除社区代码与配置并恢复`1.2.0`，先前拟定的采集器`1.3.0`方案在发布前作废。
 - 社区现使用独立`0.2.0`版本、`sunmao-ai-community.service`、回环18808、`/opt/sunmao-community`、`/var/lib/sunmao-community/community.sqlite3`和`sunmao-production`。固定发布器只读取社区子树并只重启社区；Caddy模板直接代理18808，不再重写到采集器18797。
 - 新增独立安装、一次性发布、回滚和Caddy切换模板，以及15项存储/API/页面/部署契约测试。当前未安装服务器通道、未切换Caddy、未推进`sunmao-production`或`beijing-production`；线上首版继续可用，等待社区自己的首次迁移发布授权。
