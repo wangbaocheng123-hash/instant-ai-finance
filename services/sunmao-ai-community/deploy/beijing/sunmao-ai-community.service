@@ -1,0 +1,36 @@
+[Unit]
+Description=Sunmao AI Community
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sunmaocommunity
+Group=sunmaocommunity
+WorkingDirectory=/opt/sunmao-community/current
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=TZ=Asia/Shanghai
+Environment=SUNMAO_COMMUNITY_DATABASE_PATH=/var/lib/sunmao-community/community.sqlite3
+ExecStart=/usr/bin/python3 -m sunmao_community --host 127.0.0.1 --port 18808
+Restart=always
+RestartSec=10
+TimeoutStopSec=20
+KillMode=mixed
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadOnlyPaths=/opt/sunmao-community/current
+ReadWritePaths=/var/lib/sunmao-community
+MemoryHigh=256M
+MemoryMax=384M
+TasksMax=96
+
+[Install]
+WantedBy=multi-user.target

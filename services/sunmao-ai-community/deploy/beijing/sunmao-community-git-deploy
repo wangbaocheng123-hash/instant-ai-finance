@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 027
+
+readonly PUBLIC_REPOSITORY="https://github.com/wangbaocheng123-hash/instant-ai-finance.git"
+readonly PRODUCTION_REF="refs/remotes/origin/sunmao-production"
+readonly SUBTREE="services/sunmao-ai-community"
+readonly BARE_REPOSITORY="/opt/sunmao-community/production-source.git"
+readonly RELEASES_DIR="/opt/sunmao-community/releases"
+readonly CURRENT_LINK="/opt/sunmao-community/current"
+readonly STATE_DIR="/var/lib/sunmao-community/git-deploy"
+readonly ACCEPTED_FILE="${STATE_DIR}/accepted-revision"
+readonly DEPLOYED_FILE="${STATE_DIR}/deployed-revision"
+readonly TREE_FILE="${STATE_DIR}/deployed-tree"
+readonly FAILED_FILE="${STATE_DIR}/failed-revision"
+readonly LOCK_FILE="/run/lock/sunmao-community-git-deploy.lock"
+readonly SERVICE_NAME="sunmao-ai-community.service"
+readonly GIT_USER="sunmaogit"
+readonly BUILD_USER="sunmaobuild"
+readonly HEALTH_URL="http://127.0.0.1:18808/health"
+readonly VERSION_URL="http://127.0.0.1:18808/health/version"
+
+target_commit=""
+stage_dir=""
+archive_dir=""
+mark_target_failed=false
+
+log() { printf 'sunmao-community-git-deploy: %s\n' "$*"; }
+fail() { log "ERROR $*" >&2; exit 1; }
+validate_revision() { [[ "$1" =~ ^[0-9a-f]{40}$ ]] || fail "invalid Git revision"; }
+require_command() { command -v "$1" >/dev/null 2>&1 || fail "required command is missing: $1"; }
+git_read() { runuser -u "${GIT_USER}" -- git --git-dir="${BARE_REPOSITORY}" "$@"; }
+
+read_revision_file() {
+  local value=""
+  [[ -f "$1" ]] && value="$(<"$1")" && validate_revision "${value}"
+  printf '%s' "${value}"
+}
+
+cleanup() {
+  local path
+  for path in "${stage_dir}" "${archive_dir}"; do
+    [[ -n "${path}" && -d "${path}" ]] || continue
+    case "${path}" in "${RELEASES_DIR}"/.*.tmp.*) rm -rf -- "${path}" ;; *) fail "unsafe temporary path" ;; esac
+  done
+}
+
+on_exit() {
+  local status=$?
+  if [[ ${status} -ne 0 && "${mark_target_failed}" == true && -n "${target_commit}" ]]; then
+    printf '%s\n' "${target_commit}" >"${FAILED_FILE}"
+    chmod 0644 "${FAILED_FILE}"
+  fi
+  cleanup
+  exit "${status}"
+}
+trap on_exit EXIT
+
+service_is_healthy() {
+  systemctl is-active --quiet "${SERVICE_NAME}" &&
+    curl --fail --silent --show-error --max-time 4 "${HEALTH_URL}" >/dev/null
+}
+
+wait_for_revision() {
+  local expected="$1" payload actual
+  for _attempt in $(seq 1 20); do
+    if service_is_healthy; then
+      payload="$(curl --fail --silent --show-error --max-time 4 "${VERSION_URL}" || true)"
+      actual="$(printf '%s' "${payload}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("repository_revision", ""))' 2>/dev/null || true)"
+      [[ "${actual}" == "${expected}" ]] && return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+switch_current() {
+  local release_path="$1" temporary_link="/opt/sunmao-community/.current.$$.tmp"
+  validate_release_path "${release_path}"
+  [[ -d "${release_path}" ]] || fail "release directory is missing"
+  rm -f -- "${temporary_link}"
+  ln -s "${release_path}" "${temporary_link}"
+  mv -Tf -- "${temporary_link}" "${CURRENT_LINK}"
+}
+
+validate_release_path() {
+  local release_path="$1" revision
+  [[ "$(dirname -- "${release_path}")" == "${RELEASES_DIR}" ]] || fail "release path escaped managed directory"
+  revision="$(basename -- "${release_path}")"
+  validate_revision "${revision}"
+}
+
+validate_tree() {
+  local entry metadata path mode object_type relative lower count=0
+  while IFS= read -r -d '' entry; do
+    metadata="${entry%%$'\t'*}"; path="${entry#*$'\t'}"; mode="${metadata%% *}"
+    metadata="${metadata#* }"; object_type="${metadata%% *}"
+    [[ "${object_type}" == blob && ( "${mode}" == 100644 || "${mode}" == 100755 ) ]] || fail "special Git object rejected"
+    [[ "${path}" == "${SUBTREE}/"* ]] || fail "Git path escaped approved subtree"
+    relative="${path#"${SUBTREE}/"}"; lower="${relative,,}"
+    [[ -n "${relative}" && "${relative}" =~ ^[A-Za-z0-9._/@+-]+$ && "${relative}" != *"../"* ]] || fail "unsafe Git path"
+    case "/${lower}" in */.env|*/.env.*|*/data/*|*/logs/*|*/backup*/*|*.sqlite|*.sqlite3|*.db|*.pem|*.key) fail "sensitive runtime path rejected" ;; esac
+    count=$((count + 1))
+  done <"$1"
+  (( count > 0 )) || fail "approved subtree is empty"
+}
+
+run_release_tests() {
+  local source_dir="$1" output_file="${source_dir}/.test-output" count
+  chown -R "${BUILD_USER}:${BUILD_USER}" "${source_dir}"
+  if ! systemd-run --quiet --wait --collect --pipe --service-type=exec \
+      -p "User=${BUILD_USER}" -p "Group=${BUILD_USER}" -p "WorkingDirectory=${source_dir}" \
+      -p PrivateNetwork=yes -p PrivateTmp=yes -p ProtectHome=yes -p ProtectSystem=strict \
+      -p "ReadWritePaths=${source_dir}" /usr/bin/env PYTHONDONTWRITEBYTECODE=1 \
+      /usr/bin/python3 -m unittest discover -s tests -p 'test_*.py' >"${output_file}" 2>&1; then
+    tail -n 25 "${output_file}" >&2 || true
+    fail "isolated test suite failed"
+  fi
+  count="$(sed -nE 's/^Ran ([0-9]+) tests?.*/\1/p' "${output_file}" | tail -n 1)"
+  [[ "${count}" =~ ^[0-9]+$ && "${count}" -ge 10 ]] || fail "test count is below the 10-test release floor"
+  rm -f -- "${output_file}"
+}
+
+[[ "$(id -u)" -eq 0 ]] || fail "publisher must run as root"
+for command in basename chmod chown cp curl date dirname flock git id install ln mktemp mv python3 readlink rm runuser sed seq sleep stat systemctl systemd-run tail tar; do require_command "${command}"; done
+[[ "$(stat -c '%U:%G:%a' "$0")" == "root:root:755" ]] || fail "publisher ownership or mode is unsafe"
+id "${GIT_USER}" >/dev/null 2>&1 || fail "Git reader user is missing"
+id "${BUILD_USER}" >/dev/null 2>&1 || fail "build user is missing"
+[[ -d "${BARE_REPOSITORY}" ]] || fail "bare production source is missing"
+install -d -o root -g root -m 0755 "${RELEASES_DIR}" "${STATE_DIR}"
+exec 9>"${LOCK_FILE}"
+flock -n 9 || { log "another deployment is running"; exit 0; }
+
+[[ "$(git_read remote get-url origin)" == "${PUBLIC_REPOSITORY}" ]] || fail "unexpected public Git origin"
+git_read fetch --filter=blob:none --no-tags --prune origin "+refs/heads/sunmao-production:${PRODUCTION_REF}"
+target_commit="$(git_read rev-parse "${PRODUCTION_REF}^{commit}")"; validate_revision "${target_commit}"
+failed_commit="$(read_revision_file "${FAILED_FILE}")"
+[[ "${failed_commit}" != "${target_commit}" ]] || { log "known failed revision skipped=${target_commit}"; exit 0; }
+accepted_commit="$(read_revision_file "${ACCEPTED_FILE}")"
+[[ -z "${accepted_commit}" ]] || git_read merge-base --is-ancestor "${accepted_commit}" "${target_commit}" || fail "production branch is not a fast-forward"
+target_tree="$(git_read rev-parse "${target_commit}:${SUBTREE}")"; validate_revision "${target_tree}"
+deployed_tree="$(read_revision_file "${TREE_FILE}")"
+if [[ -n "${accepted_commit}" && "${accepted_commit}" == "${target_commit}" && "${target_tree}" == "${deployed_tree}" ]]; then
+  service_is_healthy || fail "current service is unhealthy"; log "already accepted revision=${target_commit}"; exit 0
+fi
+
+mark_target_failed=true
+listing="$(mktemp "${STATE_DIR}/tree.XXXXXX")"
+git_read ls-tree -r -z "${target_commit}" -- "${SUBTREE}" >"${listing}"
+validate_tree "${listing}"; rm -f -- "${listing}"
+for required in VERSION sunmao_community/app.py web/index.html web/videos.json; do git_read cat-file -e "${target_commit}:${SUBTREE}/${required}" || fail "required release file missing"; done
+
+previous_release=""
+if [[ -L "${CURRENT_LINK}" ]]; then
+  previous_release="$(readlink -f "${CURRENT_LINK}")"
+  validate_release_path "${previous_release}"
+fi
+release_dir="${RELEASES_DIR}/${target_commit}"
+validate_release_path "${release_dir}"
+if [[ ! -e "${release_dir}" ]]; then
+  archive_dir="$(mktemp -d "${RELEASES_DIR}/.${target_commit}.tmp.archive.XXXXXX")"
+  stage_dir="$(mktemp -d "${RELEASES_DIR}/.${target_commit}.tmp.release.XXXXXX")"
+  git_read archive "${target_commit}" "${SUBTREE}" | tar --extract --directory "${archive_dir}" --no-same-owner --no-same-permissions
+  cp -a "${archive_dir}/${SUBTREE}/." "${stage_dir}/"; rm -rf -- "${archive_dir}"; archive_dir=""
+  printf '{"repository_revision":"%s","deployed_time":"%s"}\n' "${target_commit}" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >"${stage_dir}/DEPLOYMENT.json"
+  run_release_tests "${stage_dir}"
+  printf '%s\n' "${target_commit}" >"${stage_dir}/.sunmao-community-release"
+  chown -R root:root "${stage_dir}"; chmod -R u=rwX,go=rX "${stage_dir}"
+  mv -- "${stage_dir}" "${release_dir}"; stage_dir=""
+else
+  [[ -f "${release_dir}/.sunmao-community-release" ]] || fail "existing release is incomplete"
+  [[ "$(<"${release_dir}/.sunmao-community-release")" == "${target_commit}" ]] || fail "release marker mismatch"
+fi
+
+switch_current "${release_dir}"
+systemctl restart "${SERVICE_NAME}"
+if wait_for_revision "${target_commit}"; then
+  printf '%s\n' "${target_commit}" >"${ACCEPTED_FILE}"
+  printf '%s\n' "${target_commit}" >"${DEPLOYED_FILE}"
+  printf '%s\n' "${target_tree}" >"${TREE_FILE}"
+  chmod 0644 "${ACCEPTED_FILE}" "${DEPLOYED_FILE}" "${TREE_FILE}"
+  rm -f -- "${FAILED_FILE}"; mark_target_failed=false
+  log "deployed revision=${target_commit} tree=${target_tree}"; exit 0
+fi
+
+log "new release failed health checks; rolling back" >&2
+if [[ -n "${previous_release}" && -d "${previous_release}" ]]; then
+  switch_current "${previous_release}"; systemctl restart "${SERVICE_NAME}"
+  service_is_healthy || fail "previous release did not recover"
+fi
+fail "revision ${target_commit} failed"

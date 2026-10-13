@@ -13,4 +13,4 @@
 
 服务器不再定时检查 Git。所有者给 Codex 发布口令后，Codex 先推进 `beijing-production`，再通过 Alibaba Cloud Client 的“发送远程命令”执行一次 `systemctl start --no-block blogger-collector-git-deploy.service`。这些基础设施模板不会由应用发布自行更新；以后修改 publisher 或 unit，仍须通过电脑版 Alibaba Cloud Client 单独审阅和安装。应用发布流程见仓库根目录的 `docs/BEIJING_COLLECTOR_GIT_RELEASE.md`。
 
-榫卯AI社区的静态文件随采集器Git release进入`/opt/blogger-agent/current/community_web`，由同一回环HTTP进程在`/community/*`只读提供。公网域名`xn--4pv19va7008a.com`使用独立`sunmao-community.Caddyfile.example`；首次启用或以后变更该站点时，必须经可信维护通道显式运行`apply-sunmao-community-caddy.sh`。脚本会先备份、格式化、验证并在失败时恢复，不属于普通应用发布步骤，也不得借机改动现有采集器或模型下载器站点。
+榫卯AI社区不是采集器的发布内容。它的源码、服务、数据、Caddy模板和`sunmao-production`链路全部位于`services/sunmao-ai-community/`；采集器发布不得复制社区文件、代理社区路径或重启社区服务，见ADR-0067。

@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-COMMUNITY_ROOT = PROJECT_ROOT / "community_web"
+COMMUNITY_ROOT = PROJECT_ROOT / "web"
 
 
 class SunmaoCommunityTests(unittest.TestCase):

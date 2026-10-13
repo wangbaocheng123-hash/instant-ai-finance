@@ -7,7 +7,6 @@ import mimetypes
 import os
 import re
 import signal
-import sqlite3
 import threading
 import unicodedata
 from dataclasses import dataclass, field
@@ -18,11 +17,6 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import parse_qs, urlsplit
 
-from .community import (
-    CommunityMessageStore,
-    CommunityRateLimiter,
-    validate_community_message,
-)
 from .collector_export import CollectorContentReadyAdapter
 from .creators import CreatorRegistry, CreatorSyncManager
 from .roles import ApplicationRole, require_role
@@ -39,7 +33,6 @@ DEFAULT_PORT = 18797
 MAX_REQUEST_BODY_BYTES = 16 * 1024
 SAFE_TRANSFER_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}")
 COLLECTOR_WEB_DIR = ROOT_DIR / "collector_web"
-COMMUNITY_WEB_DIR = ROOT_DIR / "community_web"
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
@@ -56,14 +49,6 @@ STATIC_FILES = {
     "/north-pole-collector-icon-1024.png": ("north-pole-collector-icon-1024.png", "image/png"),
     "/north-pole-collector-icon-192.png": ("north-pole-collector-icon-192.png", "image/png"),
     "/north-pole-collector-icon-512.png": ("north-pole-collector-icon-512.png", "image/png"),
-}
-COMMUNITY_STATIC_FILES = {
-    "/community": ("index.html", "text/html; charset=utf-8"),
-    "/community/": ("index.html", "text/html; charset=utf-8"),
-    "/community/index.html": ("index.html", "text/html; charset=utf-8"),
-    "/community/app.js": ("app.js", "text/javascript; charset=utf-8"),
-    "/community/styles.css": ("styles.css", "text/css; charset=utf-8"),
-    "/community/videos.json": ("videos.json", "application/json; charset=utf-8"),
 }
 ROOT_STATIC_FILES: dict[str, tuple[Path, str]] = {}
 ASSET_ROUTE = re.compile(r"^/api/collector/assets/([1-9][0-9]*)/content$")
@@ -213,7 +198,6 @@ class CollectorConfiguration:
     collector_node_id: str
     transfer_key_id: str
     transfer_secret: bytes = field(repr=False)
-    community_database_path: Path | None = None
     collector_version: str = "unknown"
     sender_interval_seconds: float = 15.0
     sender_batch_size: int = 10
@@ -249,10 +233,6 @@ class CollectorConfiguration:
                 os.getenv("BLOGGER_AGENT_TRANSFER_KEY_ID", "") or ""
             ).strip(),
             transfer_secret=_transfer_secret(),
-            community_database_path=_runtime_path(
-                "BLOGGER_AGENT_COMMUNITY_DATABASE_PATH",
-                DATA_DIR / "community.sqlite3",
-            ),
             collector_version=_collector_version(),
             sender_interval_seconds=float(
                 _bounded_integer(
@@ -300,7 +280,6 @@ class CollectorRuntime:
         sync_manager: Any,
         sender: Any | None,
         model_downloader_bridge: Any | None = None,
-        community_store: CommunityMessageStore | None = None,
         transfer_issues: tuple[str, ...] = (),
     ) -> None:
         self.configuration = configuration
@@ -311,7 +290,6 @@ class CollectorRuntime:
         self.sync_manager = sync_manager
         self.sender = sender
         self.model_downloader_bridge = model_downloader_bridge
-        self.community_store = community_store
         self.transfer_issues = tuple(transfer_issues)
         self._state_lock = threading.RLock()
         self._sender_stop = threading.Event()
@@ -843,12 +821,6 @@ def build_collector_runtime(
     if transfer_issues:
         model_downloader_bridge.enabled = False
 
-    community_store = (
-        CommunityMessageStore(config.community_database_path)
-        if config.community_database_path is not None
-        else None
-    )
-
     return CollectorRuntime(
         configuration=config,
         storage=storage,
@@ -858,7 +830,6 @@ def build_collector_runtime(
         sync_manager=sync_manager,
         sender=sender,
         model_downloader_bridge=model_downloader_bridge,
-        community_store=community_store,
         transfer_issues=transfer_issues,
     )
 
@@ -869,7 +840,6 @@ class CollectorHTTPServer(ThreadingHTTPServer):
 
     def __init__(self, server_address: tuple[str, int], runtime: CollectorRuntime):
         self.runtime = runtime
-        self.community_rate_limiter = CommunityRateLimiter()
         super().__init__(server_address, CollectorRequestHandler)
 
 
@@ -891,13 +861,7 @@ class CollectorRequestHandler(BaseHTTPRequestHandler):
         except ValueError:
             return False
 
-    def _json(
-        self,
-        payload: Mapping[str, Any],
-        status: HTTPStatus = HTTPStatus.OK,
-        *,
-        headers: Mapping[str, str] | None = None,
-    ) -> None:
+    def _json(self, payload: Mapping[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(
             dict(payload), ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
@@ -908,60 +872,16 @@ class CollectorRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
-        for name, value in (headers or {}).items():
-            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
-    @property
-    def community_store(self) -> CommunityMessageStore | None:
-        return getattr(self.runtime, "community_store", None)
-
-    def _community_origin_allowed(self) -> bool:
-        origin = str(self.headers.get("Origin") or "").strip()
-        host = str(self.headers.get("Host") or "").strip().lower()
-        try:
-            parsed = urlsplit(origin)
-            origin_port = parsed.port
-        except (TypeError, ValueError):
-            return False
-        if (
-            parsed.scheme not in {"http", "https"}
-            or not parsed.hostname
-            or parsed.username
-            or parsed.password
-            or parsed.path not in {"", "/"}
-            or parsed.query
-            or parsed.fragment
-            or parsed.netloc.lower() != host
-        ):
-            return False
-        if parsed.hostname == "xn--4pv19va7008a.com":
-            return parsed.scheme == "https" and origin_port in {None, 443}
-        try:
-            return parsed.scheme == "http" and ipaddress.ip_address(parsed.hostname).is_loopback
-        except ValueError:
-            return parsed.hostname == "localhost" and parsed.scheme == "http"
-
-    def _community_client_key(self) -> str:
-        forwarded = str(self.headers.get("X-Forwarded-For") or "").split(",", 1)[0].strip()
-        try:
-            return ipaddress.ip_address(forwarded).compressed
-        except ValueError:
-            return str(self.client_address[0])
-
     def _static(self, path: str) -> bool:
         descriptor = STATIC_FILES.get(path)
-        community_descriptor = COMMUNITY_STATIC_FILES.get(path)
         root_descriptor = ROOT_STATIC_FILES.get(path)
-        if descriptor is None and community_descriptor is None and root_descriptor is None:
+        if descriptor is None and root_descriptor is None:
             return False
-        is_community = community_descriptor is not None
         if root_descriptor is not None:
             source_path, content_type = root_descriptor
-        elif community_descriptor is not None:
-            filename, content_type = community_descriptor
-            source_path = COMMUNITY_WEB_DIR / filename
         else:
             filename, content_type = descriptor  # type: ignore[misc]
             source_path = COLLECTOR_WEB_DIR / filename
@@ -979,17 +899,9 @@ class CollectorRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header(
             "Content-Security-Policy",
-            (
-                "default-src 'self'; script-src 'self'; style-src 'self'; "
-                "img-src 'self' data: https://*.douyinpic.com; "
-                "media-src 'none'; connect-src 'self'; object-src 'none'; "
-                "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
-                if is_community
-                else
-                "default-src 'self'; script-src 'self'; style-src 'self'; "
-                "img-src 'self' data:; media-src 'self'; connect-src 'self'; "
-                "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
-            ),
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' data:; media-src 'self'; connect-src 'self'; "
+            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
         )
         self.end_headers()
         self.wfile.write(body)
@@ -1075,19 +987,6 @@ class CollectorRequestHandler(BaseHTTPRequestHandler):
         path = _strip_collector_prefix(parsed.path)
         if self._static(path):
             return
-        if path == "/community/api/messages":
-            if self.community_store is None:
-                self._json({"error": "community_unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
-                return
-            query = parse_qs(parsed.query, keep_blank_values=True)
-            limit = _query_integer(query, "limit", 80, 1, 100)
-            try:
-                messages = self.community_store.list_messages(limit=limit)
-            except (OSError, sqlite3.Error):
-                self._json({"error": "community_unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
-                return
-            self._json({"messages": messages})
-            return
         if path == "/health":
             self._json(self.runtime.health())
             return
@@ -1141,17 +1040,13 @@ class CollectorRequestHandler(BaseHTTPRequestHandler):
         if self._reject_non_loopback():
             return
         path = _strip_collector_prefix(urlsplit(self.path).path)
-        is_community_post = path == "/community/api/messages"
         if path not in {
             "/api/collector/run-once",
             "/api/collector/resolve-video",
             "/api/collector/transfers/retry",
             "/api/collector/creators",
-        } and not CREATOR_SETTINGS_ROUTE.fullmatch(path) and not is_community_post:
+        } and not CREATOR_SETTINGS_ROUTE.fullmatch(path):
             self._json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
-            return
-        if is_community_post and not self._community_origin_allowed():
-            self._json({"error": "same_origin_required"}, HTTPStatus.FORBIDDEN)
             return
         if str(self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower() != "application/json":
             self._json({"error": "json_content_type_required"}, HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
@@ -1173,37 +1068,6 @@ class CollectorRequestHandler(BaseHTTPRequestHandler):
             return
         if not isinstance(payload, dict):
             self._json({"error": "invalid_request"}, HTTPStatus.BAD_REQUEST)
-            return
-        if is_community_post:
-            if set(payload) != {"nickname", "body"}:
-                self._json({"error": "invalid_request"}, HTTPStatus.BAD_REQUEST)
-                return
-            if self.community_store is None:
-                self._json({"error": "community_unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
-                return
-            try:
-                nickname, body = validate_community_message(
-                    payload.get("nickname"), payload.get("body")
-                )
-            except ValueError as exc:
-                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
-                return
-            allowed, retry_after = self.server.community_rate_limiter.allow(  # type: ignore[attr-defined]
-                self._community_client_key()
-            )
-            if not allowed:
-                self._json(
-                    {"error": "rate_limited", "retry_after": retry_after},
-                    HTTPStatus.TOO_MANY_REQUESTS,
-                    headers={"Retry-After": str(retry_after)},
-                )
-                return
-            try:
-                message = self.community_store.create_message(nickname, body)
-            except (OSError, sqlite3.Error):
-                self._json({"error": "community_unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
-                return
-            self._json({"message": message}, HTTPStatus.CREATED)
             return
         if path == "/api/collector/resolve-video":
             if set(payload) != {"creator_id", "video_url"} or not all(

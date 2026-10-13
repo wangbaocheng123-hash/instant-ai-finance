@@ -1,0 +1,26 @@
+[Unit]
+Description=Deploy Sunmao AI Community from its approved Git production branch
+After=network-online.target
+Wants=network-online.target
+ConditionPathIsDirectory=/opt/sunmao-community/production-source.git
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0027
+ExecStart=/usr/local/sbin/sunmao-community-git-deploy
+TimeoutStartSec=15min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/opt/sunmao-community /var/lib/sunmao-community/git-deploy /run/lock
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

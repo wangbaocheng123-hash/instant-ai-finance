@@ -6,10 +6,8 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
-
-from mx_agent.community import CommunityMessageStore, validate_community_message
-from mx_agent.collector_server import create_http_server
+from sunmao_community.app import create_http_server
+from sunmao_community.store import CommunityMessageStore, validate_community_message
 
 
 class CommunityMessageTests(unittest.TestCase):
@@ -35,9 +33,7 @@ class CommunityMessageTests(unittest.TestCase):
                     validate_community_message(nickname, body)
 
     def test_http_api_requires_same_origin_and_rate_limits_posts(self) -> None:
-        store = CommunityMessageStore(self.root / "community.sqlite3")
-        runtime = SimpleNamespace(community_store=store)
-        server = create_http_server(runtime, port=0)
+        server = create_http_server(port=0, database_path=self.root / "community.sqlite3")
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
 
@@ -59,7 +55,7 @@ class CommunityMessageTests(unittest.TestCase):
             local_origin = f"http://127.0.0.1:{server.server_port}"
             status, _headers, payload = request(
                 "POST",
-                "/community/api/messages",
+                "/api/messages",
                 {"nickname": "木友", "body": "第一条公开交流"},
                 origin="https://attacker.example",
             )
@@ -68,7 +64,7 @@ class CommunityMessageTests(unittest.TestCase):
 
             status, _headers, payload = request(
                 "POST",
-                "/community/api/messages",
+                "/api/messages",
                 {"nickname": "木友", "body": "第一条公开交流"},
                 origin=local_origin,
             )
@@ -77,7 +73,7 @@ class CommunityMessageTests(unittest.TestCase):
 
             status, headers, payload = request(
                 "POST",
-                "/community/api/messages",
+                "/api/messages",
                 {"nickname": "木友", "body": "发送太快"},
                 origin=local_origin,
             )
@@ -85,11 +81,20 @@ class CommunityMessageTests(unittest.TestCase):
             self.assertIn("Retry-After", headers)
             self.assertEqual(payload["error"], "rate_limited")
 
-            status, _headers, payload = request("GET", "/community/api/messages?limit=10")
+            status, _headers, payload = request("GET", "/api/messages?limit=10")
             self.assertEqual(status, 200)
             self.assertEqual(len(payload["messages"]), 1)
             self.assertEqual(payload["messages"][0]["nickname"], "木友")
+
+            status, _headers, payload = request("GET", "/health/version")
+            self.assertEqual(status, 200)
+            self.assertEqual(payload["service"], "sunmao-ai-community")
+            self.assertEqual(payload["version"], "0.2.0")
         finally:
             server.shutdown()
             server.server_close()
             thread.join(timeout=3)
+
+    def test_server_refuses_non_loopback_binding(self) -> None:
+        with self.assertRaises(ValueError):
+            create_http_server(host="0.0.0.0", port=0, database_path=self.root / "bad.sqlite3")
