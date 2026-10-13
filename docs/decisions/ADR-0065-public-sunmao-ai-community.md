@@ -1,7 +1,7 @@
 # ADR-0065：公开榫卯 AI 社区的首个只读作品索引
 
 - 日期：2026-10-13
-- 状态：已采纳、已实现并推送主线；待所有者确认后正式发布
+- 状态：已采纳、已实现并正式发布
 - 目标版本：北京博主采集器 `1.2.0`
 
 ## 背景
@@ -30,3 +30,9 @@
 发布前必须验证34集连续且链接唯一、所有链接均为HTTPS抖音作品、所有封面均为HTTPS抖音图片、页面不含`video`/`audio`/`iframe`、手机双列无横向溢出、桌面卡片可读、卡片新窗口使用`noopener noreferrer`。服务器上线后再验证域名HTTPS、静态资源、CSP、34张卡片和至少首末两条精确跳转。
 
 应用回滚使用新Git提交安全快进；Caddy脚本每次修改前保留原配置，验证或reload失败自动恢复。DNS撤销只删除本次根域A记录，不触碰`collector.amuyeye.com`、`grandpaamu.com`或两项北京业务资料。
+
+## 正式发布证据
+
+- 2026-10-13，`beijing-production`安全快进至`10fdb3a313f8851c8e7963fb29bc2935dfb164ae`；固定发布器完成隔离构建、测试、原子切换和健康检查，`/opt/blogger-agent/current`及`/health/version`均精确回报该提交与版本`1.2.0`。
+- 阿里云权威DNS根域A记录为`xn--4pv19va7008a.com -> 47.93.214.76`、TTL 600秒。独立Caddy站点通过可恢复脚本应用，备份为`/etc/caddy/backups/Caddyfile.20261013T010855Z`；Caddy配置有效、服务active且HTTPS证书验证通过。
+- 公网`https://阿木爷爷.com/`返回HTTP 200，浏览器实际显示34张卡片和34个封面来源；首末精确跳转为抖音作品`7143069642955738408`和`7684469334751644970`。页面无`video`、`audio`或`iframe`，HSTS、CSP（含`media-src 'none'`）、`nosniff`与`no-referrer`响应头生效。
