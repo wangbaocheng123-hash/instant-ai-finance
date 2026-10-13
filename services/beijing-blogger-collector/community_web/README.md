@@ -1,16 +1,26 @@
-# 榫卯 AI 社区静态展示面
+# 榫卯 AI 社区
 
-第一版只展示阿木爷爷抖音公开合集“榫卯108道”的标题和封面，点击卡片跳转原视频。页面不托管视频、不读取采集器或模型下载器资料，也不包含账号和写入能力。
+社区首页由三个底部入口组成：左侧“尺寸型”、中间“交流区”、右侧“榫卯108道”。默认主屏是交流区；尺寸型先保留后续工艺品尺寸连接的位置；榫卯108道继续展示阿木爷爷抖音公开合集的标题与封面，并跳转原视频。
+
+## 交流区边界
+
+- 游客填写称呼后即可发表纯文字，称呼最多20字，正文最多500字。
+- 浏览器每15秒自动刷新一次公开内容。
+- 服务端要求同源提交，并按来源地址限制为至少15秒一条、每小时最多10条；来源地址仅在内存中用于限流，不写入数据库。
+- 社区内容单独保存在`community.sqlite3`，默认保留90天且最多5000条，不与采集器业务库混用。
+- 当前不支持图片、附件、账号、私信或富文本；前端只以`textContent`显示内容。
 
 ## 本地预览
 
-在本目录启动任意静态 HTTP 服务后打开首页，例如：
+交流区需要后端接口，不能只用静态文件服务器。PowerShell 中可使用临时数据库启动完整本地预览：
 
 ```powershell
-python -m http.server 4173 --bind 127.0.0.1
+$env:BLOGGER_AGENT_ROLE="collector"
+$env:BLOGGER_AGENT_COMMUNITY_DATABASE_PATH="$env:TEMP\sunmao-community-preview.sqlite3"
+python -m mx_agent.collector_server --host 127.0.0.1 --port 4173
 ```
 
-正式服务由北京采集器在`/community/*`提供；独立域名的Caddy站点把根路径改写到该前缀。
+打开`http://127.0.0.1:4173/community/`。正式服务由北京采集器在`/community/*`提供；独立域名的Caddy站点把根路径改写到该前缀。
 
 ## 更新作品
 
@@ -19,6 +29,6 @@ python -m http.server 4173 --bind 127.0.0.1
 更新后至少运行：
 
 ```powershell
-python -m unittest tests.test_sunmao_community tests.test_beijing_deployment tests.test_collector_server
+python -m unittest tests.test_sunmao_community tests.test_community_messages tests.test_beijing_deployment tests.test_collector_server
 node --check community_web/app.js
 ```

@@ -43,7 +43,7 @@ class SunmaoCommunityTests(unittest.TestCase):
                     video["title"].startswith(f"第{video['episode']}集 |")
                 )
 
-    def test_first_version_is_title_cover_and_link_only(self) -> None:
+    def test_video_cards_remain_title_cover_and_link_only(self) -> None:
         html = (COMMUNITY_ROOT / "index.html").read_text(encoding="utf-8")
         script = (COMMUNITY_ROOT / "app.js").read_text(encoding="utf-8")
         self.assertIn('id="videoGrid"', html)
@@ -52,6 +52,40 @@ class SunmaoCommunityTests(unittest.TestCase):
         self.assertIn('link.target = "_blank"', script)
         self.assertIn('link.rel = "noopener noreferrer"', script)
         self.assertNotRegex(html + script, re.compile(r"<(?:video|audio|iframe)\b", re.I))
+
+    def test_bottom_navigation_opens_discussion_sizes_and_joint_views(self) -> None:
+        html = (COMMUNITY_ROOT / "index.html").read_text(encoding="utf-8")
+        script = (COMMUNITY_ROOT / "app.js").read_text(encoding="utf-8")
+        css = (COMMUNITY_ROOT / "styles.css").read_text(encoding="utf-8")
+        self.assertLess(
+            html.index('data-view-target="sizes"'),
+            html.index('data-view-target="exchange"'),
+        )
+        self.assertLess(
+            html.index('data-view-target="exchange"'),
+            html.index('data-view-target="joints"'),
+        )
+        self.assertIn('<span>尺寸型</span>', html)
+        self.assertIn('<span>交流区</span>', html)
+        self.assertIn('<span>榫卯108道</span>', html)
+        self.assertIn('data-view="exchange"', html)
+        self.assertIn('data-view="sizes"', html)
+        self.assertIn('data-view="joints"', html)
+        self.assertIn('position: fixed;', css)
+        self.assertIn('bottom: 0;', css)
+        self.assertIn('const VALID_VIEWS = new Set(["exchange", "sizes", "joints"])', script)
+
+    def test_discussion_is_text_only_and_uses_same_origin_api(self) -> None:
+        html = (COMMUNITY_ROOT / "index.html").read_text(encoding="utf-8")
+        script = (COMMUNITY_ROOT / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="messageForm"', html)
+        self.assertIn('maxlength="20"', html)
+        self.assertIn('maxlength="500"', html)
+        self.assertIn("这是公开交流区", html)
+        self.assertIn('fetch("./api/messages?limit=80"', script)
+        self.assertIn('fetch("./api/messages"', script)
+        self.assertIn("body.textContent = message.body", script)
+        self.assertNotIn("innerHTML", script)
 
     def test_mobile_layout_and_accessible_loading_state_are_present(self) -> None:
         html = (COMMUNITY_ROOT / "index.html").read_text(encoding="utf-8")

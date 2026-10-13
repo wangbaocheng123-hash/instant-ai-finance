@@ -2,47 +2,127 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f2eadb">
-  <meta name="description" content="阿木爷爷榫卯108道公开视频索引。">
+  <meta name="description" content="榫卯 AI 社区：交流木作想法、查看工艺尺寸与榫卯108道。">
   <title>榫卯 AI 社区 · 阿木爷爷</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="./" aria-label="返回榫卯 AI 社区首页">
+    <a class="brand" href="#exchange" aria-label="返回榫卯 AI 社区交流区">
       <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
       <span>榫卯 AI 社区</span>
     </a>
-    <a class="source-link" href="https://www.douyin.com/collection/7288595551828854799/1" target="_blank" rel="noopener noreferrer">抖音原合集</a>
+    <p class="header-note">让传统手艺彼此连接</p>
   </header>
 
   <main>
-    <section class="hero" aria-labelledby="page-title">
-      <p class="eyebrow">阿木爷爷 · 公开作品索引</p>
-      <h1 id="page-title">榫卯<span>108</span>道</h1>
-      <p class="intro">一榫一卯，彼此成全。这里先收好每一道结构，点击封面即可回到抖音观看原视频。</p>
-      <div class="collection-count" aria-label="当前已收录34集">
-        <strong id="videoCount">34</strong>
-        <span>道结构 · 持续补齐</span>
+    <section id="view-exchange" class="app-view exchange-view" data-view="exchange" aria-labelledby="exchange-title">
+      <div class="exchange-intro">
+        <p class="eyebrow">木友交流区</p>
+        <h1 id="exchange-title">一起聊木作，<br><span>也聊灵感。</span></h1>
+        <p>这里是社区的主屏。分享你的问题、观点和新想法，让每一位来到这里的木友都能看见并参与交流。</p>
+      </div>
+
+      <div class="discussion-layout">
+        <aside class="composer-panel" aria-labelledby="composer-title">
+          <div>
+            <p class="panel-kicker">发表想法</p>
+            <h2 id="composer-title">说说你正在琢磨什么</h2>
+          </div>
+          <form id="messageForm" class="message-form">
+            <label for="nickname">怎么称呼你</label>
+            <div class="field-shell single-line">
+              <input id="nickname" name="nickname" type="text" maxlength="20" autocomplete="nickname" placeholder="例如：木友小李" required>
+              <span><b id="nicknameCount">0</b>/20</span>
+            </div>
+
+            <label for="messageBody">你的想法</label>
+            <div class="field-shell">
+              <textarea id="messageBody" name="body" maxlength="500" rows="7" placeholder="可以聊榫卯结构、制作问题、工具经验，或你希望社区增加的功能……" required></textarea>
+              <span><b id="messageCount">0</b>/500</span>
+            </div>
+
+            <p class="privacy-note">这是公开交流区，请勿发布手机号、住址等隐私信息。当前仅支持纯文字。</p>
+            <button id="submitMessage" class="primary-button" type="submit">发表到交流区</button>
+            <p id="formStatus" class="form-status" aria-live="polite"></p>
+          </form>
+        </aside>
+
+        <section class="feed-panel" aria-labelledby="feed-title">
+          <div class="feed-heading">
+            <div>
+              <p class="panel-kicker">社区动态</p>
+              <h2 id="feed-title">大家正在聊</h2>
+            </div>
+            <button id="refreshMessages" class="text-button" type="button">刷新</button>
+          </div>
+          <div id="messageFeed" class="message-feed" aria-live="polite" aria-busy="true"></div>
+          <p id="feedStatus" class="feed-status">正在看看大家的新想法…</p>
+        </section>
       </div>
     </section>
 
-    <section class="collection" aria-labelledby="collection-title">
-      <div class="section-heading">
-        <h2 id="collection-title">结构图谱</h2>
-        <p>标题与封面来自阿木爷爷抖音公开合集</p>
+    <section id="view-sizes" class="app-view sizes-view" data-view="sizes" aria-labelledby="sizes-title" hidden>
+      <div class="quiet-hero">
+        <p class="eyebrow">工艺尺寸索引</p>
+        <h1 id="sizes-title">尺寸型</h1>
+        <p>这里将集中放入各种工艺品的尺寸连接。你把资料给我以后，我会按品类、用途和尺寸整理好，让它们一眼就能找到。</p>
       </div>
-      <div id="videoGrid" class="video-grid" aria-live="polite" aria-busy="true"></div>
-      <p id="loadMessage" class="load-message">正在整理木作结构…</p>
-      <noscript><p class="load-message error">需要开启 JavaScript 才能显示作品列表。</p></noscript>
+      <div class="coming-grid" aria-label="即将增加的尺寸内容">
+        <article><span>01</span><h2>器物尺寸</h2><p>收纳常见木作器物的关键长、宽、高与比例。</p></article>
+        <article><span>02</span><h2>结构尺寸</h2><p>记录榫头、卯眼与配合间隙等结构数据。</p></article>
+        <article><span>03</span><h2>图纸连接</h2><p>以后可直接进入对应工艺品的尺寸页或图纸。</p></article>
+      </div>
+      <p class="empty-hint">资料入口已留好，等待你下一步提供内容。</p>
+    </section>
+
+    <section id="view-joints" class="app-view joints-view" data-view="joints" aria-labelledby="joints-title" hidden>
+      <section class="hero">
+        <p class="eyebrow">阿木爷爷 · 公开作品索引</p>
+        <h1 id="joints-title">榫卯<span>108</span>道</h1>
+        <p class="intro">一榫一卯，彼此成全。这里先收好每一道结构，点击封面即可回到抖音观看原视频。</p>
+        <div class="hero-meta">
+          <div class="collection-count" aria-label="当前已收录34集">
+            <strong id="videoCount">34</strong>
+            <span>道结构 · 持续补齐</span>
+          </div>
+          <a class="source-link" href="https://www.douyin.com/collection/7288595551828854799/1" target="_blank" rel="noopener noreferrer">查看抖音原合集</a>
+        </div>
+      </section>
+
+      <section class="collection" aria-labelledby="collection-title">
+        <div class="section-heading">
+          <h2 id="collection-title">结构图谱</h2>
+          <p>标题与封面来自阿木爷爷抖音公开合集</p>
+        </div>
+        <div id="videoGrid" class="video-grid" aria-live="polite" aria-busy="true"></div>
+        <p id="loadMessage" class="load-message">正在整理木作结构…</p>
+        <noscript><p class="load-message error">需要开启 JavaScript 才能显示作品列表。</p></noscript>
+      </section>
     </section>
   </main>
 
   <footer>
-    <p>榫卯 AI 社区 · 第一版</p>
-    <p>本站仅整理公开作品入口，视频版权归原作者及平台所有。</p>
+    <p>榫卯 AI 社区 · 持续生长中</p>
+    <p>榫卯视频仅整理公开作品入口，视频版权归原作者及平台所有。</p>
   </footer>
+
+  <nav class="bottom-nav" aria-label="社区主导航">
+    <button class="nav-item" type="button" data-view-target="sizes" aria-controls="view-sizes" aria-selected="false">
+      <span class="nav-icon size-icon" aria-hidden="true"></span>
+      <span>尺寸型</span>
+    </button>
+    <button class="nav-item is-active" type="button" data-view-target="exchange" aria-controls="view-exchange" aria-selected="true">
+      <span class="nav-icon chat-icon" aria-hidden="true"></span>
+      <span>交流区</span>
+    </button>
+    <button class="nav-item" type="button" data-view-target="joints" aria-controls="view-joints" aria-selected="false">
+      <span class="nav-icon joint-icon" aria-hidden="true"></span>
+      <span>榫卯108道</span>
+    </button>
+  </nav>
 
   <script src="./app.js" defer></script>
 </body>
