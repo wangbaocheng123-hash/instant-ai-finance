@@ -107,7 +107,8 @@ validate_tree() {
 }
 
 run_release_tests() {
-  local source_dir="$1" output_file="${source_dir}/.test-output" count
+  local source_dir="$1"
+  local output_file="${source_dir}/.test-output" count
   chown -R "${BUILD_USER}:${BUILD_USER}" "${source_dir}"
   if ! systemd-run --quiet --wait --collect --pipe --service-type=exec \
       -p "User=${BUILD_USER}" -p "Group=${BUILD_USER}" -p "WorkingDirectory=${source_dir}" \

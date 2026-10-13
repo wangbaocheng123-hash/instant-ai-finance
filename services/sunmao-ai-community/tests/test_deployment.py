@@ -34,6 +34,15 @@ class IndependentDeploymentContractTests(unittest.TestCase):
         self.assertNotIn("systemctl restart blogger-collector", publisher)
         self.assertNotIn("/var/lib/blogger-agent", publisher)
 
+    def test_publisher_does_not_reference_a_local_in_its_declaration(self) -> None:
+        publisher = self.read("sunmao-community-git-deploy")
+        self.assertIn('local source_dir="$1"\n', publisher)
+        self.assertIn('local output_file="${source_dir}/.test-output" count', publisher)
+        self.assertNotIn(
+            'local source_dir="$1" output_file="${source_dir}/.test-output"',
+            publisher,
+        )
+
     def test_caddy_proxies_directly_to_the_peer_service(self) -> None:
         caddy = self.read("sunmao-community.Caddyfile.example")
         apply_script = self.read("apply-caddy.sh")
