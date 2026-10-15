@@ -20,6 +20,7 @@ WEB_DIR = ROOT_DIR / "web"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 18808
 MAX_REQUEST_BODY_BYTES = 8 * 1024
+PUBLIC_HOSTS = frozenset({"amuyeye.com", "xn--4pv19va7008a.com"})
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
@@ -141,7 +142,7 @@ class CommunityRequestHandler(BaseHTTPRequestHandler):
             or parsed.netloc.lower() != host
         ):
             return False
-        if parsed.hostname == "xn--4pv19va7008a.com":
+        if parsed.hostname in PUBLIC_HOSTS:
             return parsed.scheme == "https" and origin_port in {None, 443}
         try:
             return parsed.scheme == "http" and ipaddress.ip_address(parsed.hostname).is_loopback

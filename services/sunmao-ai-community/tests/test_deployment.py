@@ -6,6 +6,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEPLOY_ROOT = PROJECT_ROOT / "deploy" / "beijing"
+SINGAPORE_DEPLOY_ROOT = PROJECT_ROOT / "deploy" / "singapore"
 
 
 class IndependentDeploymentContractTests(unittest.TestCase):
@@ -68,6 +69,55 @@ class IndependentDeploymentContractTests(unittest.TestCase):
         self.assertIn("enable sunmao-ai-community.service", installer)
         self.assertNotIn("systemctl stop blogger-collector", installer)
         self.assertNotIn("systemctl restart blogger-collector", installer)
+
+
+class SingaporeDeploymentContractTests(unittest.TestCase):
+    def read(self, name: str) -> str:
+        return (SINGAPORE_DEPLOY_ROOT / name).read_text(encoding="utf-8")
+
+    def test_caddy_claims_only_the_two_exact_community_hosts(self) -> None:
+        caddy = self.read("sunmao-community.Caddyfile.example")
+        self.assertIn("amuyeye.com, xn--4pv19va7008a.com {", caddy)
+        self.assertIn("reverse_proxy 127.0.0.1:18808", caddy)
+        self.assertNotIn("mcp.amuyeye.com", caddy)
+        self.assertNotIn("*.amuyeye.com", caddy)
+        self.assertNotIn("www.amuyeye.com", caddy)
+
+    def test_caddy_cutover_is_additive_and_guards_peer_sites(self) -> None:
+        script = self.read("apply-caddy.sh")
+        self.assertIn('SITE_TARGET="/etc/caddy/sunmao-community.caddy"', script)
+        self.assertIn('WRAPPER_TARGET="/etc/caddy/Caddyfile.instant-ai"', script)
+        self.assertIn("Time Compass still claims amuyeye.com", script)
+        self.assertIn("https://mcp.amuyeye.com/health", script)
+        self.assertIn("https://mcp.amuyeye.com/mcp", script)
+        self.assertIn("https://compass.grandpaamu.com/", script)
+        self.assertIn("restore_previous_config", script)
+        self.assertNotIn('TARGET="/etc/caddy/Caddyfile"', script)
+        self.assertNotIn("TIME_COMPASS_MCP_DOMAIN=", script)
+        self.assertNotIn("systemctl restart time-compass", script)
+        self.assertNotIn("systemctl restart instant-ai", script)
+
+    def test_installer_grants_only_the_fixed_community_publisher(self) -> None:
+        installer = self.read("install-independent-service.sh")
+        sudoers = self.read("compassdev-sunmao-community-publish.sudoers")
+        self.assertEqual(
+            sudoers.strip(),
+            "compassdev ALL=(root) NOPASSWD: /usr/local/sbin/sunmao-community-git-deploy",
+        )
+        self.assertIn("visudo -cf", installer)
+        self.assertIn("disable --now sunmao-community-git-deploy.timer", installer)
+        self.assertIn("instant-ai.service", installer)
+        self.assertIn("time-compass.service", installer)
+        self.assertNotIn("systemctl restart instant-ai", installer)
+        self.assertNotIn("systemctl restart time-compass", installer)
+
+    def test_cutover_verification_keeps_mcp_auth_boundary(self) -> None:
+        script = self.read("verify-cutover.sh")
+        self.assertIn("https://mcp.amuyeye.com/health", script)
+        self.assertIn("https://mcp.amuyeye.com/mcp", script)
+        self.assertIn("WWW-Authenticate:.*resource_metadata", script)
+        self.assertIn("https://grandpaamu.com/api/health", script)
+        self.assertIn("https://compass.grandpaamu.com/", script)
 
 
 if __name__ == "__main__":

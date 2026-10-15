@@ -1,0 +1,1 @@
+compassdev ALL=(root) NOPASSWD: /usr/local/sbin/sunmao-community-git-deploy
