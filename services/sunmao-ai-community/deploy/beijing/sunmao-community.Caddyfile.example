@@ -1,4 +1,4 @@
-xn--4pv19va7008a.com {
+xn--4pv19va7008a.com, amuyeye.com {
     encode zstd gzip
 
     reverse_proxy 127.0.0.1:18808

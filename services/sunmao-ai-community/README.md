@@ -10,7 +10,7 @@
 - 运行数据库：`/var/lib/sunmao-community/community.sqlite3`
 - 原子发布目录：`/opt/sunmao-community/`
 - 生产分支：`sunmao-production`
-- 社区精确公网域名：`https://amuyeye.com/`、`https://阿木爷爷.com/`
+- 社区精确公网域名：`https://amuyeye.com/`、`https://阿木爷爷.com/`。北京 Caddy 只接管这两个精确根域名；不得接管 `www.amuyeye.com`、`mcp.amuyeye.com` 或创建 `*.amuyeye.com` 通配符。
 
 北京博主采集器继续使用自己的目录、`blogger-collector.service`、端口 `18797`、数据目录和 `beijing-production`；新加坡即时 AI、时变罗盘和 `mcp.amuyeye.com` 也继续使用各自的服务、端口、配置和数据。发布社区不得重启或改写这些并列应用。
 

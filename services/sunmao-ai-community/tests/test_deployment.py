@@ -46,11 +46,16 @@ class IndependentDeploymentContractTests(unittest.TestCase):
     def test_caddy_proxies_directly_to_the_peer_service(self) -> None:
         caddy = self.read("sunmao-community.Caddyfile.example")
         apply_script = self.read("apply-caddy.sh")
+        self.assertIn("xn--4pv19va7008a.com, amuyeye.com {", caddy)
         self.assertIn("reverse_proxy 127.0.0.1:18808", caddy)
+        self.assertNotIn("*.amuyeye.com", caddy)
+        self.assertNotIn("mcp.amuyeye.com", caddy)
         self.assertNotIn("rewrite * /community", caddy)
         self.assertNotIn("18797", caddy)
         self.assertIn("restore_previous_config", apply_script)
         self.assertIn("http://127.0.0.1:18808/health", apply_script)
+        self.assertIn("Host: amuyeye.com", apply_script)
+        self.assertIn('"xn--4pv19va7008a.com {"', apply_script)
         self.assertNotIn("systemctl restart blogger-collector", apply_script)
 
     def test_release_trigger_is_independent(self) -> None:

@@ -6,6 +6,7 @@
 
 ## 本轮已完成
 
+- 已准备`amuyeye.com`根域名与`阿木爷爷.com`共用北京社区服务的精确Caddy配置：只声明两个根域名并代理18808，明确排除`mcp.amuyeye.com`、`www`与通配符。应用本身原已允许两个精确Host；当前尚未切换DNS或声称英文域名上线，必须先应用北京Caddy、再把`@`记录切至北京并完成HTTPS验收。
 - 按所有者最终确认，社区日常源码回到本仓库`services/sunmao-ai-community/`；独立仓库只保留为只读迁移历史。撤销未执行的新加坡社区部署方向，社区仍在北京以18808、独立systemd和Git外SQLite与采集器并列运行。
 - 把独立仓库0.3.2的产品能力回并：第一方匿名访问统计、`/admin/`密码后台、右上角刷新按钮及密码摘要生成工具。继续支持精确`amuyeye.com`和`xn--4pv19va7008a.com`同源，拒绝`mcp.amuyeye.com`与`www`；不回并独立仓库Webhook发布逻辑。
 - 新增ADR-0068和`rejoin-original-repository.sh`。脚本先验证社区与采集器健康，把独立裸仓库和修订状态移入可恢复备份，恢复本仓库`sunmao-production`子树发布器，并关闭Webhook path及所有Git timer；它不修改当前release、数据库、后台密码摘要或Caddy，不重启任何服务。
