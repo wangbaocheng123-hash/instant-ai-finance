@@ -85,6 +85,20 @@ def _configured_admin_password_hash() -> str:
         return ""
 
 
+def _configured_admin_username() -> str:
+    environment_value = str(os.getenv("SUNMAO_ADMIN_USERNAME") or "").strip()
+    if environment_value:
+        return environment_value[:64]
+    configured_path = os.getenv(
+        "SUNMAO_ADMIN_USERNAME_FILE",
+        "/var/lib/sunmao-community/admin-username",
+    )
+    try:
+        return Path(configured_path).read_text(encoding="utf-8").strip()[:64]
+    except OSError:
+        return ""
+
+
 class CommunityHTTPServer(ThreadingHTTPServer):
     def __init__(
         self,
@@ -426,8 +440,10 @@ class CommunityRequestHandler(BaseHTTPRequestHandler):
             return
         if (
             not isinstance(payload, dict)
-            or set(payload) != {"password"}
+            or set(payload) != {"username", "password"}
+            or not isinstance(payload.get("username"), str)
             or not isinstance(payload.get("password"), str)
+            or len(payload["username"]) > 64
             or len(payload["password"]) > 256
         ):
             self._json({"error": "invalid_request"}, HTTPStatus.BAD_REQUEST)
@@ -440,7 +456,9 @@ class CommunityRequestHandler(BaseHTTPRequestHandler):
                 headers={"Retry-After": str(retry_after)},
             )
             return
-        session_token = self.server.admin_auth.login(payload["password"])
+        session_token = self.server.admin_auth.login(
+            payload["username"], payload["password"]
+        )
         if session_token is None:
             self._json({"error": "invalid_credentials"}, HTTPStatus.UNAUTHORIZED)
             return
@@ -476,6 +494,7 @@ def create_http_server(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     database_path: Path | None = None,
+    admin_username: str | None = None,
     admin_password_hash: str | None = None,
 ) -> CommunityHTTPServer:
     try:
@@ -492,8 +511,11 @@ def create_http_server(
         CommunityAnalyticsStore(database),
         AdminSessionManager(
             _configured_admin_password_hash()
-            if admin_password_hash is None
-            else admin_password_hash
+            if admin_password_hash is None else admin_password_hash,
+            username=(
+                _configured_admin_username()
+                if admin_username is None else admin_username
+            ),
         ),
     )
 

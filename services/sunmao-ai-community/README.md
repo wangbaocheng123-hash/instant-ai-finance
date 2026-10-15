@@ -30,7 +30,7 @@ python -m sunmao_community --host 127.0.0.1 --port 4173 --database .runtime/comm
 
 ## 管理后台与访问统计
 
-首页顶部右侧显示“管理后台”按钮，进入 `/admin/` 密码登录页；后台可查看今日与累计匿名访客、访问次数、浏览量、趋势、栏目、来源域名、设备和最近访客。系统只保存浏览器随机标识的摘要，不保存 IP 地址或完整 User-Agent。
+首页顶部右侧显示“管理后台”按钮，进入 `/admin/` 单主人账号和密码登录页；后台可查看今日与累计匿名访客、访问次数、浏览量、趋势、栏目、来源域名、设备和最近访客。系统只保存浏览器随机标识的摘要，不保存 IP 地址或完整 User-Agent。
 
 后台默认关闭。生成密码摘要：
 
@@ -38,7 +38,7 @@ python -m sunmao_community --host 127.0.0.1 --port 4173 --database .runtime/comm
 python -m scripts.generate_admin_password_hash
 ```
 
-生产环境把输出以 `0600` 权限保存到 `/var/lib/sunmao-community/admin-password.hash`，属主为 `sunmaocommunity:sunmaocommunity`，不得写进 Git、日志或聊天。详细演进顺序见 `docs/ADMIN_AND_MONETIZATION_PLAN.md`。
+生产环境把单主人账号以 `0600` 权限保存到 `/var/lib/sunmao-community/admin-username`，把生成器输出的密码摘要保存到同权限的 `/var/lib/sunmao-community/admin-password.hash`；两者属主均为 `sunmaocommunity:sunmaocommunity`，不得写进 Git、日志或聊天。只有账号和密码同时匹配才建立后台会话。详细演进顺序见 `docs/ADMIN_AND_MONETIZATION_PLAN.md`。
 
 ## 从独立仓库回到原仓库
 

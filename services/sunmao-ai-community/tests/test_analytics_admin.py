@@ -88,8 +88,15 @@ class CommunityAnalyticsTests(unittest.TestCase):
         )
         self.assertTrue(verify_password("correct horse battery staple", encoded))
         self.assertFalse(verify_password("incorrect password", encoded))
-        sessions = AdminSessionManager(encoded, session_seconds=300)
-        token = sessions.login("correct horse battery staple", now_epoch=1000)
+        sessions = AdminSessionManager(
+            encoded, username="owner-admin", session_seconds=300
+        )
+        self.assertIsNone(
+            sessions.login("wrong-owner", "correct horse battery staple", now_epoch=1000)
+        )
+        token = sessions.login(
+            "owner-admin", "correct horse battery staple", now_epoch=1000
+        )
         self.assertIsNotNone(token)
         self.assertTrue(sessions.authenticated(token or "", now_epoch=1100))
         self.assertFalse(sessions.authenticated(token or "", now_epoch=1301))
@@ -99,10 +106,12 @@ class CommunityAnalyticsHTTPTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
+        self.username = "owner-admin"
         self.password = "a private admin password"
         self.server = create_http_server(
             port=0,
             database_path=self.root / "community.sqlite3",
+            admin_username=self.username,
             admin_password_hash=create_password_hash(
                 self.password, salt=b"abcdefghijklmnopqr"
             ),
@@ -167,7 +176,9 @@ class CommunityAnalyticsHTTPTests(unittest.TestCase):
         self.assertEqual(payload["error"], "admin_auth_required")
 
         status, headers, payload = self.request(
-            "POST", "/api/admin/login", {"password": self.password}
+            "POST",
+            "/api/admin/login",
+            {"username": self.username, "password": self.password},
         )
         self.assertEqual(status, 200)
         self.assertTrue(payload["authenticated"])
@@ -182,6 +193,15 @@ class CommunityAnalyticsHTTPTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["total_visits"], 1)
         self.assertEqual(payload["summary"]["total_pageviews"], 2)
         self.assertEqual(payload["recent_visitors"][0]["referrer_host"], "www.baidu.com")
+
+    def test_admin_login_rejects_another_username(self) -> None:
+        status, _headers, payload = self.request(
+            "POST",
+            "/api/admin/login",
+            {"username": "another-owner", "password": self.password},
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(payload["error"], "invalid_credentials")
 
     def test_admin_assets_are_not_indexable(self) -> None:
         connection = http.client.HTTPConnection(

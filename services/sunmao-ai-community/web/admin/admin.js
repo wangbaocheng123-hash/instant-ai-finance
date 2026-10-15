@@ -204,12 +204,15 @@ async function login(event) {
     const response = await fetch("/api/admin/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: form.elements.password.value }),
+      body: JSON.stringify({
+        username: form.elements.username.value,
+        password: form.elements.password.value,
+      }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       if (payload.error === "rate_limited") throw new Error(`尝试过于频繁，请等待 ${payload.retry_after || 2} 秒。`);
-      if (payload.error === "invalid_credentials") throw new Error("后台密码不正确。");
+      if (payload.error === "invalid_credentials") throw new Error("管理账号或密码不正确。");
       throw new Error("暂时无法登录，请稍后重试。");
     }
     form.reset();

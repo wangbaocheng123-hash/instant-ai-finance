@@ -107,6 +107,9 @@ class SunmaoCommunityTests(unittest.TestCase):
         self.assertIn('>管理后台</a>', html)
         self.assertIn(".admin-entry", css)
         self.assertIn('name="robots" content="noindex,nofollow"', admin_html)
+        self.assertIn('name="username"', admin_html)
+        self.assertIn('autocomplete="username"', admin_html)
+        self.assertIn('form.elements.username.value', admin_script)
         self.assertIn('/api/admin/analytics', admin_script)
         self.assertNotIn("innerHTML", admin_script)
 

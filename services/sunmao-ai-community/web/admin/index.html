@@ -17,8 +17,10 @@
       <h1 id="loginTitle">社区后台</h1>
       <p class="access-intro">查看访问趋势、匿名访客和内容使用情况。</p>
       <form id="loginForm" class="login-form">
+        <label for="username">管理账号</label>
+        <input id="username" name="username" type="text" minlength="3" maxlength="64" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
         <label for="password">后台密码</label>
-        <input id="password" name="password" type="password" minlength="12" maxlength="256" autocomplete="current-password" required autofocus>
+        <input id="password" name="password" type="password" minlength="12" maxlength="256" autocomplete="current-password" required>
         <button id="loginButton" type="submit">进入后台</button>
         <p id="loginStatus" class="form-status" aria-live="polite"></p>
       </form>
@@ -30,7 +32,7 @@
       <a class="quiet-link" href="/">← 返回社区</a>
       <p class="eyebrow">SECURITY SETUP</p>
       <h1 id="setupTitle">后台尚未启用</h1>
-      <p class="access-intro">需要先在社区服务器配置管理员密码摘要，然后重新启动社区服务。</p>
+      <p class="access-intro">需要先在社区服务器配置单主人管理账号和密码摘要，然后重新启动社区服务。</p>
     </section>
   </main>
 

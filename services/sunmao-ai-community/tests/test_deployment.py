@@ -113,6 +113,7 @@ class IndependentDeploymentContractTests(unittest.TestCase):
         self.assertNotIn("systemctl restart blogger-collector", migration)
         self.assertNotIn("/var/lib/blogger-agent", migration)
         self.assertNotIn("community.sqlite3", migration)
+        self.assertNotIn("admin-username", migration)
         self.assertNotIn("admin-password.hash", migration)
 
 

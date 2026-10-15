@@ -4,6 +4,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import re
 import secrets
 import threading
 import time
@@ -12,6 +13,7 @@ import time
 PASSWORD_SCHEME = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 600_000
 ADMIN_SESSION_SECONDS = 12 * 60 * 60
+ADMIN_USERNAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{2,63}")
 
 
 def create_password_hash(password: str, *, salt: bytes | None = None) -> str:
@@ -66,8 +68,10 @@ class AdminSessionManager:
         self,
         password_hash: str = "",
         *,
+        username: str = "",
         session_seconds: int = ADMIN_SESSION_SECONDS,
     ) -> None:
+        self.username = str(username or "").strip()
         self.password_hash = str(password_hash or "").strip()
         self.session_seconds = max(300, int(session_seconds))
         self._lock = threading.Lock()
@@ -75,14 +79,31 @@ class AdminSessionManager:
 
     @property
     def configured(self) -> bool:
-        return _password_hash_parts(self.password_hash) is not None
+        return (
+            ADMIN_USERNAME_PATTERN.fullmatch(self.username) is not None
+            and _password_hash_parts(self.password_hash) is not None
+        )
 
     @staticmethod
     def _token_hash(token: str) -> str:
         return hashlib.sha256(token.encode("ascii")).hexdigest()
 
-    def login(self, password: str, *, now_epoch: int | None = None) -> str | None:
-        if not self.configured or not verify_password(password, self.password_hash):
+    def login(
+        self,
+        username: str,
+        password: str,
+        *,
+        now_epoch: int | None = None,
+    ) -> str | None:
+        username_matches = isinstance(username, str) and hmac.compare_digest(
+            username.encode("utf-8"), self.username.encode("utf-8")
+        )
+        password_matches = verify_password(password, self.password_hash)
+        if (
+            not self.configured
+            or not username_matches
+            or not password_matches
+        ):
             return None
         current = int(time.time()) if now_epoch is None else int(now_epoch)
         token = secrets.token_urlsafe(32)
