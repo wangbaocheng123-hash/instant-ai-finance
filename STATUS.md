@@ -1,19 +1,20 @@
 # 项目状态
 
-- 最后更新：2026-10-15 11:55（北京时间）
-- 当前阶段：`P3 榫卯 AI 社区 0.3.2 已回切原仓库并完成北京生产发布`。
-- 最新检查点：`SUNMAO_COMMUNITY_0_3_2_MONOREPO_REJOIN_BEIJING_LIVE`。
+- 最后更新：2026-10-15 14:29（北京时间）
+- 当前阶段：`P3 榫卯 AI 社区 0.3.3 首页管理后台入口已完成生产发布`。
+- 最新检查点：`SUNMAO_COMMUNITY_0_3_3_ADMIN_ENTRY_LIVE`。
 
 ## 本轮已完成
 
-- `https://amuyeye.com/`已作为新加坡精确根域名入口接入北京同一个社区服务：新加坡低权限SSH隧道只监听`127.0.0.1:18818`并转发北京`127.0.0.1:18808`，Caddy根站点只代理该本地端口；没有部署第二份应用或数据库。北京外部网络验收首页200，版本为`0.3.2`/`b5ceea0cc4590892a37ab7db38dfbefb39a28265`。
+- 社区首页顶部右侧现显示“管理后台”按钮，直接进入现有`/admin/`密码登录页；手机窄屏保留按钮文字并把刷新入口收为图标。`main`与`sunmao-production`均精确为`e8a76e5629988e6445126972e76d43a5f070aaa1`，公网首页按钮及样式存在、后台200且会话`configured=true`，版本为`0.3.3`，部署时间`2026-10-15T06:28:53Z`。
+- `https://amuyeye.com/`已作为新加坡精确根域名入口接入北京同一个社区服务：新加坡低权限SSH隧道只监听`127.0.0.1:18818`并转发北京`127.0.0.1:18808`，Caddy根站点只代理该本地端口；没有部署第二份应用或数据库。北京外部网络验收首页200，当前版本为`0.3.3`/`e8a76e5629988e6445126972e76d43a5f070aaa1`。
 - AliDNS最终`@`仍为新加坡`47.236.175.118`；`mcp`记录同样保持原值且Caddy配置块摘要前后一致，公网仍正常响应。`collector`记录、中文域名、即时AI和罗盘正式域名未改。直连北京的临时试验因未备案域名在Caddy前被`Beaver 403`拦截，已从备份完整恢复，北京社区、采集器和模型下载器进程标识未变化。
 - 根域名过去的罗盘Service Worker会让旧浏览器暂时显示离线旧页；新加坡入口已提供无缓存清理脚本，后续更新会删除旧Cache Storage并回到网络页面。未未经确认删除本机浏览器站点数据；时变罗盘继续使用`https://compass.grandpaamu.com/`。
 - 北京实时核对确认回切前社区源为独立仓库、线上release为`babf03b409b6bb3bbfbef85e41abfde4fd95062f` / `0.3.2`，Webhook path处于失败重触发状态；采集器、下载器和社区本身均健康。一次性回切把旧裸仓库及修订状态保存到`/opt/sunmao-community/migration-backups/20261015T035313Z`，备份Git连通性检查通过。
 - 社区发布源现精确为`https://github.com/wangbaocheng123-hash/instant-ai-finance.git`。独立Webhook path已`disabled/inactive`，社区Git timer保持未安装/停止，采集器Git timer继续`disabled/inactive`；回切阶段当前release及三个业务进程InvocationID均未变化。
 - `sunmao-production`从`ed01937e317cdd5142f25e6c6152ff7fa85df64d`安全快进至`b5ceea0cc4590892a37ab7db38dfbefb39a28265`，只启动一次`sunmao-community-git-deploy.service`。发布器隔离测试、原子切换和健康检查成功，`Result=success`、`ExecMainStatus=0`；社区回环及北京Caddy精确SNI路由均返回`0.3.2`和目标提交，部署时间`2026-10-15T03:55:00Z`。
 - `/admin/`返回200，后台摘要文件继续为`sunmaocommunity:sunmaocommunity 0600`，未登录会话回报`configured=true`且统计接口返回401。匿名统计表已在原Git外SQLite中就绪，只保存摘要访客标识、页面、来源域和设备分类，不含IP或完整User-Agent。
-- 本地社区测试现为25项全部通过；生产发布器此前完成24项同版隔离套件。社区InvocationID按发布约定从`4f9ba06b42a841d1af8b5c5cf7299ee1`变为`887025b7a4924b2ca84262e14b70496d`。采集器InvocationID仍为`1fe57d8cdcb744b5a1d9c934b1867a27`，下载器仍为`da82cc9fa476410ca7cc535d6e3a7127`，两者版本、进程和生产分支均未发布或重启。
+- 本地及生产发布器社区测试均为25项全部通过，发布器`Result=success`、`ExecMainStatus=0`。社区InvocationID按发布约定从`887025b7a4924b2ca84262e14b70496d`变为`74c4cec69b4f423cbc3d9fd871579665`；采集器InvocationID仍为`1fe57d8cdcb744b5a1d9c934b1867a27`，下载器仍为`da82cc9fa476410ca7cc535d6e3a7127`，两者未发布、未重启。
 
 ## 北京历史上线基线
 
@@ -29,7 +30,7 @@
 
 ## 当前生产与目标基线
 
-- 榫卯AI社区当前北京生产为`0.3.2`、提交`b5ceea0cc4590892a37ab7db38dfbefb39a28265`，正式分支为本仓库`sunmao-production`，发布源为原`instant-ai-finance`仓库。普通`main`推送仍不自动上线；后续社区发布继续使用明确发布短语、社区生产分支和一次性发布器。
+- 榫卯AI社区当前北京生产为`0.3.3`、提交`e8a76e5629988e6445126972e76d43a5f070aaa1`，正式分支为本仓库`sunmao-production`，发布源为原`instant-ai-finance`仓库。普通`main`推送仍不自动上线；后续社区发布继续使用明确发布短语、社区生产分支和一次性发布器。
 - 北京采集器：`1.2.0`、提交`10fdb3a313f8851c8e7963fb29bc2935dfb164ae`；模型下载器最近记录为`0.10.5+git.exact-profile-hd`、提交`bb4d73ba05908040b18611452e7bd72a48a069c6`。本次未改变其版本。
 - 即时AI继续使用`https://grandpaamu.com/`；时变罗盘网页继续从`https://compass.grandpaamu.com/`访问；MCP继续使用`https://mcp.amuyeye.com/`。本次只重启一次新加坡Caddy以加载精确根域站点；MCP站点块摘要前后一致且公网仍响应，没有修改MCP DNS、上游进程或凭据。
 - 详细历史（模型先生单条高清替换、原链接恢复、学习标记、播放器、旧稿治理及Web Push）继续保存在CHANGELOG及对应ADR，不在当前快照重复堆积。
@@ -44,4 +45,4 @@
 
 ## 下一项唯一建议任务
 
-`用手机无痕窗口复验https://amuyeye.com/，并观察旧罗盘Service Worker自动退出`：只核对社区首页、后台登录与三入口；中文域名备案另办，不借机修改采集器、模型下载器、即时AI、MCP或罗盘正式站点。
+`用手机打开https://amuyeye.com/并点击顶部“管理后台”完成主人视觉验收`：只核对按钮、密码登录页与后台布局；中文域名备案另办，不借机修改采集器、模型下载器、即时AI、MCP或罗盘正式站点。
