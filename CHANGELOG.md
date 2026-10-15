@@ -5,6 +5,14 @@
 - 为`amuyeye.com`根域名准备与`阿木爷爷.com`共用北京榫卯社区的精确Caddy配置；只声明两个根域名并代理`127.0.0.1:18808`，不包含`mcp.amuyeye.com`、`www`或任何通配符。应用脚本兼容替换线上旧单域站点块，并在改动前后保留健康检查与失败恢复。
 - 当前只完成代码与安全切换准备；在北京Caddy应用、AliDNS根记录切换和HTTPS验收完成前，不声称`amuyeye.com`已上线社区。
 
+## 2026-10-15 — 榫卯 AI 社区0.3.2回切原仓库并正式发布
+
+- 发布前从北京实时确认社区仍以独立仓库为源，线上release为`babf03b409b6bb3bbfbef85e41abfde4fd95062f` / `0.3.2`，Webhook path已因重复触发进入失败状态；社区、采集器和模型下载器均active。执行一次性回切后，旧裸仓库与修订状态保存在`/opt/sunmao-community/migration-backups/20261015T035313Z`，备份Git对象连通性检查通过。
+- 社区生产裸仓库现恢复`https://github.com/wangbaocheng123-hash/instant-ai-finance.git`；独立Webhook path为`disabled/inactive`，社区Git timer未启用，采集器timer继续`disabled/inactive`。回切阶段没有修改当前release、Git外SQLite、后台密码摘要或Caddy，也没有重启任何业务服务。
+- 本地24项社区测试通过后，`sunmao-production`从`ed01937e317cdd5142f25e6c6152ff7fa85df64d`安全快进到`b5ceea0cc4590892a37ab7db38dfbefb39a28265`。只触发一次社区发布器；生产隔离测试、原子切换和健康检查成功，`Result=success`、`ExecMainStatus=0`，回环及北京Caddy精确SNI路由回报`sunmao-ai-community` / `0.3.2` / `b5ceea0`，部署时间`2026-10-15T03:55:00Z`。
+- `/admin/`返回200，后台未登录统计接口返回401，密码摘要继续为Git外`0600`；匿名统计表已就绪且生产字段不含IP或完整User-Agent。社区按预期重启一次；采集器InvocationID`1fe57d8cdcb744b5a1d9c934b1867a27`、下载器InvocationID`da82cc9fa476410ca7cc535d6e3a7127`均保持不变，采集器仍为`10fdb3a` / `1.2.0`。
+- 当前Codex网络无法解析社区公网域名，备案与外部DNS问题也未纳入本次授权；因此本轮记录北京应用与Caddy本机SNI上线证据，不冒充外部互联网或手机真机验收，也未修改DNS、Caddy、采集器、下载器、即时AI或时变罗盘。
+
 ## 2026-10-15 — 榫卯 AI 社区0.3.2回并原仓库（本地就绪、未切换生产）
 
 - 按所有者最终确认撤销“在新加坡另部署社区”的未执行方向。社区源码回到`instant-ai-finance/services/sunmao-ai-community/`，但继续以独立服务、18808端口、Git外SQLite和独立发布目录与北京博主采集器并列；独立仓库冻结为只读迁移历史。

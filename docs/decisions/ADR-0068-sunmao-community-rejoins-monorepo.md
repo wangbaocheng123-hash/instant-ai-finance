@@ -1,6 +1,6 @@
 # ADR-0068：榫卯 AI 社区回并原仓库并保持运行隔离
 
-- 状态：`ACCEPTED / IMPLEMENTING`
+- 状态：`ACCEPTED / IMPLEMENTED`
 - 日期：2026-10-15
 - 决策者：产品所有者
 
@@ -23,3 +23,11 @@
 ## 替代关系
 
 本决策替代此前“用独立仓库作为社区唯一生产源”和“在新加坡另建社区备用服务”的未完成方向；ADR-0067 的运行隔离原则继续有效。
+
+## 2026-10-15生产执行与验收
+
+- 回切前实时源为独立仓库，当前release为`babf03b409b6bb3bbfbef85e41abfde4fd95062f` / `0.3.2`；独立Webhook path已失败并保持启用。社区、采集器和模型下载器均active。
+- 一次性脚本把旧裸仓库及状态保存到`/opt/sunmao-community/migration-backups/20261015T035313Z`，备份对象连通性检查通过；新裸仓库源精确为`instant-ai-finance.git`。Webhook path随后为`disabled/inactive`，社区Git timer未启用，采集器timer仍`disabled/inactive`。
+- `sunmao-production`安全快进至`b5ceea0cc4590892a37ab7db38dfbefb39a28265`后只启动一次社区发布器。发布器完成隔离测试、原子release切换和回环健康检查，最终`Result=success`、`ExecMainStatus=0`；`/health/version`返回`0.3.2`、目标提交及`2026-10-15T03:55:00Z`部署时间。
+- `/admin/`为200，未登录后台统计为401，后台密码摘要仍是Git外`0600`文件；匿名统计表存在且访客字段不含IP或完整User-Agent。本地24项社区测试通过，生产发布器再次执行同一测试套件。
+- 社区按发布约定重启一次。采集器与模型下载器InvocationID逐项和发布前一致，采集器仍为`10fdb3a` / `1.2.0`；未推进`beijing-production`，未操作下载器、即时AI、时变罗盘、DNS或Caddy配置。外部DNS/备案验收继续作为独立基础设施事项。
