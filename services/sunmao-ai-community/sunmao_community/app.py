@@ -29,6 +29,7 @@ VISITOR_COOKIE = "sunmao_visitor"
 VISIT_SESSION_COOKIE = "sunmao_visit_session"
 ADMIN_COOKIE = "sunmao_admin_session"
 COOKIE_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{24,96}")
+ANALYTICS_VISITOR_SECONDS = 365 * 24 * 60 * 60
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
@@ -390,11 +391,18 @@ class CommunityRequestHandler(BaseHTTPRequestHandler):
             return
         if (
             not isinstance(payload, dict)
-            or not set(payload).issubset({"view", "referrer"})
+            or not set(payload).issubset({"view", "referrer", "visitor_token"})
             or "view" not in payload
             or payload.get("view") not in VALID_ANALYTICS_VIEWS
             or not isinstance(payload.get("referrer", ""), str)
             or len(payload.get("referrer", "")) > 2048
+            or (
+                "visitor_token" in payload
+                and (
+                    not isinstance(payload["visitor_token"], str)
+                    or not COOKIE_TOKEN_PATTERN.fullmatch(payload["visitor_token"])
+                )
+            )
         ):
             self._json({"error": "invalid_analytics_event"}, HTTPStatus.BAD_REQUEST)
             return
@@ -402,12 +410,15 @@ class CommunityRequestHandler(BaseHTTPRequestHandler):
         session_token = self._cookie_value(VISIT_SESSION_COOKIE)
         cookies = []
         if not visitor_token:
-            visitor_token = secrets.token_urlsafe(24)
-            cookies.append(
-                self._cookie_header(
-                    VISITOR_COOKIE, visitor_token, max_age=180 * 24 * 60 * 60
-                )
+            visitor_token = payload.get("visitor_token") or secrets.token_urlsafe(24)
+        # Refresh the first-party cookie on every accepted event. The response also
+        # returns this anonymous token so the same origin can keep a local fallback
+        # when a browser drops cookies between visits.
+        cookies.append(
+            self._cookie_header(
+                VISITOR_COOKIE, visitor_token, max_age=ANALYTICS_VISITOR_SECONDS
             )
+        )
         if not session_token:
             session_token = secrets.token_urlsafe(24)
         cookies.append(
@@ -426,7 +437,11 @@ class CommunityRequestHandler(BaseHTTPRequestHandler):
         except (OSError, sqlite3.Error):
             self._json({"error": "analytics_unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
             return
-        self._json({"accepted": True}, HTTPStatus.ACCEPTED, cookies=cookies)
+        self._json(
+            {"accepted": True, "visitor_token": visitor_token},
+            HTTPStatus.ACCEPTED,
+            cookies=cookies,
+        )
 
     def _post_admin_login(self) -> None:
         if not self.server.admin_auth.configured:

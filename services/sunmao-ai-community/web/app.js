@@ -3,6 +3,8 @@
 const DOUYIN_VIDEO_HOSTS = new Set(["douyin.com", "www.douyin.com"]);
 const VALID_VIEWS = new Set(["exchange", "sizes", "joints"]);
 const MESSAGE_REFRESH_INTERVAL = 15000;
+const ANALYTICS_VISITOR_STORAGE_KEY = "sunmao.analytics.visitor.v1";
+const ANALYTICS_VISITOR_TOKEN_PATTERN = /^[A-Za-z0-9_-]{24,96}$/;
 
 let activeView = "exchange";
 let collectionLoaded = false;
@@ -10,14 +12,40 @@ let messagesLoaded = false;
 let lastTrackedView = "";
 let analyticsQueue = Promise.resolve();
 
+function storedAnalyticsVisitorToken() {
+  try {
+    const value = window.localStorage.getItem(ANALYTICS_VISITOR_STORAGE_KEY) || "";
+    return ANALYTICS_VISITOR_TOKEN_PATTERN.test(value) ? value : "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+function storeAnalyticsVisitorToken(value) {
+  if (!ANALYTICS_VISITOR_TOKEN_PATTERN.test(value || "")) return;
+  try {
+    window.localStorage.setItem(ANALYTICS_VISITOR_STORAGE_KEY, value);
+  } catch (_error) {
+    // Cookies remain the primary identity when local storage is unavailable.
+  }
+}
+
 function recordPageview(view) {
-  analyticsQueue = analyticsQueue.catch(() => undefined).then(() => fetch("/api/analytics/pageview", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ view, referrer: document.referrer || "" }),
-    credentials: "same-origin",
-    keepalive: true,
-  })).catch(() => {
+  analyticsQueue = analyticsQueue.catch(() => undefined).then(async () => {
+    const event = { view, referrer: document.referrer || "" };
+    const visitorToken = storedAnalyticsVisitorToken();
+    if (visitorToken) event.visitor_token = visitorToken;
+    const response = await fetch("/api/analytics/pageview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(event),
+      credentials: "same-origin",
+      keepalive: true,
+    });
+    if (!response.ok) return;
+    const payload = await response.json().catch(() => ({}));
+    storeAnalyticsVisitorToken(payload.visitor_token);
+  }).catch(() => {
     // Analytics must never interrupt the public community experience.
   });
 }

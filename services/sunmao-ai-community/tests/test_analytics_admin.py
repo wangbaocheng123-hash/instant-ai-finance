@@ -159,6 +159,8 @@ class CommunityAnalyticsHTTPTests(unittest.TestCase):
         )
         self.assertEqual(status, 202)
         self.assertTrue(payload["accepted"])
+        visitor_token = payload["visitor_token"]
+        self.assertRegex(visitor_token, r"^[A-Za-z0-9_-]{24,96}$")
         visitor_cookies = self.cookie_header(headers)
         self.assertIn("sunmao_visitor=", visitor_cookies)
         self.assertIn("sunmao_visit_session=", visitor_cookies)
@@ -170,6 +172,17 @@ class CommunityAnalyticsHTTPTests(unittest.TestCase):
             cookie=visitor_cookies,
         )
         self.assertEqual(status, 202)
+
+        # A browser-local fallback restores the same anonymous visitor even when
+        # its cookies disappear between visits. A new visit session is expected.
+        status, headers, payload = self.request(
+            "POST",
+            "/api/analytics/pageview",
+            {"view": "sizes", "referrer": "", "visitor_token": visitor_token},
+        )
+        self.assertEqual(status, 202)
+        self.assertEqual(payload["visitor_token"], visitor_token)
+        self.assertIn("sunmao_visitor=", self.cookie_header(headers))
 
         status, _headers, payload = self.request("GET", "/api/admin/analytics")
         self.assertEqual(status, 401)
@@ -190,9 +203,18 @@ class CommunityAnalyticsHTTPTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(payload["summary"]["total_visitors"], 1)
-        self.assertEqual(payload["summary"]["total_visits"], 1)
-        self.assertEqual(payload["summary"]["total_pageviews"], 2)
+        self.assertEqual(payload["summary"]["total_visits"], 2)
+        self.assertEqual(payload["summary"]["total_pageviews"], 3)
         self.assertEqual(payload["recent_visitors"][0]["referrer_host"], "www.baidu.com")
+
+    def test_pageview_rejects_invalid_browser_visitor_token(self) -> None:
+        status, _headers, payload = self.request(
+            "POST",
+            "/api/analytics/pageview",
+            {"view": "exchange", "referrer": "", "visitor_token": "too-short"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["error"], "invalid_analytics_event")
 
     def test_admin_login_rejects_another_username(self) -> None:
         status, _headers, payload = self.request(
