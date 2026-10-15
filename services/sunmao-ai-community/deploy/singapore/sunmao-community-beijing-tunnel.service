@@ -1,0 +1,27 @@
+[Unit]
+Description=Secure tunnel from Singapore to the Beijing Sunmao AI Community
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=compassdev
+Group=compassdev
+Environment=HOME=/home/compassdev
+ExecStart=/usr/bin/ssh -F /dev/null -p 22 -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o HostKeyAlias=beijing-collector-control -o UpdateHostKeys=no -o UserKnownHostsFile=/home/compassdev/.config/instant-ai-beijing-control/known_hosts -o GlobalKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o IdentityAgent=none -o ProxyCommand=none -o ProxyJump=none -o ExitOnForwardFailure=yes -i /home/compassdev/.config/instant-ai-beijing-control/ssh_identity -N -L 127.0.0.1:18818:127.0.0.1:18808 singaporecodex@47.93.214.76
+Restart=always
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

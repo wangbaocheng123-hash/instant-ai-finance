@@ -46,17 +46,35 @@ class IndependentDeploymentContractTests(unittest.TestCase):
     def test_caddy_proxies_directly_to_the_peer_service(self) -> None:
         caddy = self.read("sunmao-community.Caddyfile.example")
         apply_script = self.read("apply-caddy.sh")
-        self.assertIn("xn--4pv19va7008a.com, amuyeye.com {", caddy)
+        self.assertIn("xn--4pv19va7008a.com {", caddy)
         self.assertIn("reverse_proxy 127.0.0.1:18808", caddy)
         self.assertNotIn("*.amuyeye.com", caddy)
-        self.assertNotIn("mcp.amuyeye.com", caddy)
+        self.assertNotIn("mcp.amuyeye.com {", caddy)
         self.assertNotIn("rewrite * /community", caddy)
         self.assertNotIn("18797", caddy)
         self.assertIn("restore_previous_config", apply_script)
         self.assertIn("http://127.0.0.1:18808/health", apply_script)
-        self.assertIn("Host: amuyeye.com", apply_script)
-        self.assertIn('"xn--4pv19va7008a.com {"', apply_script)
         self.assertNotIn("systemctl restart blogger-collector", apply_script)
+
+    def test_singapore_root_proxy_is_exact_and_uses_the_secure_tunnel(self) -> None:
+        singapore_root = PROJECT_ROOT / "deploy" / "singapore"
+        caddy = (singapore_root / "sunmao-community-root.Caddyfile.example").read_text(
+            encoding="utf-8"
+        )
+        tunnel = (
+            singapore_root / "sunmao-community-beijing-tunnel.service"
+        ).read_text(encoding="utf-8")
+        self.assertIn("amuyeye.com {", caddy)
+        self.assertIn("reverse_proxy 127.0.0.1:18818", caddy)
+        self.assertIn("path /service-worker.js", caddy)
+        self.assertIn("skipWaiting", caddy)
+        self.assertNotIn("mcp.amuyeye.com {", caddy)
+        self.assertNotIn("*.amuyeye.com", caddy)
+        self.assertIn("User=compassdev", tunnel)
+        self.assertIn("ExitOnForwardFailure=yes", tunnel)
+        self.assertIn("127.0.0.1:18818:127.0.0.1:18808", tunnel)
+        self.assertIn("singaporecodex@47.93.214.76", tunnel)
+        self.assertNotIn("GatewayPorts=yes", tunnel)
 
     def test_release_trigger_is_independent(self) -> None:
         script = self.read("publish-via-git.sh")

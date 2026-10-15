@@ -10,7 +10,7 @@
 - 运行数据库：`/var/lib/sunmao-community/community.sqlite3`
 - 原子发布目录：`/opt/sunmao-community/`
 - 生产分支：`sunmao-production`
-- 社区精确公网域名：`https://amuyeye.com/`、`https://阿木爷爷.com/`。北京 Caddy 只接管这两个精确根域名；不得接管 `www.amuyeye.com`、`mcp.amuyeye.com` 或创建 `*.amuyeye.com` 通配符。
+- 社区精确公网域名：`https://amuyeye.com/`、`https://阿木爷爷.com/`。中文根域名继续由北京 Caddy 直连 18808；英文根域名保留在新加坡，通过仅监听 `127.0.0.1:18818` 的 SSH 隧道转发到北京同一个 18808 服务，因此两边共用交流和统计数据。不得接管 `www.amuyeye.com`、`mcp.amuyeye.com` 或创建 `*.amuyeye.com` 通配符。
 
 北京博主采集器继续使用自己的目录、`blogger-collector.service`、端口 `18797`、数据目录和 `beijing-production`；新加坡即时 AI、时变罗盘和 `mcp.amuyeye.com` 也继续使用各自的服务、端口、配置和数据。发布社区不得重启或改写这些并列应用。
 
@@ -47,3 +47,5 @@ python -m scripts.generate_admin_password_hash
 回切脚本会停止独立仓库的 GitHub Webhook path 触发器并保持所有 Git timer 关闭；它不重启社区、不发布新版本，也不停止或重启北京博主采集器。回切验收后，仍需所有者明确发布，随后只执行一次 `systemctl start --no-block sunmao-community-git-deploy.service`。
 
 新加坡服务器上的 Codex 继续作为日常操作端：修改本仓库、运行测试、推送 `main`，收到明确发布指令后推进 `sunmao-production`，再经既有 `/home/compassdev/bin/beijing-admin` 在北京启动社区发布器。它不需要把社区部署到新加坡，也不需要每分钟轮询 Git。
+
+`deploy/singapore/`保存英文根域名入口的可复现模板。新加坡不运行第二份社区应用或数据库，只运行低权限SSH本地转发和一个精确根域名Caddy块；`mcp.amuyeye.com`、即时AI与`compass.grandpaamu.com`的现有配置不得并入或改写。根域名过去由时变罗盘使用，因此Caddy额外提供无缓存的`/service-worker.js`清理脚本，使旧浏览器逐步退出罗盘离线缓存；时变罗盘正式入口继续是`https://compass.grandpaamu.com/`。

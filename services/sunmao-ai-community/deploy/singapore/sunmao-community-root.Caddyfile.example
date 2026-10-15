@@ -1,0 +1,25 @@
+# Merge only this exact site block into the active Singapore Caddy configuration.
+# Do not edit the existing mcp.amuyeye.com site and do not use a wildcard.
+amuyeye.com {
+	encode zstd gzip
+
+	@legacy_time_compass_sw path /service-worker.js
+	handle @legacy_time_compass_sw {
+		header Cache-Control "no-store, no-cache, must-revalidate"
+		header Content-Type "application/javascript; charset=utf-8"
+		respond `self.addEventListener("install",()=>self.skipWaiting());self.addEventListener("activate",event=>event.waitUntil((async()=>{for(const key of await caches.keys())await caches.delete(key);await self.clients.claim();for(const client of await self.clients.matchAll({type:"window"}))client.navigate(client.url);})()));` 200
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:18818
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+}
