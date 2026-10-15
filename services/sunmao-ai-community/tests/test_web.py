@@ -53,10 +53,12 @@ class SunmaoCommunityTests(unittest.TestCase):
         self.assertIn('link.rel = "noopener noreferrer"', script)
         self.assertNotRegex(html + script, re.compile(r"<(?:video|audio|iframe)\b", re.I))
 
-    def test_bottom_navigation_opens_discussion_sizes_and_joint_views(self) -> None:
+    def test_top_navigation_opens_discussion_sizes_and_joint_views(self) -> None:
         html = (COMMUNITY_ROOT / "index.html").read_text(encoding="utf-8")
         script = (COMMUNITY_ROOT / "app.js").read_text(encoding="utf-8")
         css = (COMMUNITY_ROOT / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('<nav class="top-nav"', html)
+        self.assertLess(html.index('<nav class="top-nav"'), html.index("<main>"))
         self.assertLess(
             html.index('data-view-target="sizes"'),
             html.index('data-view-target="exchange"'),
@@ -71,20 +73,26 @@ class SunmaoCommunityTests(unittest.TestCase):
         self.assertIn('data-view="exchange"', html)
         self.assertIn('data-view="sizes"', html)
         self.assertIn('data-view="joints"', html)
-        self.assertIn('position: fixed;', css)
-        self.assertIn('bottom: 0;', css)
+        self.assertIn(".top-nav {", css)
+        self.assertIn("top: var(--header-height);", css)
+        self.assertNotIn('class="bottom-nav"', html)
         self.assertIn('const VALID_VIEWS = new Set(["exchange", "sizes", "joints"])', script)
 
     def test_discussion_is_text_only_and_uses_same_origin_api(self) -> None:
         html = (COMMUNITY_ROOT / "index.html").read_text(encoding="utf-8")
         script = (COMMUNITY_ROOT / "app.js").read_text(encoding="utf-8")
         self.assertIn('id="messageForm"', html)
+        self.assertIn('class="chat-composer"', html)
+        self.assertIn("data-exchange-composer", html)
+        self.assertLess(html.index('id="messageFeed"'), html.index('id="chatComposer"'))
         self.assertIn('maxlength="20"', html)
         self.assertIn('maxlength="500"', html)
-        self.assertIn("这是公开交流区", html)
+        self.assertIn("公开交流区", html)
         self.assertIn('fetch("./api/messages?limit=80"', script)
         self.assertIn('fetch("./api/messages"', script)
         self.assertIn("body.textContent = message.body", script)
+        self.assertIn('document.body.classList.toggle("exchange-active"', script)
+        self.assertIn(".chat-composer {", (COMMUNITY_ROOT / "styles.css").read_text(encoding="utf-8"))
         self.assertNotIn("innerHTML", script)
 
     def test_mobile_layout_and_accessible_loading_state_are_present(self) -> None:

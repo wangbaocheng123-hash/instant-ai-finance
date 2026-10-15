@@ -8,7 +8,7 @@
   <title>榫卯 AI 社区 · 阿木爷爷</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
-<body>
+<body class="exchange-active">
   <header class="site-header">
     <a class="brand" href="#exchange" aria-label="返回榫卯 AI 社区交流区">
       <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
@@ -27,51 +27,37 @@
     </div>
   </header>
 
+  <nav class="top-nav" aria-label="社区主导航">
+    <div class="top-nav-inner">
+      <button class="nav-item" type="button" data-view-target="sizes" aria-controls="view-sizes" aria-selected="false">
+        <span class="nav-icon size-icon" aria-hidden="true"></span>
+        <span>尺寸型</span>
+      </button>
+      <button class="nav-item is-active" type="button" data-view-target="exchange" aria-controls="view-exchange" aria-selected="true">
+        <span class="nav-icon chat-icon" aria-hidden="true"></span>
+        <span>交流区</span>
+      </button>
+      <button class="nav-item" type="button" data-view-target="joints" aria-controls="view-joints" aria-selected="false">
+        <span class="nav-icon joint-icon" aria-hidden="true"></span>
+        <span>榫卯108道</span>
+      </button>
+    </div>
+  </nav>
+
   <main>
     <section id="view-exchange" class="app-view exchange-view" data-view="exchange" aria-labelledby="exchange-title">
-      <div class="exchange-intro">
-        <p class="eyebrow">木友交流区</p>
-        <h1 id="exchange-title">一起聊木作，<br><span>也聊灵感。</span></h1>
-        <p>这里是社区的主屏。分享你的问题、观点和新想法，让每一位来到这里的木友都能看见并参与交流。</p>
-      </div>
-
-      <div class="discussion-layout">
-        <aside class="composer-panel" aria-labelledby="composer-title">
+      <section class="community-stage" aria-labelledby="exchange-title">
+        <div class="feed-heading">
           <div>
-            <p class="panel-kicker">发表想法</p>
-            <h2 id="composer-title">说说你正在琢磨什么</h2>
+            <p class="panel-kicker">公开交流大厅</p>
+            <h1 id="exchange-title">大家发表的意见与问题</h1>
+            <p class="feed-intro">这里集中显示木友们提出的问题、咨询内容、经验和想法。最新交流会出现在前面。</p>
           </div>
-          <form id="messageForm" class="message-form">
-            <label for="nickname">怎么称呼你</label>
-            <div class="field-shell single-line">
-              <input id="nickname" name="nickname" type="text" maxlength="20" autocomplete="nickname" placeholder="例如：木友小李" required>
-              <span><b id="nicknameCount">0</b>/20</span>
-            </div>
-
-            <label for="messageBody">你的想法</label>
-            <div class="field-shell">
-              <textarea id="messageBody" name="body" maxlength="500" rows="7" placeholder="可以聊榫卯结构、制作问题、工具经验，或你希望社区增加的功能……" required></textarea>
-              <span><b id="messageCount">0</b>/500</span>
-            </div>
-
-            <p class="privacy-note">这是公开交流区，请勿发布手机号、住址等隐私信息。当前仅支持纯文字。</p>
-            <button id="submitMessage" class="primary-button" type="submit">发表到交流区</button>
-            <p id="formStatus" class="form-status" aria-live="polite"></p>
-          </form>
-        </aside>
-
-        <section class="feed-panel" aria-labelledby="feed-title">
-          <div class="feed-heading">
-            <div>
-              <p class="panel-kicker">社区动态</p>
-              <h2 id="feed-title">大家正在聊</h2>
-            </div>
-            <button id="refreshMessages" class="text-button" type="button">刷新</button>
-          </div>
-          <div id="messageFeed" class="message-feed" aria-live="polite" aria-busy="true"></div>
-          <p id="feedStatus" class="feed-status">正在看看大家的新想法…</p>
-        </section>
-      </div>
+          <button id="refreshMessages" class="text-button" type="button">刷新交流</button>
+        </div>
+        <div id="messageFeed" class="message-feed" aria-live="polite" aria-busy="true"></div>
+        <p id="feedStatus" class="feed-status">正在看看大家的新想法…</p>
+      </section>
     </section>
 
     <section id="view-sizes" class="app-view sizes-view" data-view="sizes" aria-labelledby="sizes-title" hidden>
@@ -114,26 +100,37 @@
     </section>
   </main>
 
+  <aside id="chatComposer" class="chat-composer" data-exchange-composer aria-labelledby="composer-title">
+    <div class="composer-heading">
+      <strong id="composer-title">发表交流</strong>
+      <span>提问题、做咨询、分享你的木作想法</span>
+    </div>
+    <form id="messageForm" class="message-form">
+      <label class="visually-hidden" for="nickname">怎么称呼你</label>
+      <div class="field-shell nickname-field">
+        <input id="nickname" name="nickname" type="text" maxlength="20" autocomplete="nickname" placeholder="你的称呼" aria-label="你的称呼，最多20字" required>
+        <span><b id="nicknameCount">0</b>/20</span>
+      </div>
+
+      <label class="visually-hidden" for="messageBody">交流内容</label>
+      <div class="field-shell message-field">
+        <textarea id="messageBody" name="body" maxlength="500" rows="2" placeholder="在这里输入问题、咨询或想说的话……" aria-label="交流内容，最多500字" required></textarea>
+        <span><b id="messageCount">0</b>/500</span>
+      </div>
+
+      <button id="submitMessage" class="primary-button" type="submit">发送</button>
+    </form>
+    <div class="composer-notes">
+      <p class="privacy-note">公开交流区，仅支持纯文字，请勿发布手机号、住址等隐私信息。</p>
+      <p id="formStatus" class="form-status" aria-live="polite"></p>
+    </div>
+  </aside>
+
   <footer>
     <p>榫卯 AI 社区 · 持续生长中</p>
     <p>榫卯视频仅整理公开作品入口，视频版权归原作者及平台所有。</p>
     <p>访问统计使用第一方匿名标识，不保存 IP 地址。</p>
   </footer>
-
-  <nav class="bottom-nav" aria-label="社区主导航">
-    <button class="nav-item" type="button" data-view-target="sizes" aria-controls="view-sizes" aria-selected="false">
-      <span class="nav-icon size-icon" aria-hidden="true"></span>
-      <span>尺寸型</span>
-    </button>
-    <button class="nav-item is-active" type="button" data-view-target="exchange" aria-controls="view-exchange" aria-selected="true">
-      <span class="nav-icon chat-icon" aria-hidden="true"></span>
-      <span>交流区</span>
-    </button>
-    <button class="nav-item" type="button" data-view-target="joints" aria-controls="view-joints" aria-selected="false">
-      <span class="nav-icon joint-icon" aria-hidden="true"></span>
-      <span>榫卯108道</span>
-    </button>
-  </nav>
 
   <script src="./app.js" defer></script>
 </body>

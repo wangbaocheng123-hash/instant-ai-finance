@@ -226,7 +226,7 @@ async function submitMessage(event) {
   const status = document.querySelector("#formStatus");
   status.classList.remove("error", "success");
   submitButton.disabled = true;
-  submitButton.textContent = "正在发表…";
+  submitButton.textContent = "发送中…";
   try {
     const response = await fetch("./api/messages", {
       method: "POST",
@@ -238,14 +238,14 @@ async function submitMessage(event) {
     bodyInput.value = "";
     updateCounter(bodyInput, document.querySelector("#messageCount"));
     status.classList.add("success");
-    status.textContent = "已经发表，其他木友现在可以看到。";
+    status.textContent = "已经发送，其他木友现在可以看到。";
     await loadMessages({ quiet: true });
   } catch (error) {
     status.classList.add("error");
     status.textContent = messageErrorText(error.error, error.retry_after);
   } finally {
     submitButton.disabled = false;
-    submitButton.textContent = "发表到交流区";
+    submitButton.textContent = "发送";
   }
 }
 
@@ -259,6 +259,9 @@ function setActiveView(view, { updateHash = true } = {}) {
     button.classList.toggle("is-active", selected);
     button.setAttribute("aria-selected", selected ? "true" : "false");
   });
+  const exchangeActive = activeView === "exchange";
+  document.body.classList.toggle("exchange-active", exchangeActive);
+  document.querySelector("[data-exchange-composer]").hidden = !exchangeActive;
   if (updateHash && window.location.hash !== `#${activeView}`) {
     window.history.replaceState(null, "", `#${activeView}`);
   }
