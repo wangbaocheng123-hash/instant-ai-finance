@@ -7,6 +7,20 @@ const MESSAGE_REFRESH_INTERVAL = 15000;
 let activeView = "exchange";
 let collectionLoaded = false;
 let messagesLoaded = false;
+let lastTrackedView = "";
+let analyticsQueue = Promise.resolve();
+
+function recordPageview(view) {
+  analyticsQueue = analyticsQueue.catch(() => undefined).then(() => fetch("/api/analytics/pageview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ view, referrer: document.referrer || "" }),
+    credentials: "same-origin",
+    keepalive: true,
+  })).catch(() => {
+    // Analytics must never interrupt the public community experience.
+  });
+}
 
 function isTrustedVideoUrl(value) {
   try {
@@ -223,6 +237,21 @@ function setActiveView(view, { updateHash = true } = {}) {
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (activeView === "joints") loadCollection();
   if (activeView === "exchange" && !messagesLoaded) loadMessages();
+  if (lastTrackedView !== activeView) {
+    lastTrackedView = activeView;
+    recordPageview(activeView);
+  }
+}
+
+function reloadPage() {
+  const bodyInput = document.querySelector("#messageBody");
+  if (bodyInput.value.trim()
+    && !window.confirm("还有未发表的内容，刷新后会丢失。确定刷新吗？")) return;
+  const button = document.querySelector("#reloadPage");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  document.querySelector("#reloadLabel").textContent = "刷新中…";
+  window.location.reload();
 }
 
 function initialize() {
@@ -238,6 +267,7 @@ function initialize() {
   nicknameInput.addEventListener("input", () => updateCounter(nicknameInput, document.querySelector("#nicknameCount")));
   bodyInput.addEventListener("input", () => updateCounter(bodyInput, document.querySelector("#messageCount")));
   document.querySelector("#messageForm").addEventListener("submit", submitMessage);
+  document.querySelector("#reloadPage").addEventListener("click", reloadPage);
   document.querySelector("#refreshMessages").addEventListener("click", () => loadMessages());
   window.addEventListener("hashchange", () => setActiveView(window.location.hash.slice(1), { updateHash: false }));
   setInterval(() => {

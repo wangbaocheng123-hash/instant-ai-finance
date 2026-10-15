@@ -2,7 +2,7 @@
 
 这是 `instant-ai-finance` 公共仓库中的独立应用，不是北京博主采集器的页面或子模块。
 
-它可以部署在北京或新加坡服务器，但始终是独立进程，不并入即时 AI、时变罗盘、北京博主采集器或模型下载器：
+它与北京博主采集器同属一个 Git 仓库，但始终是并列的独立应用，不并入即时 AI、时变罗盘、北京博主采集器或模型下载器：
 
 - 社区源码：`services/sunmao-ai-community/`
 - 社区进程：`sunmao-ai-community.service`
@@ -26,16 +26,24 @@ python -m sunmao_community --host 127.0.0.1 --port 4173 --database .runtime/comm
 
 普通 `main` 推送只保存开发检查点，不上线。所有者明确说“更新并发布榫卯AI社区：<具体需求>”后，才允许把已验收提交安全快进到 `sunmao-production`，再触发固定的一次性 `sunmao-community-git-deploy.service`。该发布只切换 `/opt/sunmao-community/current` 并重启社区进程。
 
-首次从目前“由采集器代为提供首版页面”的临时拓扑迁移到独立服务，需要一次性安装独立服务、发布器和 Caddy 反向代理；迁移前必须先确认新服务在 `127.0.0.1:18808` 健康，Caddy 切换失败则恢复备份。以后普通社区功能发布不再修改 Caddy。
+社区已经从早期“由采集器代为提供页面”的临时拓扑迁移为独立服务。以后普通社区功能发布只更新社区 release 和进程，不修改 Caddy 或并列应用。
 
-## 新加坡备用发布通道
+## 管理后台与访问统计
 
-备案问题处理期间，独立仓库保持冻结；继续从本仓库的 `services/sunmao-ai-community/` 开发。`deploy/singapore/` 提供加法式安装与验收文件：
+开发版本提供 `/admin/` 管理入口，可查看今日与累计匿名访客、访问次数、浏览量、趋势、栏目、来源域名、设备和最近访客。系统只保存浏览器随机标识的摘要，不保存 IP 地址或完整 User-Agent。
 
-- 社区只接管精确的 `amuyeye.com` 与 `xn--4pv19va7008a.com`，不创建通配符，也不声明 `www`；
-- `mcp.amuyeye.com` 仍由时变罗盘 MCP 的精确站点服务，切换前后都必须通过健康与 OAuth 401 边界检查；
-- 时变罗盘网页固定使用 `compass.grandpaamu.com`，即时 AI 继续使用 `grandpaamu.com`；
-- Caddy 只新增 `/etc/caddy/sunmao-community.caddy` 并在既有 `/etc/caddy/Caddyfile.instant-ai` 中增加一条 import，不修改 `/etc/caddy/Caddyfile` 或 `/etc/time-compass/caddy.env`；若旧配置仍占用 `amuyeye.com`，预验证会在写入前停止；
-- `compassdev` 只获得运行 `/usr/local/sbin/sunmao-community-git-deploy` 的固定 sudo 权限。没有通用 root 权限，不安装 Git 定时器；手机云端 Codex 在明确发布后触发一次即可。
+后台默认关闭。生成密码摘要：
 
-首次安装和域名切换属于服务器运维，必须在服务器端完整通过 `verify-cutover.sh` 后才可记录为上线；仅提交 Git 不等于上线。
+```powershell
+python -m scripts.generate_admin_password_hash
+```
+
+生产环境把输出以 `0600` 权限保存到 `/var/lib/sunmao-community/admin-password.hash`，属主为 `sunmaocommunity:sunmaocommunity`，不得写进 Git、日志或聊天。详细演进顺序见 `docs/ADMIN_AND_MONETIZATION_PLAN.md`。
+
+## 从独立仓库回到原仓库
+
+独立仓库 `wangbaocheng123-hash/sunmao-ai-community` 只作为迁移历史和只读来源，不再承担日常开发或发布。一次性回切使用 `deploy/beijing/rejoin-original-repository.sh`：它会保留当前 release、数据库、后台密码摘要和 Caddy，只把社区裸仓库与固定发布器恢复为本仓库的 `sunmao-production` 子树发布，并把旧裸仓库和修订状态移入可恢复备份。
+
+回切脚本会停止独立仓库的 GitHub Webhook path 触发器并保持所有 Git timer 关闭；它不重启社区、不发布新版本，也不停止或重启北京博主采集器。回切验收后，仍需所有者明确发布，随后只执行一次 `systemctl start --no-block sunmao-community-git-deploy.service`。
+
+新加坡服务器上的 Codex 继续作为日常操作端：修改本仓库、运行测试、推送 `main`，收到明确发布指令后推进 `sunmao-production`，再经既有 `/home/compassdev/bin/beijing-admin` 在北京启动社区发布器。它不需要把社区部署到新加坡，也不需要每分钟轮询 Git。

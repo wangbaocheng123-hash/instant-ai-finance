@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#171510">
+  <meta name="robots" content="noindex,nofollow">
+  <title>社区后台 · 榫卯 AI 社区</title>
+  <link rel="stylesheet" href="./admin.css">
+</head>
+<body>
+  <main id="loginView" class="access-shell" hidden>
+    <section class="access-card" aria-labelledby="loginTitle">
+      <a class="quiet-link" href="/">← 返回社区</a>
+      <div class="admin-mark" aria-hidden="true"><i></i><i></i></div>
+      <p class="eyebrow">SUNMAO COMMUNITY</p>
+      <h1 id="loginTitle">社区后台</h1>
+      <p class="access-intro">查看访问趋势、匿名访客和内容使用情况。</p>
+      <form id="loginForm" class="login-form">
+        <label for="password">后台密码</label>
+        <input id="password" name="password" type="password" minlength="12" maxlength="256" autocomplete="current-password" required autofocus>
+        <button id="loginButton" type="submit">进入后台</button>
+        <p id="loginStatus" class="form-status" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+
+  <main id="setupView" class="access-shell" hidden>
+    <section class="access-card" aria-labelledby="setupTitle">
+      <a class="quiet-link" href="/">← 返回社区</a>
+      <p class="eyebrow">SECURITY SETUP</p>
+      <h1 id="setupTitle">后台尚未启用</h1>
+      <p class="access-intro">需要先在社区服务器配置管理员密码摘要，然后重新启动社区服务。</p>
+    </section>
+  </main>
+
+  <div id="dashboardView" class="admin-app" hidden>
+    <aside class="sidebar">
+      <a class="admin-brand" href="/admin/">
+        <span class="admin-mark small" aria-hidden="true"><i></i><i></i></span>
+        <span>榫卯 AI 社区<small>管理后台</small></span>
+      </a>
+      <nav aria-label="后台导航">
+        <a class="is-active" href="#overview"><span>01</span>数据总览</a>
+        <a href="#visitors"><span>02</span>最近访客</a>
+        <a href="#roadmap"><span>03</span>后台规划</a>
+      </nav>
+      <div class="sidebar-note">
+        <strong>隐私说明</strong>
+        <p>访客以随机编号显示，不保存 IP 地址。真实姓名要等会员账号功能上线后才能识别。</p>
+      </div>
+    </aside>
+
+    <main class="dashboard-main">
+      <header class="dashboard-header">
+        <div>
+          <p class="eyebrow">OWNER CONSOLE</p>
+          <h1>社区经营概览</h1>
+          <p id="updatedAt" class="updated-at">正在读取最新数据…</p>
+        </div>
+        <div class="header-actions">
+          <label for="periodSelect">统计周期</label>
+          <select id="periodSelect">
+            <option value="7">近 7 天</option>
+            <option value="14" selected>近 14 天</option>
+            <option value="30">近 30 天</option>
+            <option value="90">近 90 天</option>
+          </select>
+          <button id="refreshButton" class="secondary-button" type="button">刷新</button>
+          <button id="logoutButton" class="text-button" type="button">退出</button>
+        </div>
+      </header>
+
+      <section id="overview" aria-labelledby="overviewTitle">
+        <div class="section-title">
+          <div><span>01</span><h2 id="overviewTitle">今天与累计</h2></div>
+          <p>“在线”表示最近 5 分钟内有浏览行为的匿名访客。</p>
+        </div>
+        <div id="summaryGrid" class="summary-grid" aria-live="polite">
+          <article><span>今日访客</span><strong id="todayVisitors">—</strong><small>独立匿名访客</small></article>
+          <article><span>今日访问</span><strong id="todayVisits">—</strong><small>30 分钟会话</small></article>
+          <article><span>今日浏览</span><strong id="todayPageviews">—</strong><small>页面浏览次数</small></article>
+          <article class="accent"><span>当前在线</span><strong id="onlineNow">—</strong><small>最近 5 分钟</small></article>
+          <article><span>累计访客</span><strong id="totalVisitors">—</strong><small>功能启用以来</small></article>
+          <article><span>累计访问</span><strong id="totalVisits">—</strong><small>功能启用以来</small></article>
+          <article><span>累计浏览</span><strong id="totalPageviews">—</strong><small>功能启用以来</small></article>
+        </div>
+      </section>
+
+      <section class="analytics-grid" aria-label="访问分析">
+        <article class="panel trend-panel">
+          <div class="panel-heading"><h2>访问趋势</h2><span>北京时间</span></div>
+          <div id="trendChart" class="trend-chart" role="img" aria-label="每日访问趋势"></div>
+          <div class="chart-legend"><span><i class="visitor-dot"></i>访客</span><span><i class="pageview-dot"></i>浏览</span></div>
+        </article>
+        <article class="panel">
+          <div class="panel-heading"><h2>访问页面</h2><span>按浏览量</span></div>
+          <div id="pageList" class="ranking-list"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-heading"><h2>访问来源</h2><span>按访问次数</span></div>
+          <div id="sourceList" class="ranking-list"></div>
+        </article>
+        <article class="panel">
+          <div class="panel-heading"><h2>使用设备</h2><span>按访问次数</span></div>
+          <div id="deviceList" class="ranking-list"></div>
+        </article>
+      </section>
+
+      <section id="visitors" class="visitor-section" aria-labelledby="visitorTitle">
+        <div class="section-title">
+          <div><span>02</span><h2 id="visitorTitle">最近匿名访客</h2></div>
+          <p>同一浏览器会得到稳定编号；清理 Cookie 或更换设备后会成为新访客。</p>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead><tr><th>访客</th><th>最后活跃</th><th>访问 / 浏览</th><th>最近页面</th><th>来源</th><th>设备</th></tr></thead>
+            <tbody id="visitorRows"></tbody>
+          </table>
+          <p id="visitorEmpty" class="empty-state" hidden>还没有访问记录。统计会从功能上线后开始。</p>
+        </div>
+      </section>
+
+      <section id="roadmap" class="roadmap-section" aria-labelledby="roadmapTitle">
+        <div class="section-title">
+          <div><span>03</span><h2 id="roadmapTitle">后台规划</h2></div>
+          <p>保持一个后台，按经营需要逐步开放。</p>
+        </div>
+        <div class="roadmap-grid">
+          <article><span>已完成</span><h3>数据中心</h3><p>访问量、访客、页面、来源与设备。</p></article>
+          <article><span>下一步</span><h3>内容与交流</h3><p>留言审核、回复、资料与榫卯内容管理。</p></article>
+          <article><span>规划中</span><h3>会员与收费</h3><p>账号、会员权益、订单、支付与售后。</p></article>
+          <article><span>规划中</span><h3>广告与合作</h3><p>固定广告位、投放周期、点击与合作记录。</p></article>
+        </div>
+      </section>
+
+      <p id="dashboardStatus" class="dashboard-status" aria-live="polite"></p>
+    </main>
+  </div>
+
+  <script src="./admin.js" defer></script>
+</body>
+</html>

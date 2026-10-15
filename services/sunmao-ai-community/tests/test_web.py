@@ -95,6 +95,17 @@ class SunmaoCommunityTests(unittest.TestCase):
         self.assertIn("@media (max-width: 700px)", css)
         self.assertIn("grid-template-columns: repeat(2", css)
 
+    def test_first_party_analytics_and_private_admin_assets_are_wired(self) -> None:
+        html = (COMMUNITY_ROOT / "index.html").read_text(encoding="utf-8")
+        script = (COMMUNITY_ROOT / "app.js").read_text(encoding="utf-8")
+        admin_html = (COMMUNITY_ROOT / "admin" / "index.html").read_text(encoding="utf-8")
+        admin_script = (COMMUNITY_ROOT / "admin" / "admin.js").read_text(encoding="utf-8")
+        self.assertIn('/api/analytics/pageview', script)
+        self.assertIn("不保存 IP 地址", html)
+        self.assertIn('name="robots" content="noindex,nofollow"', admin_html)
+        self.assertIn('/api/admin/analytics', admin_script)
+        self.assertNotIn("innerHTML", admin_script)
+
 
 if __name__ == "__main__":
     unittest.main()

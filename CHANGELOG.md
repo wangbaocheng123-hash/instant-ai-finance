@@ -1,12 +1,11 @@
 # 变更记录
 
-## 2026-10-15 — 榫卯 AI 社区新加坡根域备用发布通道（0.2.1，本地就绪、未切换生产）
+## 2026-10-15 — 榫卯 AI 社区0.3.2回并原仓库（本地就绪、未切换生产）
 
-- 按所有者最新决定冻结新建的独立社区仓库，继续在本仓库`services/sunmao-ai-community/`维护。社区同源白名单新增精确`amuyeye.com`，继续支持`xn--4pv19va7008a.com`；测试明确拒绝`mcp.amuyeye.com`、`www.amuyeye.com`和其他主机。
-- 新增ADR-0068及新加坡加法式部署目录。社区仍使用独立18808端口、systemd、Git外SQLite与`sunmao-production`；`compassdev`只获得固定社区发布器的精确sudo规则，不授予通用root，不启用每分钟检查或Git timer。
-- Caddy模板只声明两个社区精确域名，无通配符、无MCP域名。应用脚本只新增独立社区站点并增量导入既有即时AI wrapper；不改原Caddyfile或时变罗盘环境。若旧时变罗盘配置仍占用`amuyeye.com`，组合预验证在写入前停止。
-- 切换前后验收覆盖即时AI、`compass.grandpaamu.com`和`mcp.amuyeye.com`；MCP必须继续健康且`/mcp`返回带OAuth challenge的401。21项社区测试通过。
-- 本轮没有操作右侧Workbench终端，没有改DNS、服务器服务、Caddy或`sunmao-production`，也没有修改独立社区仓库；因此只记录本地通道就绪，不声称0.2.1已上线。
+- 按所有者最终确认撤销“在新加坡另部署社区”的未执行方向。社区源码回到`instant-ai-finance/services/sunmao-ai-community/`，但继续以独立服务、18808端口、Git外SQLite和独立发布目录与北京博主采集器并列；独立仓库冻结为只读迁移历史。
+- 回并0.3.2的第一方匿名访问统计、`/admin/`密码后台、右上角刷新与密码摘要生成工具。统计不保存IP或完整User-Agent；后台摘要仍只从Git外`/var/lib/sunmao-community/admin-password.hash`读取。独立仓库Webhook、GitHub事件path和根仓库发布器不进入日常代码。
+- 新增ADR-0068及一次性北京发布源回切脚本。脚本验证社区与采集器健康，将独立裸仓库和修订状态保存到可恢复备份，恢复本仓库`sunmao-production`子树发布器并关闭Webhook path与Git timer；不修改当前release、社区数据库、后台密码摘要或Caddy，不停止或重启采集器、模型下载器和社区。
+- 24项社区测试通过，精确同源继续只允许`amuyeye.com`和`xn--4pv19va7008a.com`，拒绝`mcp.amuyeye.com`与`www`。本轮尚未运行服务器回切、推进`sunmao-production`或完成线上验收，不能把代码回并表述为已上线。
 
 ## 2026-10-13 — 榫卯 AI 社区首次独立迁移及第二阶段正式上线（0.2.0）
 

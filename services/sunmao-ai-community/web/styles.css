@@ -39,6 +39,7 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   min-height: 68px;
   padding: 10px clamp(18px, 5vw, 72px);
   border-bottom: 1px solid var(--line);
@@ -59,6 +60,29 @@ a { color: inherit; }
 .brand-mark i:first-child { top: 3px; left: 3px; }
 .brand-mark i:last-child { right: 3px; bottom: 3px; }
 .header-note { margin: 0; color: var(--muted); font-family: system-ui, sans-serif; font-size: 12px; letter-spacing: 0.16em; }
+.header-actions { display: flex; flex-shrink: 0; align-items: center; gap: 24px; }
+.reload-button {
+  display: inline-flex;
+  min-width: 82px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--wood-dark);
+  background: var(--card);
+  cursor: pointer;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.reload-button svg { width: 18px; height: 18px; flex: 0 0 auto; }
+.reload-button:hover { border-color: var(--wood); background: var(--paper-deep); }
+.reload-button:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 3px; }
+.reload-button:disabled { cursor: wait; opacity: 0.65; }
 
 main { width: min(1440px, 100%); min-height: calc(100vh - 190px); margin: 0 auto; padding: 0 clamp(18px, 5vw, 72px) 72px; }
 .app-view { animation: view-in 260ms ease both; }

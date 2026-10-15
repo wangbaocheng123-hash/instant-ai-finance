@@ -1,15 +1,15 @@
 # 项目状态
 
 - 最后更新：2026-10-15（北京时间）
-- 当前阶段：`P3 榫卯 AI 社区新加坡根域备用通道代码就绪，等待服务器首次安装与切换验收`。
-- 最新检查点：`SUNMAO_COMMUNITY_0_2_1_SINGAPORE_CHANNEL_LOCAL_READY`。
+- 当前阶段：`P3 榫卯 AI 社区 0.3.2 功能已回并原仓库，等待北京发布源安全回切与生产验收`。
+- 最新检查点：`SUNMAO_COMMUNITY_0_3_2_MONOREPO_REJOIN_LOCAL_READY`。
 
 ## 本轮已完成
 
-- 按所有者最新决定冻结独立社区仓库，继续维护本仓库`services/sunmao-ai-community/`；社区版本提升到`0.2.1`，加入`amuyeye.com`精确同源支持，同时明确拒绝`mcp.amuyeye.com`、`www.amuyeye.com`与其他主机。
-- 新增ADR-0068及`deploy/singapore/`安全通道：独立社区服务仍使用18808和Git外SQLite；`compassdev`只可运行固定社区发布器；没有Git轮询或timer。Caddy模板只声明`amuyeye.com`和`xn--4pv19va7008a.com`，不含MCP或通配符。
-- 新加坡Caddy脚本采用增量站点文件与组合预验证；若时变罗盘仍占用根域则在写入前停止。切换前后强制检查即时AI、`compass.grandpaamu.com`及`mcp.amuyeye.com`，MCP仍须保持OAuth 401挑战。未修改时变罗盘环境或原Caddyfile。
-- 本轮21项社区测试通过。此检查点只证明本地代码和安全发布文件就绪；尚无新加坡服务器执行或公网切换证据，不能声称`0.2.1`已上线。
+- 按所有者最终确认，社区日常源码回到本仓库`services/sunmao-ai-community/`；独立仓库只保留为只读迁移历史。撤销未执行的新加坡社区部署方向，社区仍在北京以18808、独立systemd和Git外SQLite与采集器并列运行。
+- 把独立仓库0.3.2的产品能力回并：第一方匿名访问统计、`/admin/`密码后台、右上角刷新按钮及密码摘要生成工具。继续支持精确`amuyeye.com`和`xn--4pv19va7008a.com`同源，拒绝`mcp.amuyeye.com`与`www`；不回并独立仓库Webhook发布逻辑。
+- 新增ADR-0068和`rejoin-original-repository.sh`。脚本先验证社区与采集器健康，把独立裸仓库和修订状态移入可恢复备份，恢复本仓库`sunmao-production`子树发布器，并关闭Webhook path及所有Git timer；它不修改当前release、数据库、后台密码摘要或Caddy，不重启任何服务。
+- 24项社区测试完整通过。当前只完成本地代码、文档和回切工具验收；尚未操作北京服务器、推进`sunmao-production`或验证公网，因此不能声称本仓库0.3.2已上线。
 
 ## 北京历史上线基线
 
@@ -25,14 +25,14 @@
 
 ## 当前生产与目标基线
 
-- 榫卯AI社区最近经验证的生产版本仍是北京独立`0.2.0`、提交`ed01937e317cdd5142f25e6c6152ff7fa85df64d`；备案拦截使该入口不能作为当前可用性证据。新加坡目标为`https://amuyeye.com/`和`https://阿木爷爷.com/`共同访问社区，但`0.2.1`尚未切换。普通main推送不自动上线；正式分支仍为`sunmao-production`。
+- 独立仓库记录的最近精确线上验收为`0.3.2`、提交`28276ad681a477fb0e71e44a1ebd5c20b6d1ffe4`；当前北京发布源仍需实时核对后才能回切。本仓库生产基线仍为`sunmao-production`的`ed01937e317cdd5142f25e6c6152ff7fa85df64d`。普通`main`推送不自动上线，回切与功能发布必须分步验收。
 - 北京采集器：`1.2.0`、提交`10fdb3a313f8851c8e7963fb29bc2935dfb164ae`；模型下载器最近记录为`0.10.5+git.exact-profile-hd`、提交`bb4d73ba05908040b18611452e7bd72a48a069c6`。本次未改变其版本。
 - 即时AI继续使用`https://grandpaamu.com/`；时变罗盘网页已可从`https://compass.grandpaamu.com/`访问；MCP继续使用`https://mcp.amuyeye.com/`。历史锚点`GRANDPAAMU_0_21_1_LIVE`和最近通道检查`CODEX_CLOUD_PUBLISH_READY`继续保留；本轮只读核对这些入口，没有修改或重启对应服务。
 - 详细历史（模型先生单条高清替换、原链接恢复、学习标记、播放器、旧稿治理及Web Push）继续保存在CHANGELOG及对应ADR，不在当前快照重复堆积。
 
 ## 当前阻塞与待验收
 
-- 新加坡首次安装、根域释放、社区Caddy增量加载、中文域DNS指向和公网端到端验收尚未执行。本地任务没有连接到右侧Workbench终端的受支持输入通道，因此未把“Git已修改”冒充“服务器已上线”。
+- 北京发布源回切尚未执行：需先从新加坡既有`/home/compassdev/bin/beijing-admin`核对实时源与服务，再运行一次性回切脚本；其后才可推进`sunmao-production`并只启动一次社区发布器。备案与外网域名拦截单独处理，不用新加坡另部署社区来绕过。
 - 尺寸型的真实资料链接尚待所有者提供；“108道”为合集名称，当前实际收录34集，不宣称已有108条或持续自动同步。
 - 社区当前提供公开纯文字交流，不含账号、私信、图片上传或AI问答。默认90天/5000条保留、20/500字长度限制、同源提交及15秒/每小时10条内存限流继续生效。
 - 既有即时AI待主人真机验收事项保留：iPhone高清视觉/连续播放、抖音原链接、已学定位/取消、1997年SEC旧稿不再置顶、主屏Web App首次及自然消息通知。服务器和Chromium测试不能替代这些验收。
@@ -40,4 +40,4 @@
 
 ## 下一项唯一建议任务
 
-`在新加坡服务器安装固定社区发布通道并完成根域切换验收`：必须保留`mcp.amuyeye.com`与两个并列应用，服务器执行和公网证据齐全后才能把P3-SUNMAO-04改为DONE。
+`把北京社区发布源安全恢复到原仓库并上线0.3.2回并版本`：必须先保存独立源备份，再经`sunmao-production`和社区专用发布器上线；核对`/health/version`、后台和统计，同时证明采集器与模型下载器未重启后才能把P3-SUNMAO-04改为DONE。
