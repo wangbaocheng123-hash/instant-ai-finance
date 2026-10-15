@@ -61,6 +61,24 @@ a { color: inherit; }
 .brand-mark i:last-child { right: 3px; bottom: 3px; }
 .header-note { margin: 0; color: var(--muted); font-family: system-ui, sans-serif; font-size: 12px; letter-spacing: 0.16em; }
 .header-actions { display: flex; flex-shrink: 0; align-items: center; gap: 24px; }
+.admin-entry {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 15px;
+  border: 1px solid var(--wood-dark);
+  border-radius: 8px;
+  color: #fffaf2;
+  background: var(--wood-dark);
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.admin-entry:hover { border-color: var(--vermilion); background: var(--vermilion); }
+.admin-entry:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 3px; }
 .reload-button {
   display: inline-flex;
   min-width: 82px;
@@ -231,6 +249,10 @@ footer p { margin: 0; }
   .brand-mark { width: 28px; height: 28px; }
   .brand-mark i { width: 20px; height: 9px; }
   .header-note { display: none; }
+  .header-actions { gap: 8px; }
+  .admin-entry { min-height: 40px; padding: 8px 10px; font-size: 12px; }
+  .reload-button { min-width: 42px; min-height: 40px; padding: 8px; }
+  .reload-button span { display: none; }
   main { padding-right: 14px; padding-left: 14px; }
   .exchange-intro { padding: 44px 0 38px; }
   .exchange-intro h1 { font-size: clamp(46px, 15vw, 70px); }
