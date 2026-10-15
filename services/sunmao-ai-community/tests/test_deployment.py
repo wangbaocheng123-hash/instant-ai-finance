@@ -43,6 +43,16 @@ class IndependentDeploymentContractTests(unittest.TestCase):
             publisher,
         )
 
+    def test_publisher_falls_back_to_verified_github_subtree_archive(self) -> None:
+        publisher = self.read("sunmao-community-git-deploy")
+        self.assertIn('GITHUB_API_ROOT="https://api.github.com/repos/wangbaocheng123-hash/instant-ai-finance"', publisher)
+        self.assertIn('GITHUB_CODELOAD_ROOT="https://codeload.github.com/wangbaocheng123-hash/instant-ai-finance/tar.gz"', publisher)
+        self.assertIn("timeout --signal=TERM 45s", publisher)
+        self.assertIn('source_mode="codeload"', publisher)
+        self.assertIn('subtree = ("services", "sunmao-ai-community")', publisher)
+        self.assertIn('compare/${accepted_commit}...${target_commit}', publisher)
+        self.assertIn('github_tree_entry_sha "${subtree_payload}" sunmao-ai-community', publisher)
+
     def test_caddy_proxies_directly_to_the_peer_service(self) -> None:
         caddy = self.read("sunmao-community.Caddyfile.example")
         apply_script = self.read("apply-caddy.sh")

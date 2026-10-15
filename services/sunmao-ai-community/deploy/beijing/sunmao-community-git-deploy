@@ -4,6 +4,8 @@ set -Eeuo pipefail
 umask 027
 
 readonly PUBLIC_REPOSITORY="https://github.com/wangbaocheng123-hash/instant-ai-finance.git"
+readonly GITHUB_API_ROOT="https://api.github.com/repos/wangbaocheng123-hash/instant-ai-finance"
+readonly GITHUB_CODELOAD_ROOT="https://codeload.github.com/wangbaocheng123-hash/instant-ai-finance/tar.gz"
 readonly PRODUCTION_REF="refs/remotes/origin/sunmao-production"
 readonly SUBTREE="services/sunmao-ai-community"
 readonly BARE_REPOSITORY="/opt/sunmao-community/production-source.git"
@@ -22,8 +24,11 @@ readonly HEALTH_URL="http://127.0.0.1:18808/health"
 readonly VERSION_URL="http://127.0.0.1:18808/health/version"
 
 target_commit=""
+target_tree=""
+source_mode="git"
 stage_dir=""
 archive_dir=""
+archive_file=""
 mark_target_failed=false
 
 log() { printf 'sunmao-community-git-deploy: %s\n' "$*"; }
@@ -44,6 +49,9 @@ cleanup() {
     [[ -n "${path}" && -d "${path}" ]] || continue
     case "${path}" in "${RELEASES_DIR}"/.*.tmp.*) rm -rf -- "${path}" ;; *) fail "unsafe temporary path" ;; esac
   done
+  if [[ -n "${archive_file}" && -f "${archive_file}" ]]; then
+    case "${archive_file}" in "${STATE_DIR}"/archive.*.tar.gz) rm -f -- "${archive_file}" ;; *) fail "unsafe archive path" ;; esac
+  fi
 }
 
 on_exit() {
@@ -106,6 +114,124 @@ validate_tree() {
   (( count > 0 )) || fail "approved subtree is empty"
 }
 
+github_api() {
+  curl --fail --silent --show-error --location --connect-timeout 10 --max-time 40 \
+    --retry 2 --retry-delay 2 --retry-all-errors \
+    -H 'Accept: application/vnd.github+json' \
+    -H 'X-GitHub-Api-Version: 2026-03-10' \
+    -H 'User-Agent: sunmao-community-deployer' "$1"
+}
+
+fetch_production_with_git() {
+  if timeout --signal=TERM 45s runuser -u "${GIT_USER}" -- \
+      git --git-dir="${BARE_REPOSITORY}" \
+      -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 \
+      fetch --refetch --no-filter --no-tags --prune origin \
+      "+refs/heads/sunmao-production:${PRODUCTION_REF}"; then
+    return 0
+  fi
+  log "Git fetch failed; switching to the official GitHub API and codeload endpoints"
+  return 1
+}
+
+github_tree_entry_sha() {
+  local payload="$1" entry="$2"
+  printf '%s' "${payload}" | python3 -c 'import json,re,sys; entry=sys.argv[1]; value=json.load(sys.stdin); matches=[str(item.get("sha", "")).lower() for item in value.get("tree", []) if item.get("path")==entry and item.get("type")=="tree"]; sha=matches[0] if len(matches)==1 else ""; print(sha if re.fullmatch(r"[0-9a-f]{40}", sha) else "")' "${entry}"
+}
+
+resolve_production_from_github_api() {
+  local accepted_commit="$1" ref_payload commit_payload root_tree services_payload services_tree subtree_payload compare_payload comparison
+  ref_payload="$(github_api "${GITHUB_API_ROOT}/git/ref/heads/sunmao-production")" || fail "GitHub production ref is unavailable"
+  target_commit="$(printf '%s' "${ref_payload}" | python3 -c 'import json,re,sys; value=json.load(sys.stdin); sha=str(value.get("object",{}).get("sha","")).lower(); print(sha if re.fullmatch(r"[0-9a-f]{40}",sha) else "")')"
+  validate_revision "${target_commit}"
+  commit_payload="$(github_api "${GITHUB_API_ROOT}/git/commits/${target_commit}")" || fail "GitHub commit metadata is unavailable"
+  root_tree="$(printf '%s' "${commit_payload}" | python3 -c 'import json,re,sys; value=json.load(sys.stdin); sha=str(value.get("tree",{}).get("sha","")).lower(); print(sha if re.fullmatch(r"[0-9a-f]{40}",sha) else "")')"
+  validate_revision "${root_tree}"
+  services_payload="$(github_api "${GITHUB_API_ROOT}/git/trees/${root_tree}")" || fail "GitHub root tree is unavailable"
+  services_tree="$(github_tree_entry_sha "${services_payload}" services)"; validate_revision "${services_tree}"
+  subtree_payload="$(github_api "${GITHUB_API_ROOT}/git/trees/${services_tree}")" || fail "GitHub services tree is unavailable"
+  target_tree="$(github_tree_entry_sha "${subtree_payload}" sunmao-ai-community)"; validate_revision "${target_tree}"
+  if [[ -n "${accepted_commit}" && "${accepted_commit}" != "${target_commit}" ]]; then
+    compare_payload="$(github_api "${GITHUB_API_ROOT}/compare/${accepted_commit}...${target_commit}")" || fail "GitHub fast-forward comparison is unavailable"
+    comparison="$(printf '%s' "${compare_payload}" | python3 -c 'import json,sys; value=json.load(sys.stdin); print(str(value.get("status", ""))+" "+str(value.get("merge_base_commit",{}).get("sha", "")))')"
+    [[ "${comparison}" == "ahead ${accepted_commit}" ]] || fail "production branch is not a verified fast-forward"
+  fi
+  source_mode="codeload"
+  log "using official GitHub API and immutable codeload archive revision=${target_commit}"
+}
+
+extract_codeload_release() {
+  local revision="$1" destination="$2" archive_size
+  archive_file="$(mktemp "${STATE_DIR}/archive.XXXXXX.tar.gz")"
+  curl --fail --silent --show-error --location --connect-timeout 10 --max-time 180 \
+    --retry 3 --retry-delay 3 --retry-all-errors --max-filesize 52428800 \
+    -H 'User-Agent: sunmao-community-deployer' \
+    "${GITHUB_CODELOAD_ROOT}/${revision}" -o "${archive_file}"
+  archive_size="$(stat -c '%s' "${archive_file}")"
+  [[ "${archive_size}" =~ ^[0-9]+$ && "${archive_size}" -gt 0 && "${archive_size}" -le 52428800 ]] || fail "codeload archive size is invalid"
+  python3 - "${archive_file}" "${destination}" <<'PY'
+import os
+import re
+import shutil
+import sys
+import tarfile
+from pathlib import Path, PurePosixPath
+
+archive_path, destination_path = map(Path, sys.argv[1:])
+allowed_path = re.compile(r"^[A-Za-z0-9._/@+-]+$")
+subtree = ("services", "sunmao-ai-community")
+count = 0
+root = None
+
+with tarfile.open(archive_path, "r:gz") as archive:
+    for member in archive.getmembers():
+        path = PurePosixPath(member.name)
+        if path.is_absolute() or not path.parts or any(part in {"", ".", ".."} for part in path.parts):
+            raise SystemExit("unsafe codeload path")
+        if root is None:
+            root = path.parts[0]
+        if path.parts[0] != root:
+            raise SystemExit("multiple codeload roots")
+        prefix = (root, *subtree)
+        if path.parts[: len(prefix)] != prefix:
+            continue
+        relative_parts = path.parts[len(prefix) :]
+        if not relative_parts:
+            if not member.isdir():
+                raise SystemExit("invalid codeload subtree root")
+            continue
+        relative = "/".join(relative_parts)
+        if not allowed_path.fullmatch(relative):
+            raise SystemExit("unsafe codeload filename")
+        lowered = [part.lower() for part in relative_parts]
+        if (
+            any(part == ".env" or part.startswith(".env.") for part in lowered)
+            or any(part in {"data", "logs"} or part.startswith("backup") for part in lowered[:-1])
+            or lowered[-1].endswith((".sqlite", ".sqlite3", ".db", ".pem", ".key"))
+        ):
+            raise SystemExit("sensitive codeload path rejected")
+        target = destination_path.joinpath(*relative_parts)
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        if not member.isfile():
+            raise SystemExit("special codeload object rejected")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source = archive.extractfile(member)
+        if source is None:
+            raise SystemExit("codeload member is unreadable")
+        with source, target.open("xb") as output:
+            shutil.copyfileobj(source, output)
+        os.chmod(target, 0o755 if member.mode & 0o111 else 0o644)
+        count += 1
+
+if count < 1:
+    raise SystemExit("codeload subtree is empty")
+PY
+  rm -f -- "${archive_file}"
+  archive_file=""
+}
+
 run_release_tests() {
   local source_dir="$1"
   local output_file="${source_dir}/.test-output" count
@@ -124,7 +250,7 @@ run_release_tests() {
 }
 
 [[ "$(id -u)" -eq 0 ]] || fail "publisher must run as root"
-for command in basename chmod chown cp curl date dirname flock git id install ln mktemp mv python3 readlink rm runuser sed seq sleep stat systemctl systemd-run tail tar; do require_command "${command}"; done
+for command in basename chmod chown cp curl date dirname flock git id install ln mktemp mv python3 readlink rm runuser sed seq sleep stat systemctl systemd-run tail tar timeout; do require_command "${command}"; done
 [[ "$(stat -c '%U:%G:%a' "$0")" == "root:root:755" ]] || fail "publisher ownership or mode is unsafe"
 id "${GIT_USER}" >/dev/null 2>&1 || fail "Git reader user is missing"
 id "${BUILD_USER}" >/dev/null 2>&1 || fail "build user is missing"
@@ -134,23 +260,27 @@ exec 9>"${LOCK_FILE}"
 flock -n 9 || { log "another deployment is running"; exit 0; }
 
 [[ "$(git_read remote get-url origin)" == "${PUBLIC_REPOSITORY}" ]] || fail "unexpected public Git origin"
-git_read fetch --filter=blob:none --no-tags --prune origin "+refs/heads/sunmao-production:${PRODUCTION_REF}"
-target_commit="$(git_read rev-parse "${PRODUCTION_REF}^{commit}")"; validate_revision "${target_commit}"
+accepted_commit="$(read_revision_file "${ACCEPTED_FILE}")"
+if fetch_production_with_git; then
+  target_commit="$(git_read rev-parse "${PRODUCTION_REF}^{commit}")"; validate_revision "${target_commit}"
+  [[ -z "${accepted_commit}" ]] || git_read merge-base --is-ancestor "${accepted_commit}" "${target_commit}" || fail "production branch is not a fast-forward"
+  target_tree="$(git_read rev-parse "${target_commit}:${SUBTREE}")"; validate_revision "${target_tree}"
+else
+  resolve_production_from_github_api "${accepted_commit}"
+fi
 failed_commit="$(read_revision_file "${FAILED_FILE}")"
 [[ "${failed_commit}" != "${target_commit}" ]] || { log "known failed revision skipped=${target_commit}"; exit 0; }
-accepted_commit="$(read_revision_file "${ACCEPTED_FILE}")"
-[[ -z "${accepted_commit}" ]] || git_read merge-base --is-ancestor "${accepted_commit}" "${target_commit}" || fail "production branch is not a fast-forward"
-target_tree="$(git_read rev-parse "${target_commit}:${SUBTREE}")"; validate_revision "${target_tree}"
 deployed_tree="$(read_revision_file "${TREE_FILE}")"
 if [[ -n "${accepted_commit}" && "${accepted_commit}" == "${target_commit}" && "${target_tree}" == "${deployed_tree}" ]]; then
   service_is_healthy || fail "current service is unhealthy"; log "already accepted revision=${target_commit}"; exit 0
 fi
 
 mark_target_failed=true
-listing="$(mktemp "${STATE_DIR}/tree.XXXXXX")"
-git_read ls-tree -r -z "${target_commit}" -- "${SUBTREE}" >"${listing}"
-validate_tree "${listing}"; rm -f -- "${listing}"
-for required in VERSION sunmao_community/app.py web/index.html web/videos.json; do git_read cat-file -e "${target_commit}:${SUBTREE}/${required}" || fail "required release file missing"; done
+if [[ "${source_mode}" == git ]]; then
+  listing="$(mktemp "${STATE_DIR}/tree.XXXXXX")"
+  git_read ls-tree -r -z "${target_commit}" -- "${SUBTREE}" >"${listing}"
+  validate_tree "${listing}"; rm -f -- "${listing}"
+fi
 
 previous_release=""
 if [[ -L "${CURRENT_LINK}" ]]; then
@@ -160,10 +290,15 @@ fi
 release_dir="${RELEASES_DIR}/${target_commit}"
 validate_release_path "${release_dir}"
 if [[ ! -e "${release_dir}" ]]; then
-  archive_dir="$(mktemp -d "${RELEASES_DIR}/.${target_commit}.tmp.archive.XXXXXX")"
   stage_dir="$(mktemp -d "${RELEASES_DIR}/.${target_commit}.tmp.release.XXXXXX")"
-  git_read archive "${target_commit}" "${SUBTREE}" | tar --extract --directory "${archive_dir}" --no-same-owner --no-same-permissions
-  cp -a "${archive_dir}/${SUBTREE}/." "${stage_dir}/"; rm -rf -- "${archive_dir}"; archive_dir=""
+  if [[ "${source_mode}" == git ]]; then
+    archive_dir="$(mktemp -d "${RELEASES_DIR}/.${target_commit}.tmp.archive.XXXXXX")"
+    git_read archive "${target_commit}" "${SUBTREE}" | tar --extract --directory "${archive_dir}" --no-same-owner --no-same-permissions
+    cp -a "${archive_dir}/${SUBTREE}/." "${stage_dir}/"; rm -rf -- "${archive_dir}"; archive_dir=""
+  else
+    extract_codeload_release "${target_commit}" "${stage_dir}"
+  fi
+  for required in VERSION sunmao_community/app.py web/index.html web/videos.json; do [[ -f "${stage_dir}/${required}" ]] || fail "required release file missing"; done
   printf '{"repository_revision":"%s","deployed_time":"%s"}\n' "${target_commit}" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >"${stage_dir}/DEPLOYMENT.json"
   run_release_tests "${stage_dir}"
   printf '%s\n' "${target_commit}" >"${stage_dir}/.sunmao-community-release"
