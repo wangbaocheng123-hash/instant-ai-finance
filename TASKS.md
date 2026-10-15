@@ -5,7 +5,7 @@
 | ID | 状态 | 任务 | 验收证据 |
 |---|---|---|---|
 | P3-SUNMAO-05 | DONE | 把`amuyeye.com`根域名安全接入北京榫卯社区 | ADR-0069；AliDNS根记录保持新加坡`47.236.175.118`，新加坡低权限本地隧道18818转北京同一社区18808，精确根域Caddy与旧罗盘SW清理已上线。北京外部网络实测首页200、版本0.3.2/b5ceea0；`mcp` DNS与Caddy块未变且仍响应，罗盘正式域名303登录正常；无通配符、无第二份应用/数据库 |
-| P3-SUNMAO-04 | IN_PROGRESS | 把0.3.2功能回并原仓库并恢复手机云端Codex的既有发布链 | ADR-0068；后台、匿名统计、刷新按钮已回并`services/sunmao-ai-community/`，独立Webhook逻辑未回并；安全回切脚本保存旧裸仓库/状态、恢复`sunmao-production`子树发布并关闭path/timer，不改release、SQLite、密码摘要或Caddy。24项测试通过。尚缺服务器实时核对、回切、生产推进与端到端验收，不能标记DONE |
+| P3-SUNMAO-04 | DONE | 把0.3.2功能回并原仓库并恢复手机云端Codex的既有发布链 | ADR-0068；旧独立源及状态已备份至`/opt/sunmao-community/migration-backups/20261015T035313Z`且Git检查通过，生产源恢复`instant-ai-finance.git`，Webhook path关闭、无Git timer。`sunmao-production`安全快进并由社区专用发布器一次上线`b5ceea0`/0.3.2；本地24项与生产隔离测试、回环/Caddy SNI版本、后台200/401、匿名统计表及密码摘要权限均通过。采集器`10fdb3a`和下载器InvocationID未变，未发布或重启；外部DNS/备案复验独立跟踪 |
 | P2-SUNMAO-03 | DONE | 把榫卯 AI 社区从采集器迁为并列独立应用 | ADR-0067；源码、`0.2.0`版本、18808端口、社区SQLite、systemd、Caddy模板、`sunmao-production`与固定发布器全部独立；采集器恢复1.2.0并删除社区API/页面/数据库配置。社区15项及采集器重点回归通过，未推进生产分支或更改线上服务 |
 | P2-SUNMAO-02 | DONE | 建立社区底部导航、尺寸型占位与公开文字交流主屏 | ADR-0066/0067；底部左/中/右固定为尺寸型、交流区、榫卯108道，默认交流主屏；34条视频保持原跳转。交流区使用社区独立SQLite、纯文本20/500字、同源提交、15秒/每小时10条限流、90天/5000条保留，来源地址不落库 |
 | P3-SUNMAO-02 | DONE | 首次独立迁移并发布榫卯 AI 社区第二阶段到`阿木爷爷.com` | ADR-0067生产验收；社区独立服务与`sunmao-production`精确为`ed01937`/`0.2.0`，Caddy已切18808并留备份。公网201发言/429限流、实际重启持久化、三入口、34条原视频链接及手机无横向溢出通过；16项本地测试通过。只隐藏合成验收留言。`beijing-production`及采集器仍`10fdb3a`/`1.2.0`，采集器和下载器InvocationID不变；采集器timer关闭、社区timer未安装，无Git轮询 |
