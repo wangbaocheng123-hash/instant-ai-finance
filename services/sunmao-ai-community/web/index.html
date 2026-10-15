@@ -64,14 +64,17 @@
       <div class="quiet-hero">
         <p class="eyebrow">工艺尺寸索引</p>
         <h1 id="sizes-title">尺寸型</h1>
-        <p>这里将集中放入各种工艺品的尺寸连接。你把资料给我以后，我会按品类、用途和尺寸整理好，让它们一眼就能找到。</p>
+        <p>这里集中收好器物、结构与图纸尺寸资料。每一条都保留原始出处，点击资料卡即可打开原文。</p>
       </div>
-      <div class="coming-grid" aria-label="即将增加的尺寸内容">
-        <article><span>01</span><h2>器物尺寸</h2><p>收纳常见木作器物的关键长、宽、高与比例。</p></article>
-        <article><span>02</span><h2>结构尺寸</h2><p>记录榫头、卯眼与配合间隙等结构数据。</p></article>
-        <article><span>03</span><h2>图纸连接</h2><p>以后可直接进入对应工艺品的尺寸页或图纸。</p></article>
-      </div>
-      <p class="empty-hint">资料入口已留好，等待你下一步提供内容。</p>
+      <section class="size-library" aria-labelledby="size-library-title">
+        <div class="section-heading">
+          <h2 id="size-library-title">尺寸资料</h2>
+          <p><strong id="sizeResourceCount">1</strong> 篇资料 · 持续补充</p>
+        </div>
+        <div id="sizeResourceGrid" class="size-resource-grid" aria-live="polite" aria-busy="true"></div>
+        <p id="sizeLoadMessage" class="load-message">正在整理尺寸资料…</p>
+        <noscript><p class="load-message error">需要开启 JavaScript 才能显示尺寸资料。</p></noscript>
+      </section>
     </section>
 
     <section id="view-joints" class="app-view joints-view" data-view="joints" aria-labelledby="joints-title" hidden>

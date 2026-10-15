@@ -17,6 +17,10 @@ class SunmaoCommunityTests(unittest.TestCase):
             (COMMUNITY_ROOT / "videos.json").read_text(encoding="utf-8")
         )
         self.videos = self.payload["videos"]
+        self.size_payload = json.loads(
+            (COMMUNITY_ROOT / "size-resources.json").read_text(encoding="utf-8")
+        )
+        self.size_resources = self.size_payload["resources"]
 
     def test_collection_contains_exactly_34_contiguous_unique_episodes(self) -> None:
         episodes = [video["episode"] for video in self.videos]
@@ -52,6 +56,36 @@ class SunmaoCommunityTests(unittest.TestCase):
         self.assertIn('link.target = "_blank"', script)
         self.assertIn('link.rel = "noopener noreferrer"', script)
         self.assertNotRegex(html + script, re.compile(r"<(?:video|audio|iframe)\b", re.I))
+
+    def test_size_library_contains_the_first_canonical_wechat_article(self) -> None:
+        self.assertEqual(self.size_payload["series"], "尺寸型")
+        self.assertEqual(len(self.size_resources), 1)
+        resource = self.size_resources[0]
+        source = urlsplit(resource["url"])
+        self.assertEqual(resource["sequence"], 1)
+        self.assertEqual(resource["id"], "wechat-4DqdcqnoGYbvrrC4fgAdyA")
+        self.assertEqual(source.scheme, "https")
+        self.assertEqual(source.hostname, "mp.weixin.qq.com")
+        self.assertEqual(source.path, "/s/4DqdcqnoGYbvrrC4fgAdyA")
+        self.assertEqual(source.query, "")
+        self.assertTrue(resource["title"].strip())
+        self.assertTrue(resource["summary"].strip())
+
+    def test_sizes_view_loads_safe_text_only_resource_cards(self) -> None:
+        html = (COMMUNITY_ROOT / "index.html").read_text(encoding="utf-8")
+        script = (COMMUNITY_ROOT / "app.js").read_text(encoding="utf-8")
+        css = (COMMUNITY_ROOT / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('id="sizeResourceGrid"', html)
+        self.assertIn('id="sizeResourceCount"', html)
+        self.assertIn('fetch("./size-resources.json"', script)
+        self.assertIn('url.hostname === WECHAT_ARTICLE_HOST', script)
+        self.assertIn('summary.textContent = resource.summary', script)
+        self.assertIn('link.target = "_blank"', script)
+        self.assertIn('link.rel = "noopener noreferrer"', script)
+        self.assertIn('link.referrerPolicy = "no-referrer"', script)
+        self.assertIn('if (activeView === "sizes") loadSizeResources()', script)
+        self.assertIn(".size-resource-grid {", css)
+        self.assertNotIn("innerHTML", script)
 
     def test_top_navigation_opens_discussion_sizes_and_joint_views(self) -> None:
         html = (COMMUNITY_ROOT / "index.html").read_text(encoding="utf-8")

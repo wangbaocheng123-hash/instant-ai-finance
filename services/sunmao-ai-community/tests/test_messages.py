@@ -86,7 +86,15 @@ class CommunityMessageTests(unittest.TestCase):
             status, _headers, payload = request("GET", "/health/version")
             self.assertEqual(status, 200)
             self.assertEqual(payload["service"], "sunmao-ai-community")
-            self.assertEqual(payload["version"], "0.3.6")
+            self.assertEqual(payload["version"], "0.3.7")
+
+            status, headers, payload = request("GET", "/size-resources.json")
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                headers["Content-Type"], "application/json; charset=utf-8"
+            )
+            self.assertEqual(payload["series"], "尺寸型")
+            self.assertEqual(payload["resources"][0]["sequence"], 1)
         finally:
             server.shutdown()
             server.server_close()

@@ -1,6 +1,7 @@
 "use strict";
 
 const DOUYIN_VIDEO_HOSTS = new Set(["douyin.com", "www.douyin.com"]);
+const WECHAT_ARTICLE_HOST = "mp.weixin.qq.com";
 const VALID_VIEWS = new Set(["exchange", "sizes", "joints"]);
 const MESSAGE_REFRESH_INTERVAL = 15000;
 const ANALYTICS_VISITOR_STORAGE_KEY = "sunmao.analytics.visitor.v1";
@@ -8,6 +9,7 @@ const ANALYTICS_VISITOR_TOKEN_PATTERN = /^[A-Za-z0-9_-]{24,96}$/;
 
 let activeView = "exchange";
 let collectionLoaded = false;
+let sizeResourcesLoaded = false;
 let messagesLoaded = false;
 let lastTrackedView = "";
 let analyticsQueue = Promise.resolve();
@@ -74,6 +76,95 @@ function isTrustedCoverUrl(value) {
       && !url.port;
   } catch (_error) {
     return false;
+  }
+}
+
+function isTrustedSizeResourceUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:"
+      && url.hostname === WECHAT_ARTICLE_HOST
+      && /^\/s\/[A-Za-z0-9_-]+$/.test(url.pathname)
+      && !url.username
+      && !url.password
+      && !url.port
+      && !url.search
+      && !url.hash;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function validSizeResource(resource) {
+  return resource
+    && Number.isInteger(resource.sequence)
+    && resource.sequence > 0
+    && typeof resource.id === "string"
+    && resource.id.trim()
+    && typeof resource.title === "string"
+    && resource.title.trim()
+    && typeof resource.source === "string"
+    && resource.source.trim()
+    && typeof resource.summary === "string"
+    && resource.summary.trim()
+    && isTrustedSizeResourceUrl(resource.url);
+}
+
+function renderSizeResource(resource) {
+  const article = document.createElement("article");
+  article.className = "size-resource-card";
+  const link = document.createElement("a");
+  link.className = "size-resource-link";
+  link.href = resource.url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.referrerPolicy = "no-referrer";
+  link.setAttribute("aria-label", `${resource.title}，打开微信原文`);
+  const meta = document.createElement("div");
+  meta.className = "size-resource-meta";
+  const sequence = document.createElement("span");
+  sequence.textContent = String(resource.sequence).padStart(2, "0");
+  const source = document.createElement("span");
+  source.textContent = resource.source;
+  meta.append(sequence, source);
+  const title = document.createElement("h3");
+  title.textContent = resource.title;
+  const summary = document.createElement("p");
+  summary.textContent = resource.summary;
+  const action = document.createElement("span");
+  action.className = "size-resource-action";
+  action.textContent = "打开原文 ↗";
+  link.append(meta, title, summary, action);
+  article.append(link);
+  return article;
+}
+
+async function loadSizeResources() {
+  if (sizeResourcesLoaded) return;
+  sizeResourcesLoaded = true;
+  const grid = document.querySelector("#sizeResourceGrid");
+  const message = document.querySelector("#sizeLoadMessage");
+  const count = document.querySelector("#sizeResourceCount");
+  try {
+    const response = await fetch("./size-resources.json", { cache: "no-cache" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const resources = Array.isArray(payload.resources)
+      ? payload.resources.filter(validSizeResource)
+      : [];
+    if (!resources.length) throw new Error("empty size library");
+    const fragment = document.createDocumentFragment();
+    resources.sort((left, right) => left.sequence - right.sequence)
+      .forEach((resource) => fragment.append(renderSizeResource(resource)));
+    grid.replaceChildren(fragment);
+    grid.setAttribute("aria-busy", "false");
+    count.textContent = String(resources.length);
+    message.hidden = true;
+  } catch (_error) {
+    sizeResourcesLoaded = false;
+    grid.setAttribute("aria-busy", "false");
+    message.classList.add("error");
+    message.textContent = "尺寸资料暂时没有加载成功，请稍后刷新。";
   }
 }
 
@@ -266,6 +357,7 @@ function setActiveView(view, { updateHash = true } = {}) {
     window.history.replaceState(null, "", `#${activeView}`);
   }
   window.scrollTo({ top: 0, behavior: "smooth" });
+  if (activeView === "sizes") loadSizeResources();
   if (activeView === "joints") loadCollection();
   if (activeView === "exchange" && !messagesLoaded) loadMessages();
   if (lastTrackedView !== activeView) {

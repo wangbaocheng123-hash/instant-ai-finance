@@ -36,6 +36,7 @@ STATIC_FILES = {
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/styles.css": ("styles.css", "text/css; charset=utf-8"),
     "/videos.json": ("videos.json", "application/json; charset=utf-8"),
+    "/size-resources.json": ("size-resources.json", "application/json; charset=utf-8"),
     "/admin/": ("admin/index.html", "text/html; charset=utf-8"),
     "/admin/index.html": ("admin/index.html", "text/html; charset=utf-8"),
     "/admin/admin.js": ("admin/admin.js", "text/javascript; charset=utf-8"),
