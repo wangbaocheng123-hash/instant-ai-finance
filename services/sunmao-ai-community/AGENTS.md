@@ -2,6 +2,12 @@
 
 本文件适用于 `services/sunmao-ai-community/`。先遵守仓库根目录 `AGENTS.md` 的启动顺序、服务隔离和发布规则，再执行以下资料流程。
 
+## 当前发布验收入口
+
+- 电脑端与新加坡云端均以 `https://amuyeye.com/health/version` 返回的完整 `repository_revision` 验收目标提交，不能只凭 Git 推送成功或首页200宣称上线。
+- `阿木爷爷.com`暂缓接入，不参与发布等待，也不作为社区功能发布失败的依据。备案完成后，须单独验收DNS、HTTPS及同一社区服务，再恢复入口；当前不要修改其DNS或Caddy，不得影响`mcp.amuyeye.com`。
+- 沿用既有新加坡`/home/compassdev/bin/beijing-admin`，在北京执行一次`sudo -n systemctl start --no-block sunmao-community-git-deploy.service`。不得新建定时轮询，不得调用采集套件发布器。普通修改仍停在`main`，不触发生产发布。
+
 ## 接到所有者从手机或新加坡云端 Codex 提供的新资料时
 
 1. 先读 `docs/KNOWLEDGE_INTAKE_RUNBOOK.md`、`config/knowledge_taxonomy.v1.json`、`docs/CLOUD_KNOWLEDGE_LIBRARY.md`，再核对根目录 `STATUS.md` 和 `TASKS.md` 中知识库接口的实际完成状态。不得把规划中的云端上传、检索或 AI 接口当作已经上线。

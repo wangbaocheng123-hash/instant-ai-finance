@@ -3,7 +3,8 @@ set -euo pipefail
 
 readonly REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
 readonly EXPECTED_REPOSITORY="wangbaocheng123-hash/instant-ai-finance.git"
-readonly VERSION_URL="https://xn--4pv19va7008a.com/health/version"
+# The Chinese domain is deferred until ICP filing, DNS and HTTPS are verified.
+readonly VERSION_URL="https://amuyeye.com/health/version"
 
 fail() { printf 'SUNMAO_GIT_PUBLISH_FAILED: %s\n' "$*" >&2; exit 1; }
 [[ $# -eq 1 ]] || fail "只接受一个完整 Git 提交 SHA"
@@ -28,7 +29,8 @@ fi
 
 git push origin "${target}:refs/heads/sunmao-production"
 printf '%s\n' 'SUNMAO_ON_DEMAND_TRIGGER_REQUIRED'
-printf '%s\n' 'remote_command=systemctl start --no-block sunmao-community-git-deploy.service'
+printf '%s\n' 'remote_command=sudo -n systemctl start --no-block sunmao-community-git-deploy.service'
+printf 'verification_url=%s\n' "${VERSION_URL}"
 
 for _attempt in $(seq 1 90); do
   payload="$(curl --fail --silent --show-error --max-time 10 "${VERSION_URL}" 2>/dev/null || true)"

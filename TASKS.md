@@ -4,6 +4,7 @@
 
 | ID | 状态 | 任务 | 验收证据 |
 |---|---|---|---|
+| P3-SUNMAO-12 | DONE | 社区发布统一以英文域名验收，中文入口备案后另行接入 | 操作端脚本改为`https://amuyeye.com/health/version`并保留完整SHA校验；社区指令、README和ADR-0069明确暂缓中文入口。Bash语法、9项独立部署契约测试通过，英文公网仍为0.3.9/`6468e4e`；未推进生产分支，未改DNS/Caddy/隧道或重启服务 |
 | P3-SUNMAO-11 | DONE | 正式发布社区0.3.9尺寸真实标题与云端图集底座 | `sunmao-production`、北京release与`amuyeye.com`均为`6468e4e`/0.3.9；发布器`Result=success`、`ExecMainStatus=0`。公网尺寸API返回真实标题，知识迁移版本1和图片目录已创建，SQLite inode未变；后台200、未登录统计401。只重启社区，采集器与模型下载器InvocationID不变；中文域名DNS未解析，不冒充已验收 |
 | P3-SUNMAO-10 | DONE | 正式发布社区0.3.8手机输入修复 | `sunmao-production`、北京release与公网均为`99dce4f`/0.3.8；发布器`Result=success`、`ExecMainStatus=0`。公网确认无昵称输入、正文输入存在、16px与`text-size-adjust: 100%`生效且只提交`body`；后台200、未登录统计401。只重启社区，采集器与模型下载器InvocationID不变 |
 | P2-SUNMAO-15 | DONE | 固定新加坡云端智能体接收社区资料的分类与执行规则 | 根/社区`AGENTS.md`、`KNOWLEDGE_INTAKE_RUNBOOK.md`、`knowledge_taxonomy.v1.json`与ADR-0077明确一个主题多种资源、现有静态清单与未来后台的分界、来源/尺寸核实、去重、入库位置及四级状态报告；JSON可解析且类目/形式ID无重复。提交`724c762`已推送远端`main`并核对；未上线知识后台 |
