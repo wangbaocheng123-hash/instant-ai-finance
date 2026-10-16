@@ -17,6 +17,10 @@ class IndependentDeploymentContractTests(unittest.TestCase):
         self.assertIn("User=sunmaocommunity", service)
         self.assertIn("127.0.0.1 --port 18808", service)
         self.assertIn("/var/lib/sunmao-community/community.sqlite3", service)
+        self.assertIn(
+            "SUNMAO_COMMUNITY_KNOWLEDGE_ROOT=/var/lib/sunmao-community/knowledge",
+            service,
+        )
         self.assertIn("/opt/sunmao-community/current", service)
         self.assertNotIn("bloggeragent", service)
         self.assertNotIn("18797", service)

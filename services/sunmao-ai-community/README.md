@@ -16,7 +16,15 @@
 
 ## 云端知识库规划
 
-后续正式知识资料由北京社区服务从自己的 Git 外 `/var/lib/sunmao-community` 数据目录提供，用户访问不依赖所有者电脑。尺寸和检索元数据进入现有社区 SQLite；图纸、模型、图片及有权托管的自有媒体进入 `knowledge/` 资源目录，第三方视频和文章保留原链接。云端目录、资料字段、审核发布、备份与迁移契约见 `docs/CLOUD_KNOWLEDGE_LIBRARY.md` 和 ADR-0076。当前仅完成设计，生产目录、上传和 AI 检索尚未实施。
+后续正式知识资料由北京社区服务从自己的 Git 外 `/var/lib/sunmao-community` 数据目录提供，用户访问不依赖所有者电脑。尺寸和检索元数据进入现有社区 SQLite；图纸、模型、图片及有权托管的自有媒体进入 `knowledge/` 资源目录，第三方视频和文章保留原链接。云端目录、资料字段、审核发布、备份与迁移契约见 `docs/CLOUD_KNOWLEDGE_LIBRARY.md` 和 ADR-0076。0.3.9开发候选已开始实施统一知识表、图片原件目录和公开只读资源接口；受保护上传/审核、通用检索、备份恢复演练、AI问答与生产发布仍未完成。
+
+尺寸型的外部文章继续以 `web/size-resources.json` 作为经审核的Git种子清单，服务启动后同步到社区SQLite。经所有者确认允许托管的图片作品不进入Git：原图写入 `/var/lib/sunmao-community/knowledge/originals/images/<asset-id>/`，元数据写入统一`knowledge_*`表，再通过不暴露文件路径的同源资源ID读取。服务器侧导入命令为：
+
+```bash
+python3 -m scripts.import_size_gallery manifest.json
+```
+
+清单必须包含真实标题、来源URL、说明、显示顺序和本地原图列表；导入器只接受JPEG、PNG、GIF、WebP，每张不超过20 MiB，最多40张。微信或抖音验证页无法证明的标题、正文和图片不得用猜测内容发布。
 
 所有者从手机向新加坡云端 Codex 提供新资料时，执行本目录 `AGENTS.md` 和 `docs/KNOWLEDGE_INTAKE_RUNBOOK.md`；分类代码见 `config/knowledge_taxonomy.v1.json`，约束见 ADR-0077。分类按“一个主题、多种资料形式”，避免把同一榫卯的尺寸、模型和视频拆成不相关的条目。
 

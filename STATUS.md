@@ -1,10 +1,14 @@
 # 项目状态
 
-- 最后更新：2026-10-16 11:32（北京时间）
-- 当前阶段：`P3 榫卯 AI 社区0.3.8手机输入修复已正式发布；云端知识库仍停在设计与接收规则阶段`。
-- 最新检查点：`SUNMAO_0_3_8_MOBILE_INPUT_RELEASED`。
+- 最后更新：2026-10-16 12:05（北京时间）
+- 当前阶段：`P3 榫卯 AI 社区0.3.8仍在线；0.3.9真实标题与云端图集底座为开发候选`。
+- 最新检查点：`SUNMAO_0_3_9_SIZE_LIBRARY_CANDIDATE`。
 
 ## 本轮已完成
+
+- 0.3.9开发候选已把首条尺寸卡从“尺寸资料 · 微信文章 01”改为已核实原标题“七代鲁班凳视频完整制作过程”。另3篇微信文章在公开访问、不同移动端标识和搜索中均只返回微信验证页；抖音作品`7674905792784469248`的公开页、解析接口与本机非敏感缓存均未提供原图，故未用猜测标题或替代图片发布。
+- 0.3.9开发候选开始实施ADR-0076：现有社区SQLite新增版本1的`knowledge_items`、`knowledge_sources`、`knowledge_measurements`、`knowledge_assets`、`knowledge_relations`，服务初始化Git外`knowledge/originals/images/<随机资源ID>/`。尺寸栏目从同源API读取已发布外链或社区图集，公开图片只能经不暴露路径的资源ID访问；图片导入器校验类型、单图20MiB上限、40张上限和SHA-256。33项社区测试通过。
+- 本候选仅在开发分支，尚未推进`sunmao-production`、尚未创建北京生产知识数据、尚未导入抖音原图，也未运行备份恢复演练。受保护上传/审核后台、通用检索和AI问答仍未实现；采集器、模型下载器、即时AI、时变罗盘与MCP均未操作。
 
 - 所有者使用完整社区发布短语后，已把`sunmao-production`从`818bc922beeb4d3c2694554e5b1a11a20af9b163`安全快进到精确功能提交`99dce4f28a3c4b704686bc51e5a754e4e522c628`，并经新加坡既有`/home/compassdev/bin/beijing-admin`只启动一次北京`sunmao-community-git-deploy.service`。发布器`Result=success`、`ExecMainStatus=0`，公网`https://amuyeye.com/health/version`返回0.3.8、目标提交和部署时间`2026-10-16T03:29:10Z`。
 - 公网首页已核对：昵称输入不存在，正文输入仍存在，交流输入字号16px、`text-size-adjust: 100%`且前端只提交`body`；`/admin/`返回200，未登录统计接口返回401。社区InvocationID变为`f4babee9815b4fbf91e718f3fb05cef9`；采集器`1fe57d8cdcb744b5a1d9c934b1867a27`和模型下载器`da82cc9fa476410ca7cc535d6e3a7127`前后不变，两者未发布、未重启。

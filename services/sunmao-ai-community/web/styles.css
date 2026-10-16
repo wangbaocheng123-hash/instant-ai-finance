@@ -222,6 +222,11 @@ main { width: min(1440px, 100%); min-height: calc(100vh - var(--header-height) -
 .size-resource-link h3 { margin: 42px 0 14px; color: var(--wood-dark); font-size: clamp(23px, 2.4vw, 31px); line-height: 1.4; }
 .size-resource-link p { margin: 0; color: var(--muted); font-family: system-ui, sans-serif; font-size: 14px; line-height: 1.8; }
 .size-resource-action { margin-top: auto; padding-top: 30px; color: var(--wood-dark); font-family: system-ui, sans-serif; font-size: 13px; font-weight: 700; }
+.size-resource-gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 22px; }
+.size-resource-gallery a { display: block; min-width: 0; overflow: hidden; border: 1px solid var(--line); background: var(--paper-deep); aspect-ratio: 1; }
+.size-resource-gallery a:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 2px; }
+.size-resource-gallery img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform 180ms ease; }
+.size-resource-gallery a:hover img { transform: scale(1.035); }
 
 .hero { position: relative; display: grid; min-height: 430px; align-content: center; padding: 72px 0 58px; border-bottom: 1px solid var(--line); }
 .hero::before, .hero::after { position: absolute; right: 2vw; width: clamp(150px, 22vw, 320px); height: clamp(28px, 4vw, 56px); border: clamp(8px, 1vw, 14px) solid rgba(139, 85, 55, 0.12); content: ""; }

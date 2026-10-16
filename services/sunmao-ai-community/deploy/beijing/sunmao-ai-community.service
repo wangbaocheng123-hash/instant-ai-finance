@@ -12,6 +12,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=TZ=Asia/Shanghai
 Environment=SUNMAO_COMMUNITY_DATABASE_PATH=/var/lib/sunmao-community/community.sqlite3
+Environment=SUNMAO_COMMUNITY_KNOWLEDGE_ROOT=/var/lib/sunmao-community/knowledge
 ExecStart=/usr/bin/python3 -m sunmao_community --host 127.0.0.1 --port 18808
 Restart=always
 RestartSec=10

@@ -82,12 +82,31 @@ function isTrustedCoverUrl(value) {
 function isTrustedSizeResourceUrl(value) {
   try {
     const url = new URL(value);
-    return url.protocol === "https:"
+    const safeOrigin = url.protocol === "https:"
       && url.hostname === WECHAT_ARTICLE_HOST
-      && /^\/s\/[A-Za-z0-9_-]+$/.test(url.pathname)
       && !url.username
       && !url.password
       && !url.port
+      && !url.hash;
+    if (!safeOrigin) return false;
+    if (/^\/s\/[A-Za-z0-9_-]+$/.test(url.pathname)) return !url.search;
+    if (url.pathname !== "/s") return false;
+    const keys = [...url.searchParams.keys()].sort();
+    return keys.join(",") === "__biz,idx,mid,sn"
+      && /^[A-Za-z0-9_=-]{8,128}$/.test(url.searchParams.get("__biz") || "")
+      && /^[0-9]{6,20}$/.test(url.searchParams.get("mid") || "")
+      && /^[1-9][0-9]{0,2}$/.test(url.searchParams.get("idx") || "")
+      && /^[0-9a-f]{32}$/i.test(url.searchParams.get("sn") || "");
+  } catch (_error) {
+    return false;
+  }
+}
+
+function isTrustedSizeAssetUrl(value) {
+  try {
+    const url = new URL(value, window.location.origin);
+    return url.origin === window.location.origin
+      && /^\/api\/size-assets\/[A-Za-z0-9_-]{20,64}$/.test(url.pathname)
       && !url.search
       && !url.hash;
   } catch (_error) {
@@ -96,7 +115,7 @@ function isTrustedSizeResourceUrl(value) {
 }
 
 function validSizeResource(resource) {
-  return resource
+  const commonFieldsAreValid = resource
     && Number.isInteger(resource.sequence)
     && resource.sequence > 0
     && typeof resource.id === "string"
@@ -106,20 +125,29 @@ function validSizeResource(resource) {
     && typeof resource.source === "string"
     && resource.source.trim()
     && typeof resource.summary === "string"
-    && resource.summary.trim()
-    && isTrustedSizeResourceUrl(resource.url);
+    && resource.summary.trim();
+  if (!commonFieldsAreValid) return false;
+  if (resource.type === "external") return isTrustedSizeResourceUrl(resource.url);
+  return resource.type === "gallery"
+    && Array.isArray(resource.assets)
+    && resource.assets.length > 0
+    && resource.assets.every((asset) => asset
+      && Number.isInteger(asset.position)
+      && isTrustedSizeAssetUrl(asset.url));
 }
 
 function renderSizeResource(resource) {
   const article = document.createElement("article");
   article.className = "size-resource-card";
-  const link = document.createElement("a");
-  link.className = "size-resource-link";
-  link.href = resource.url;
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.referrerPolicy = "no-referrer";
-  link.setAttribute("aria-label", `${resource.title}，打开微信原文`);
+  const content = document.createElement(resource.type === "external" ? "a" : "div");
+  content.className = "size-resource-link";
+  if (resource.type === "external") {
+    content.href = resource.url;
+    content.target = "_blank";
+    content.rel = "noopener noreferrer";
+    content.referrerPolicy = "no-referrer";
+    content.setAttribute("aria-label", `${resource.title}，打开微信原文`);
+  }
   const meta = document.createElement("div");
   meta.className = "size-resource-meta";
   const sequence = document.createElement("span");
@@ -131,11 +159,36 @@ function renderSizeResource(resource) {
   title.textContent = resource.title;
   const summary = document.createElement("p");
   summary.textContent = resource.summary;
+  if (resource.type === "gallery") {
+    const gallery = document.createElement("div");
+    gallery.className = "size-resource-gallery";
+    resource.assets.forEach((asset, index) => {
+      const imageLink = document.createElement("a");
+      imageLink.href = asset.url;
+      imageLink.target = "_blank";
+      imageLink.rel = "noopener noreferrer";
+      imageLink.setAttribute("aria-label", `${resource.title}，查看第 ${index + 1} 张原图`);
+      const image = document.createElement("img");
+      image.src = asset.url;
+      image.alt = `${resource.title}第 ${index + 1} 张图`;
+      image.loading = "lazy";
+      image.decoding = "async";
+      imageLink.append(image);
+      gallery.append(imageLink);
+    });
+    content.append(meta, title, summary, gallery);
+    const action = document.createElement("span");
+    action.className = "size-resource-action";
+    action.textContent = `社区图集 · ${resource.assets.length} 张原图`;
+    content.append(action);
+    article.append(content);
+    return article;
+  }
   const action = document.createElement("span");
   action.className = "size-resource-action";
   action.textContent = "打开原文 ↗";
-  link.append(meta, title, summary, action);
-  article.append(link);
+  content.append(meta, title, summary, action);
+  article.append(content);
   return article;
 }
 
@@ -146,7 +199,7 @@ async function loadSizeResources() {
   const message = document.querySelector("#sizeLoadMessage");
   const count = document.querySelector("#sizeResourceCount");
   try {
-    const response = await fetch("./size-resources.json", { cache: "no-cache" });
+    const response = await fetch("./api/size-resources", { cache: "no-cache" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
     const resources = Array.isArray(payload.resources)

@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .analytics import CommunityAnalyticsStore, VALID_ANALYTICS_VIEWS
 from .auth import ADMIN_SESSION_SECONDS, AdminSessionManager
+from .size_library import ASSET_ID_PATTERN, SizeLibraryStore
 from .store import (
     ANONYMOUS_NICKNAME,
     CommunityMessageStore,
@@ -112,10 +113,12 @@ class CommunityHTTPServer(ThreadingHTTPServer):
         address: tuple[str, int],
         store: CommunityMessageStore,
         analytics_store: CommunityAnalyticsStore,
+        size_library: SizeLibraryStore,
         admin_auth: AdminSessionManager,
     ):
         self.store = store
         self.analytics_store = analytics_store
+        self.size_library = size_library
         self.admin_auth = admin_auth
         self.rate_limiter = CommunityRateLimiter()
         self.admin_rate_limiter = CommunityRateLimiter(cooldown_seconds=2, hourly_limit=12)
@@ -188,6 +191,39 @@ class CommunityRequestHandler(BaseHTTPRequestHandler):
             "connect-src 'self'; object-src 'none'; form-action 'self'; "
             "base-uri 'none'; frame-ancestors 'none'",
         )
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
+    def _size_asset(self, path: str) -> bool:
+        prefix = "/api/size-assets/"
+        if not path.startswith(prefix):
+            return False
+        asset_id = path[len(prefix):]
+        if not ASSET_ID_PATTERN.fullmatch(asset_id):
+            self._json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+            return True
+        try:
+            descriptor = self.server.size_library.get_asset(asset_id)
+        except (OSError, sqlite3.Error):
+            self._json({"error": "size_library_unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
+            return True
+        if descriptor is None:
+            self._json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+            return True
+        filename, content_type = descriptor
+        try:
+            body = filename.read_bytes()
+        except OSError:
+            self._json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+            return True
+        self.send_response(int(HTTPStatus.OK))
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         self.wfile.write(body)
         return True
@@ -288,6 +324,8 @@ class CommunityRequestHandler(BaseHTTPRequestHandler):
             return
         if self._static(parsed.path):
             return
+        if self._size_asset(parsed.path):
+            return
         if parsed.path == "/health":
             self._json({"service": "sunmao-ai-community", "status": "ok"})
             return
@@ -306,6 +344,17 @@ class CommunityRequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": "community_unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
                 return
             self._json({"messages": messages})
+            return
+        if parsed.path == "/api/size-resources":
+            try:
+                resources = self.server.size_library.list_resources()
+            except (OSError, sqlite3.Error):
+                self._json(
+                    {"error": "size_library_unavailable"},
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            self._json({"series": "尺寸型", "resources": resources})
             return
         if parsed.path == "/api/admin/session":
             if not self.server.admin_auth.configured:
@@ -521,6 +570,7 @@ def create_http_server(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     database_path: Path | None = None,
+    knowledge_root: Path | None = None,
     admin_username: str | None = None,
     admin_password_hash: str | None = None,
 ) -> CommunityHTTPServer:
@@ -532,10 +582,22 @@ def create_http_server(
     database = database_path or Path(
         os.getenv("SUNMAO_COMMUNITY_DATABASE_PATH", "/var/lib/sunmao-community/community.sqlite3")
     )
+    if knowledge_root is not None:
+        knowledge = knowledge_root
+    elif database_path is not None:
+        knowledge = database.parent / "knowledge"
+    else:
+        knowledge = Path(
+            os.getenv(
+                "SUNMAO_COMMUNITY_KNOWLEDGE_ROOT",
+                "/var/lib/sunmao-community/knowledge",
+            )
+        )
     return CommunityHTTPServer(
         (host, int(port)),
         CommunityMessageStore(database),
         CommunityAnalyticsStore(database),
+        SizeLibraryStore(database, knowledge, WEB_DIR / "size-resources.json"),
         AdminSessionManager(
             _configured_admin_password_hash()
             if admin_password_hash is None else admin_password_hash,
