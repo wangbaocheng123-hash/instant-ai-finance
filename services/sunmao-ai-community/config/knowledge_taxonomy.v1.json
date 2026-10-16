@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "description": "榫卯社区知识条目的主题类目、资料形式和页面归属约束；正式资料不存于本文件。",
+  "primary_topics": [
+    {"id": "joint_structure", "label": "榫卯结构", "use_when": "资料主要解释一种榫卯结构、连接关系或结构原理"},
+    {"id": "object_furniture", "label": "器物家具", "use_when": "资料主要围绕一件器物或家具的整体设计和制作"},
+    {"id": "making_process", "label": "制作工艺", "use_when": "资料主要讲加工步骤、装配方法或工艺流程"},
+    {"id": "tools_materials", "label": "工具材料", "use_when": "资料主要讲工具、木材、材料性能或选用"},
+    {"id": "principles_history", "label": "原理文化", "use_when": "资料主要讲力学原理、历史、术语或文化背景"},
+    {"id": "unclassified", "label": "待分类", "use_when": "证据不足以判断主要主题；仅可保存为草稿"}
+  ],
+  "resource_kinds": [
+    {"id": "measurement", "label": "尺寸数据"},
+    {"id": "size_reference", "label": "尺寸参考链接"},
+    {"id": "drawing", "label": "图纸"},
+    {"id": "model_3d", "label": "3D模型"},
+    {"id": "video", "label": "视频"},
+    {"id": "image", "label": "图片"},
+    {"id": "article", "label": "文章或文字说明"}
+  ],
+  "source_kinds": [
+    {"id": "owner_supplied", "label": "所有者直接提供"},
+    {"id": "external_link", "label": "第三方原链接"},
+    {"id": "owned_file", "label": "有权托管的自有文件"},
+    {"id": "licensed_file", "label": "已确认可托管的授权文件"}
+  ],
+  "views": {
+    "sizes": "有已核实尺寸数据，或所有者指定为尺寸参考资料的已确认外链；不因标题含尺寸两字就编造数值",
+    "joints_108": "只展示已核对属于阿木爷爷榫卯108道合集的集数及原视频链接",
+    "exchange": "公开交流留言；不能把未经审核的访客发言自动提升为知识条目"
+  }
+}
