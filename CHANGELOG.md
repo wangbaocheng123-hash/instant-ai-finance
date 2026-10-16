@@ -1,5 +1,11 @@
 # 变更记录
 
+## 2026-10-16 — 榫卯 AI 社区0.3.8手机输入修复正式发布
+
+- 所有者使用完整社区发布短语后，`sunmao-production`从0.3.7提交`818bc922beeb4d3c2694554e5b1a11a20af9b163`安全快进到精确功能提交`99dce4f28a3c4b704686bc51e5a754e4e522c628`。其后进入`main`的知识库规则与文档没有夹带进入生产。
+- 通过新加坡既有`/home/compassdev/bin/beijing-admin`只启动一次北京社区专用发布器。发布器`Result=success`、`ExecMainStatus=0`，北京当前release及公网`/health/version`均为0.3.8/`99dce4f`，部署时间`2026-10-16T03:29:10Z`。
+- 公网确认昵称输入已移除、正文输入保留、交流输入字号16px、`text-size-adjust: 100%`及仅提交`body`的脚本均生效；`/admin/`返回200，未登录统计接口返回401。社区InvocationID更新为`f4babee9815b4fbf91e718f3fb05cef9`；采集器`1fe57d8cdcb744b5a1d9c934b1867a27`与模型下载器`da82cc9fa476410ca7cc535d6e3a7127`保持不变，两者未发布、未重启。
+
 ## 2026-10-16 — 新加坡云端智能体接收榫卯资料规则
 
 - 新增社区作用域`AGENTS.md`、`docs/KNOWLEDGE_INTAKE_RUNBOOK.md`、`config/knowledge_taxonomy.v1.json`与ADR-0077；根仓库指令加入入口，手机端新智能体可按固定类目、资料形式、查重、来源、尺寸核实、存储位置和状态报告流程处理所有者新资料。
