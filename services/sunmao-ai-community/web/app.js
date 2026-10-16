@@ -303,7 +303,6 @@ function updateCounter(input, counter) {
 
 function messageErrorText(error, retryAfter) {
   if (error === "rate_limited") return `发送得有点快，请等待 ${retryAfter || 15} 秒再试。`;
-  if (error === "invalid_nickname") return "称呼需要填写，并控制在 20 个字以内。";
   if (error === "invalid_message") return "想法需要填写，并控制在 500 个字以内。";
   return "暂时没有发送成功，请稍后再试。";
 }
@@ -311,7 +310,6 @@ function messageErrorText(error, retryAfter) {
 async function submitMessage(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  const nicknameInput = form.elements.nickname;
   const bodyInput = form.elements.body;
   const submitButton = document.querySelector("#submitMessage");
   const status = document.querySelector("#formStatus");
@@ -322,7 +320,7 @@ async function submitMessage(event) {
     const response = await fetch("./api/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nickname: nicknameInput.value.trim(), body: bodyInput.value.trim() }),
+      body: JSON.stringify({ body: bodyInput.value.trim() }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(new Error("message rejected"), payload);
@@ -385,9 +383,7 @@ function initialize() {
     event.preventDefault();
     setActiveView("exchange");
   });
-  const nicknameInput = document.querySelector("#nickname");
   const bodyInput = document.querySelector("#messageBody");
-  nicknameInput.addEventListener("input", () => updateCounter(nicknameInput, document.querySelector("#nicknameCount")));
   bodyInput.addEventListener("input", () => updateCounter(bodyInput, document.querySelector("#messageCount")));
   document.querySelector("#messageForm").addEventListener("submit", submitMessage);
   document.querySelector("#reloadPage").addEventListener("click", reloadPage);

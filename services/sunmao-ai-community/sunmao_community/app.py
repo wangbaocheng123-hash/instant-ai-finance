@@ -16,7 +16,12 @@ from urllib.parse import parse_qs, urlsplit
 
 from .analytics import CommunityAnalyticsStore, VALID_ANALYTICS_VIEWS
 from .auth import ADMIN_SESSION_SECONDS, AdminSessionManager
-from .store import CommunityMessageStore, CommunityRateLimiter, validate_community_message
+from .store import (
+    ANONYMOUS_NICKNAME,
+    CommunityMessageStore,
+    CommunityRateLimiter,
+    validate_community_message,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -360,11 +365,17 @@ class CommunityRequestHandler(BaseHTTPRequestHandler):
         payload = self._read_json_body()
         if payload is None:
             return
-        if not isinstance(payload, dict) or set(payload) != {"nickname", "body"}:
+        if (
+            not isinstance(payload, dict)
+            or set(payload) not in ({"body"}, {"nickname", "body"})
+            or ("nickname" in payload and not isinstance(payload["nickname"], str))
+        ):
             self._json({"error": "invalid_request"}, HTTPStatus.BAD_REQUEST)
             return
         try:
-            nickname, body = validate_community_message(payload["nickname"], payload["body"])
+            nickname, body = validate_community_message(
+                ANONYMOUS_NICKNAME, payload.get("body")
+            )
         except ValueError as exc:
             self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             return

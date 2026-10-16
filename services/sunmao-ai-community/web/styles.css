@@ -15,7 +15,12 @@
 }
 
 * { box-sizing: border-box; }
-html { background: var(--paper); scroll-behavior: smooth; }
+html {
+  background: var(--paper);
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
 body {
   min-width: 0;
   margin: 0;
@@ -174,7 +179,7 @@ main { width: min(1440px, 100%); min-height: calc(100vh - var(--header-height) -
 .composer-heading { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; color: var(--wood-dark); font-family: system-ui, sans-serif; }
 .composer-heading strong { font-size: 14px; }
 .composer-heading span { color: var(--muted); font-size: 12px; }
-.message-form { display: grid; grid-template-columns: minmax(150px, 190px) minmax(0, 1fr) 88px; gap: 10px; align-items: stretch; }
+.message-form { display: grid; grid-template-columns: minmax(0, 1fr) 88px; gap: 10px; align-items: stretch; }
 .field-shell { position: relative; }
 .field-shell input, .field-shell textarea {
   display: block;
@@ -185,15 +190,14 @@ main { width: min(1440px, 100%); min-height: calc(100vh - var(--header-height) -
   color: var(--ink);
   background: rgba(255, 252, 246, 0.9);
   font-family: system-ui, sans-serif;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.7;
+  touch-action: manipulation;
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
-.field-shell input { height: 54px; padding: 10px 48px 10px 12px; }
 .field-shell textarea { height: 54px; min-height: 54px; max-height: 150px; padding: 8px 50px 8px 12px; resize: none; }
 .field-shell input:focus, .field-shell textarea:focus { border-color: var(--wood); box-shadow: 0 0 0 3px rgba(139, 85, 55, 0.12); }
 .field-shell > span { position: absolute; right: 9px; bottom: 7px; color: var(--muted); font-family: system-ui, sans-serif; font-size: 10px; }
-.nickname-field > span { top: 19px; bottom: auto; }
 .field-shell b { font-weight: 500; }
 .primary-button { min-height: 54px; border: 1px solid var(--wood-dark); border-radius: 8px; color: #fffaf2; background: var(--wood-dark); cursor: pointer; font-family: system-ui, sans-serif; font-size: 14px; font-weight: 750; letter-spacing: 0.08em; transition: background-color 160ms ease, transform 160ms ease; }
 .primary-button:hover, .primary-button:focus-visible { background: var(--vermilion); transform: translateY(-1px); }
@@ -254,6 +258,7 @@ footer p { margin: 0; }
 }
 @media (max-width: 700px) {
   :root { --header-height: 60px; --top-nav-height: 56px; }
+  html { scroll-behavior: auto; }
   body.exchange-active { padding-bottom: calc(134px + env(safe-area-inset-bottom)); }
   .site-header { min-height: 60px; padding: 8px 15px; }
   .brand { gap: 8px; font-size: 14px; letter-spacing: 0.08em; }
@@ -277,11 +282,9 @@ footer p { margin: 0; }
   .chat-composer { bottom: 0; width: 100%; padding: 8px 10px calc(6px + env(safe-area-inset-bottom)); border-right: 0; border-bottom: 0; border-left: 0; border-radius: 0; }
   .composer-heading { margin-bottom: 6px; }
   .composer-heading span { display: none; }
-  .message-form { grid-template-columns: minmax(92px, 0.34fr) minmax(0, 1fr) 62px; gap: 7px; }
-  .field-shell input, .field-shell textarea { font-size: 13px; }
-  .field-shell input { height: 50px; padding-right: 39px; }
+  .message-form { grid-template-columns: minmax(0, 1fr) 62px; gap: 7px; }
+  .field-shell input, .field-shell textarea { font-size: 16px; }
   .field-shell textarea { height: 50px; min-height: 50px; padding: 7px 40px 7px 10px; }
-  .nickname-field > span { top: 17px; }
   .primary-button { min-height: 50px; font-size: 13px; }
   .composer-notes { min-height: 15px; margin-top: 4px; }
   .privacy-note { max-width: 72%; overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }

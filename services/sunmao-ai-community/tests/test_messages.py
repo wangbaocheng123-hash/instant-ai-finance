@@ -62,16 +62,17 @@ class CommunityMessageTests(unittest.TestCase):
             status, _headers, payload = request(
                 "POST",
                 "/api/messages",
-                {"nickname": "木友", "body": "第一条公开交流"},
+                {"body": "第一条公开交流"},
                 origin=local_origin,
             )
             self.assertEqual(status, 201)
             self.assertEqual(payload["message"]["body"], "第一条公开交流")
+            self.assertEqual(payload["message"]["nickname"], "木友")
 
             status, headers, payload = request(
                 "POST",
                 "/api/messages",
-                {"nickname": "木友", "body": "发送太快"},
+                {"nickname": "旧版页面称呼", "body": "发送太快"},
                 origin=local_origin,
             )
             self.assertEqual(status, 429)
@@ -86,7 +87,7 @@ class CommunityMessageTests(unittest.TestCase):
             status, _headers, payload = request("GET", "/health/version")
             self.assertEqual(status, 200)
             self.assertEqual(payload["service"], "sunmao-ai-community")
-            self.assertEqual(payload["version"], "0.3.7")
+            self.assertEqual(payload["version"], "0.3.8")
 
             status, headers, payload = request("GET", "/size-resources.json")
             self.assertEqual(status, 200)
