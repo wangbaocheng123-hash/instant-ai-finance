@@ -128,6 +128,20 @@ function validSizeResource(resource) {
     && resource.summary.trim();
   if (!commonFieldsAreValid) return false;
   if (resource.type === "external") return isTrustedSizeResourceUrl(resource.url);
+  if (resource.type === "article") {
+    return isTrustedSizeResourceUrl(resource.source_url)
+      && Array.isArray(resource.blocks) && resource.blocks.length > 0
+      && resource.blocks.length <= 300
+      && resource.blocks.every((block) => {
+        if (!block) return false;
+        if (block.type === "paragraph" || block.type === "heading") {
+          return typeof block.text === "string" && block.text.trim();
+        }
+        if (block.type === "image") return isTrustedSizeAssetUrl(block.url);
+        return block.type === "video" && typeof block.text === "string"
+          && block.text.trim() && isTrustedArticleVideoUrl(block.url);
+      });
+  }
   return resource.type === "gallery"
     && Array.isArray(resource.assets)
     && resource.assets.length > 0
@@ -136,10 +150,73 @@ function validSizeResource(resource) {
       && isTrustedSizeAssetUrl(asset.url));
 }
 
+function isTrustedArticleVideoUrl(value) {
+  if (isTrustedSizeResourceUrl(value)) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.host === WECHAT_ARTICLE_HOST
+      && !url.username && !url.password && !url.hash
+      && url.pathname === "/mp/readtemplate"
+      && [...url.searchParams.keys()].sort().join(",") === "action,auto,t,vid"
+      && url.searchParams.get("t") === "pages/video_player_tmpl"
+      && url.searchParams.get("action") === "mpvideo"
+      && url.searchParams.get("auto") === "0"
+      && /^wxv_[0-9]{15,22}$/.test(url.searchParams.get("vid") || "");
+  } catch (_error) {
+    return false;
+  }
+}
+
+function articleLink(url, label) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.textContent = label;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.referrerPolicy = "no-referrer";
+  return link;
+}
+
+function renderArticleBody(resource) {
+  const body = document.createElement("div");
+  body.className = "size-article-body";
+  resource.blocks.forEach((block) => {
+    if (block.type === "paragraph" || block.type === "heading") {
+      const text = document.createElement(block.type === "heading" ? "h4" : "p");
+      text.textContent = block.text;
+      body.append(text);
+    } else if (block.type === "image") {
+      const figure = document.createElement("figure");
+      const link = articleLink(block.url, "");
+      link.setAttribute("aria-label", `${block.alt || "资料图片"}，查看原图`);
+      const image = document.createElement("img");
+      image.src = block.url;
+      image.alt = block.alt || "尺寸资料原图";
+      image.loading = "lazy";
+      image.decoding = "async";
+      link.append(image);
+      figure.append(link);
+      body.append(figure);
+    } else if (block.type === "video") {
+      const link = articleLink(block.url, `${block.text} · 在微信打开 ↗`);
+      link.className = "size-article-video";
+      body.append(link);
+    }
+  });
+  const source = document.createElement("p");
+  source.className = "size-article-source";
+  source.append("来源：阿木爷爷微信公众号 · ", articleLink(resource.source_url, "查看微信原文 ↗"));
+  if (resource.blocks.some((block) => block.type === "video")) {
+    source.append("。视频由微信提供；如提示验证，请在微信内打开原文观看。");
+  }
+  body.append(source);
+  return body;
+}
+
 function renderSizeResource(resource) {
   const article = document.createElement("article");
   article.className = "size-resource-card";
-  const content = document.createElement(resource.type === "external" ? "a" : "div");
+  const content = document.createElement(resource.type === "article" ? "summary" : resource.type === "external" ? "a" : "div");
   content.className = "size-resource-link";
   if (resource.type === "external") {
     content.href = resource.url;
@@ -159,6 +236,23 @@ function renderSizeResource(resource) {
   title.textContent = resource.title;
   const summary = document.createElement("p");
   summary.textContent = resource.summary;
+  if (resource.type === "article") {
+    const details = document.createElement("details");
+    details.className = "size-article";
+    const action = document.createElement("span");
+    action.className = "size-resource-action";
+    const imageCount = resource.blocks.filter((block) => block.type === "image").length;
+    const videoCount = resource.blocks.filter((block) => block.type === "video").length;
+    action.textContent = `展开阅读 · ${imageCount} 张图片 · ${videoCount} 个视频入口`;
+    content.append(meta, title, summary, action);
+    details.append(content, renderArticleBody(resource));
+    details.addEventListener("toggle", () => {
+      article.classList.toggle("article-expanded", details.open);
+      action.textContent = details.open ? "收起文章 ↑" : `展开阅读 · ${imageCount} 张图片 · ${videoCount} 个视频入口`;
+    });
+    article.append(details);
+    return article;
+  }
   if (resource.type === "gallery") {
     const gallery = document.createElement("div");
     gallery.className = "size-resource-gallery";

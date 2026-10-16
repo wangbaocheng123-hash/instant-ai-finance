@@ -217,7 +217,7 @@ class SizeLibraryStore:
         with closing(self._connect()) as connection:
             resources = connection.execute(
                 """
-                SELECT i.id, i.display_sequence, i.title, i.summary,
+                SELECT i.id, i.display_sequence, i.title, i.summary, i.item_type, i.body,
                        s.source_type, s.source_url
                 FROM knowledge_items AS i
                 JOIN knowledge_sources AS s ON s.id = (
@@ -259,7 +259,18 @@ class SizeLibraryStore:
                 "summary": str(row["summary"]),
             }
             item_assets = assets_by_resource.get(resource["id"], [])
-            if not item_assets:
+            if row["item_type"] == "local_article":
+                from .articles import public_article, trusted_article_url
+
+                blocks = public_article(str(row["body"]), item_assets)
+                if blocks is None or not trusted_article_url(str(row["source_url"])):
+                    continue
+                resource["type"] = "article"
+                resource["source_url"] = str(row["source_url"])
+                resource["blocks"] = blocks
+                resource["image_count"] = len(item_assets)
+                resource["video_count"] = sum(block["type"] == "video" for block in blocks)
+            elif not item_assets:
                 resource["type"] = "external"
                 resource["url"] = str(row["source_url"])
             else:

@@ -26,6 +26,25 @@ python3 -m scripts.import_size_gallery manifest.json
 
 清单必须包含真实标题、来源URL、说明、显示顺序和本地原图列表；导入器只接受JPEG、PNG、GIF、WebP，每张不超过20 MiB，最多40张。微信或抖音验证页无法证明的标题、正文和图片不得用猜测内容发布。
 
+### 0.3.10候选：授权文章站内阅读
+
+尺寸页增加可展开的文章卡，按原文顺序显示文字、图片和视频入口。保留原始标题和出处；两个微信图片帖的标题本身是长说明，列表最多显示三行，展开后显示完整标题。文字只用`textContent`，图片只走同源不透明资源ID，不执行来源HTML、脚本或iframe。视频留在原平台，若微信要求验证，可用文章末尾原文链接进入微信观看。
+
+新导入器仅用于所有者明确授权的阿木爷爷文章，不是公共上传API。运行目录为社区源码根；功能发布后使用：
+
+```bash
+python3 -m scripts.import_size_articles \
+  --database /var/lib/sunmao-community/community.sqlite3 \
+  --knowledge-root /var/lib/sunmao-community/knowledge \
+  /var/lib/sunmao-community/knowledge/incoming/<batch>/<article>/article.json
+```
+
+清单字段为`id/sequence/title/source/summary/source_url/authorization/blocks/images`；`authorization`必须为`owner_authorized_copy`。`blocks`仅允许`paragraph/heading`纯文本、`image`的1起始`position/alt`、`video`的`text/url`；`images`按顺序记录包内相对`file`和`sha256`。最多300块、10万文字、40图/100MiB，每图20MiB。精确微信短链和带指定字段的`mpvideo`入口才可作为视频链接。
+
+先校验所有包文件摘要，再逐篇事务导入。相同内容重试保留原资源ID和版本；不同内容、重复来源、顺序冲突拒绝覆盖，失败只清理本次新建文件。批次不是跨篇原子事务：已成功文章保留，重试时跳过相同内容。正式导入前需备份社区SQLite及原件；不要把原文、图片、清单、SQLite或备份提交Git。
+
+本轮4篇的来源、数量、Git外暂存位置与发布检查点见`docs/PENDING_SIZE_INTAKE_2026-10-16.md`。本地预览不是北京正式入库，不能仅发布代码便宣称文章上线。
+
 所有者从手机向新加坡云端 Codex 提供新资料时，执行本目录 `AGENTS.md` 和 `docs/KNOWLEDGE_INTAKE_RUNBOOK.md`；分类代码见 `config/knowledge_taxonomy.v1.json`，约束见 ADR-0077。分类按“一个主题、多种资料形式”，避免把同一榫卯的尺寸、模型和视频拆成不相关的条目。
 
 北京博主采集器继续使用自己的目录、`blogger-collector.service`、端口 `18797`、数据目录和 `beijing-production`；新加坡即时 AI、时变罗盘和 `mcp.amuyeye.com` 也继续使用各自的服务、端口、配置和数据。发布社区不得重启或改写这些并列应用。
