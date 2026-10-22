@@ -11,6 +11,7 @@ const path = require('node:path');
 const { chromium } = require('playwright');
 
 const origin = 'http://127.0.0.1:19864';
+const iphoneUserAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1';
 const action = name => `[data-model-action="${name}"]`;
 const mark = id => `${action('toggle-learned')}[data-work-id="${id}"]`;
 const card = id => `.model-work-card[data-work-id="${id}"]`;
@@ -31,6 +32,7 @@ function fixture() {
     // Empty or unsafe overrides exercise the unavailable state without ever
     // navigating away from this synthetic browser origin.
     listUrls: new Map(), detailUrls: new Map(),
+    allowedExternal: new Set(), externalNavigations: [],
     requests: [], unexpected: [], failedWrites: 0, failedReads: 0,
     holdWrite: null, holdRead: null, holdWorks: null,
   };
@@ -52,6 +54,16 @@ function originalUrl(id) {
   return `https://www.douyin.com/video/${7000000000000000000n + BigInt(id)}`;
 }
 
+function expectedNavigationUrl(sourceUrl, width) {
+  if (width !== 390) return sourceUrl;
+  const parsed = new URL(sourceUrl);
+  const video = parsed.pathname.match(/^\/(?:share\/)?video\/(\d{15,22})\/?$/);
+  if (video) return `https://m.douyin.com/share/video/${video[1]}`;
+  const note = parsed.pathname.match(/^\/(?:(?:share\/)?note|article)\/(\d{15,22})\/?$/);
+  if (note) return `https://m.douyin.com/share/note/${note[1]}`;
+  return sourceUrl;
+}
+
 function selectedUrl(overrides, id) {
   return overrides.has(id) ? overrides.get(id) : originalUrl(id);
 }
@@ -69,7 +81,12 @@ function work(id, url = originalUrl(id)) {
 }
 
 async function mount(browser, compiled, media, width, state = fixture()) {
-  const page = await browser.newPage({ viewport: { width, height: 844 }, isMobile: width === 390, hasTouch: width === 390 });
+  const page = await browser.newPage({
+    viewport: { width, height: 844 },
+    isMobile: width === 390,
+    hasTouch: width === 390,
+    ...(width === 390 ? { userAgent: iphoneUserAgent } : {}),
+  });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(() => {
@@ -89,6 +106,10 @@ async function mount(browser, compiled, media, width, state = fixture()) {
     const method = route.request().method();
     const json = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
     if (url.origin !== origin) {
+      if (state.allowedExternal.has(route.request().url())) {
+        state.externalNavigations.push(route.request().url());
+        return route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>synthetic exact Douyin destination</title>' });
+      }
       state.unexpected.push(`${method} ${url.origin}${p}`);
       return route.abort();
     }
@@ -193,13 +214,15 @@ function detailOriginalLink(page, id) {
   return page.locator(`${card(id)} .model-detail-source .model-original-link`);
 }
 
-async function assertAvailableOriginalLink(locator, expectedUrl, label) {
+async function assertAvailableOriginalLink(locator, sourceUrl, label, width) {
+  const expectedUrl = expectedNavigationUrl(sourceUrl, width);
   await locator.waitFor();
   assert.equal(await locator.count(), 1, `${label}: render one stable original-link control`);
   assert.equal(await locator.evaluate(element => element.tagName), 'A', `${label}: available source is a real link`);
   assert.equal(await locator.innerText(), '打开抖音原作品', `${label}: use the explicit source label`);
-  assert.equal(await locator.getAttribute('href'), expectedUrl, `${label}: preserve the verified Douyin URL`);
-  assert.equal(await locator.getAttribute('target'), '_blank', `${label}: keep the owner workspace open`);
+  assert.equal(await locator.getAttribute('href'), expectedUrl, `${label}: use the exact platform destination`);
+  assert.equal(await locator.getAttribute('target'), width === 390 ? null : '_blank',
+    `${label}: iPhone uses a direct top-level tap while desktop keeps the workspace open`);
   const rel = (await locator.getAttribute('rel') || '').split(/\s+/);
   assert.ok(rel.includes('noopener') && rel.includes('noreferrer'), `${label}: isolate the external page`);
   assert.equal(await locator.getAttribute('aria-disabled'), null, `${label}: available links are not disabled`);
@@ -224,7 +247,7 @@ async function assertInsideViewport(locator, width, label) {
 
 async function emptyAndMark(session) {
   const { page, state } = session;
-  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'ordinary list card');
+  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'ordinary list card', session.width);
   await assertInsideViewport(cardOriginalLink(page, 750), session.width, 'ordinary list original link');
   assert.equal(await page.locator(action('learning-return')).isDisabled(), true);
   assert.equal(await page.locator(mark(750)).getAttribute('aria-pressed'), 'false');
@@ -269,7 +292,7 @@ async function farWindow(session) {
   const ids = await renderedIds(page);
   assert.equal(ids.length, 24, 'jump loads one bounded metadata page, not the entire history');
   assert.ok(ids.includes(119) && ids.includes(121), 'both neighboring works remain available');
-  await assertAvailableOriginalLink(cardOriginalLink(page, 120), originalUrl(120), 'deep learning target');
+  await assertAvailableOriginalLink(cardOriginalLink(page, 120), originalUrl(120), 'deep learning target', session.width);
   await assertInsideViewport(cardOriginalLink(page, 120), session.width, 'deep learning target original link');
   assert.equal(await page.evaluate(() => window.learningScrolls.at(-1)), 120);
   if (session.width === 390) {
@@ -376,12 +399,12 @@ async function readFailure(session) {
 
 async function preserveVideo(session) {
   const { page, state } = session;
-  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'before opening video');
+  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'before opening video', session.width);
   await page.locator(`${action('open-detail')}[data-work-id="750"][data-detail-tab="video"]`).click();
   await page.locator('video').waitFor();
   await page.waitForFunction(() => document.querySelector('video').readyState >= 1);
-  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'card while video is open');
-  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'video detail source');
+  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'card while video is open', session.width);
+  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'video detail source', session.width);
   await page.evaluate(async () => {
     const video = document.querySelector('video');
     window.originalVideo = video;
@@ -402,8 +425,8 @@ async function preserveVideo(session) {
   setLearned(state, 748);
   await page.evaluate(() => window.panel.refresh());
   await waitPressed(page, 748, true);
-  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'card after background refresh');
-  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'video detail after background refresh');
+  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'card after background refresh', session.width);
+  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'video detail after background refresh', session.width);
   assert.deepEqual(await page.evaluate(() => ({ same: document.querySelector('video') === window.originalVideo,
     connected: window.originalVideo.isConnected, paused: window.originalVideo.paused,
     removals: window.removals, srcChanges: window.srcChanges, loads: window.loads,
@@ -418,15 +441,42 @@ async function detailFallbackOriginalLink(session) {
   await assertUnavailableOriginalLink(cardOriginalLink(page, 750), 'list metadata without a source URL');
   await page.locator(`${action('open-detail')}[data-work-id="750"][data-detail-tab="video"]`).click();
   await page.locator('video').waitFor();
-  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'detail URL repairs the card action');
-  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'detail URL supplies the video source action');
+  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'detail URL repairs the card action', session.width);
+  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'detail URL supplies the video source action', session.width);
   await assertInsideViewport(detailOriginalLink(page, 750), session.width, 'detail fallback original link');
   await page.locator(`${action('detail-tab')}[data-work-id="750"][data-detail-tab="text"]`).click();
   await page.locator(`${card(750)} .model-video-text-panel`).waitFor();
-  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'detail source remains visible on the text tab');
+  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'detail source remains visible on the text tab', session.width);
   await page.evaluate(() => window.panel.refresh());
-  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'fallback card after background refresh');
-  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'fallback detail after background refresh');
+  await assertAvailableOriginalLink(cardOriginalLink(page, 750), originalUrl(750), 'fallback card after background refresh', session.width);
+  await assertAvailableOriginalLink(detailOriginalLink(page, 750), originalUrl(750), 'fallback detail after background refresh', session.width);
+}
+
+async function exactDouyinNavigation(session) {
+  const { page, state } = session;
+  const sourceId = id => String(7000000000000000000n + BigInt(id));
+  const sources = new Map([
+    [750, originalUrl(750)],
+    [749, `https://www.douyin.com/note/${sourceId(749)}?from=synthetic#detail`],
+    [748, `https://www.douyin.com/article/${sourceId(748)}`],
+    [747, `https://m.douyin.com/share/video/${sourceId(747)}?previous_page=synthetic`],
+    [746, 'https://v.douyin.com/synthetic-share/'],
+  ]);
+  sources.forEach((url, id) => state.listUrls.set(id, url));
+  await page.evaluate(() => window.reopen());
+  for (const [id, sourceUrl] of sources) {
+    await assertAvailableOriginalLink(cardOriginalLink(page, id), sourceUrl, `exact Douyin navigation ${id}`, session.width);
+  }
+  if (session.width === 390) {
+    const destination = expectedNavigationUrl(sources.get(750), session.width);
+    state.allowedExternal.add(destination);
+    await Promise.all([
+      page.waitForURL(destination),
+      cardOriginalLink(page, 750).click(),
+    ]);
+    assert.deepEqual(state.externalNavigations, [destination],
+      'the iPhone tap itself starts at the app-associated exact work URL');
+  }
 }
 
 async function unavailableOriginalLink(session) {
@@ -440,6 +490,8 @@ async function unavailableOriginalLink(session) {
     [748, 'data:text/html,unsafe'],
     [747, 'file:///tmp/unsafe'],
     [746, 'https://douyin.com.example/video/746'],
+    [745, `https://example.test@www.douyin.com/video/${7000000000000000745n}`],
+    [744, `https://www.douyin.com:444/video/${7000000000000000744n}`],
   ]);
   malicious.forEach((url, id) => {
     state.listUrls.set(id, url);
@@ -463,8 +515,8 @@ async function unavailableOriginalLink(session) {
     await page.locator(`${action('close-detail')}[data-work-id="${id}"]`).click();
     await page.waitForFunction(id => !document.querySelector(`[data-work-id="${id}"] .model-work-detail`), id);
   }
-  assert.equal(await page.locator('.model-original-link[href]').count(), 19,
-    'only the other nineteen trusted cards remain navigable after the malicious URL matrix');
+  assert.equal(await page.locator('.model-original-link[href]').count(), 17,
+    'only the other seventeen trusted cards remain navigable after the malicious URL matrix');
 }
 
 async function pendingPageNavigation(session) {
@@ -518,7 +570,7 @@ async function main() {
   let passed = 0, failed = 0;
   try {
     for (const width of [390, 1280]) {
-      for (const scenario of [emptyAndMark, persistAcrossPanels, farWindow, failedSave, conflictRefresh, pendingAndStaleRead, readFailure, preserveVideo, detailFallbackOriginalLink, unavailableOriginalLink, pendingPageNavigation, lateLocatorRespectsVideo]) {
+      for (const scenario of [emptyAndMark, persistAcrossPanels, farWindow, failedSave, conflictRefresh, pendingAndStaleRead, readFailure, preserveVideo, detailFallbackOriginalLink, exactDouyinNavigation, unavailableOriginalLink, pendingPageNavigation, lateLocatorRespectsVideo]) {
         const session = await mount(browser, compiled, media, width);
         const label = `${scenario.name} ${width}`;
         try {

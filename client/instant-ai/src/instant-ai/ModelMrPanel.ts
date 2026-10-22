@@ -1584,7 +1584,10 @@ export class ModelMrPanel {
     const link = document.createElement('a');
     link.className = 'model-original-link';
     link.href = url;
-    link.target = '_blank';
+    // A direct top-level tap gives iOS the clearest Universal Link hand-off.
+    // Opening a new browsing context is still useful on desktop, where there
+    // is no Douyin app transition and the owner may want to retain this page.
+    if (!this.isAppleMobile()) link.target = '_blank';
     link.rel = 'noopener noreferrer';
     link.textContent = label;
     return link;
@@ -1596,14 +1599,34 @@ export class ModelMrPanel {
     try {
       const parsed = new URL(candidate);
       const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
-      return parsed.protocol === 'https:'
+      const trusted = parsed.protocol === 'https:'
         && !parsed.username
         && !parsed.password
         && (!parsed.port || parsed.port === '443')
-        && (hostname === 'douyin.com' || hostname.endsWith('.douyin.com')) ? candidate : '';
+        && (hostname === 'douyin.com' || hostname.endsWith('.douyin.com'));
+      if (!trusted) return '';
+      if (!this.isAppleMobile()) return candidate;
+
+      // www.douyin.com/video/... is not an iOS Universal Link for the full
+      // Douyin app. m.douyin.com/share/{video,note}/... is. Make that exact
+      // app-associated URL the first hop instead of relying on a web redirect.
+      const video = parsed.pathname.match(/^\/(?:share\/)?video\/(\d{15,22})\/?$/);
+      if (video) return `https://m.douyin.com/share/video/${video[1]}`;
+      const note = parsed.pathname.match(/^\/(?:(?:share\/)?note|article)\/(\d{15,22})\/?$/);
+      if (note) return `https://m.douyin.com/share/note/${note[1]}`;
+
+      // A genuine v.douyin.com short URL cannot be reconstructed from a work
+      // id. Preserve trusted legacy links rather than inventing a short code.
+      return candidate;
     } catch {
       return '';
     }
+  }
+
+  private isAppleMobile(): boolean {
+    const userAgent = navigator.userAgent || '';
+    return /iPhone|iPad|iPod/i.test(userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   }
 
   private pill(text: string): HTMLElement {

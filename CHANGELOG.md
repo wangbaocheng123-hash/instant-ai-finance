@@ -1,5 +1,13 @@
 # 变更记录
 
+## 2026-10-22 — 模型先生抖音原作品直达修复（0.28.3候选，未发布）
+
+- iPhone真机验收表明0.28.1虽恢复了入口，点击`www.douyin.com/video/<ID>`仍可能停在浏览器、首页或精选。公开AASA核对确认`www` 的正式抖音App关联不含`/video*`，而`m.douyin.com` 明确关联`/share/video*`和`/share/note*`；不再依赖网页302完成App交接。
+- 实时复核中，已知最新精确作品`7695675202135444145`的`m.douyin.com/share/video/<ID>`以iPhone Safari UA返回成功且页面保留同一ID，不是首页/精选占位。
+- iPhone/iPad上的精确视频ID首跳现为`https://m.douyin.com/share/video/<ID>`，图文`note/article`统一导航到`share/note/<ID>`；去除派生链接的查询串/片段并使用同一顶层点击。桌面仍保留来源URL和新标签，真实`v.douyin.com`短链原样保留，不猜短码或私有scheme。
+- 显式iPhone UA的手机/桌面26项浏览器回归通过，其中新增真实点击发起精确`m/share`导航，并覆盖video/note/article、短链、恶意URL、已学定位和挂载视频保留。完整277项Python、38项播放器、2项面板、10+6项前端契约及构建静态一致通过。Vite开发依赖在安全审计发现新公告后更新到6.4.5，`npm audit`为0漏洞；版本与Service Worker候选升至0.28.3，见ADR-0080。
+- 本轮没有收到正式发布指令，不调用发布器，生产仍为0.28.2。没有修改北京下载器、业务资料、视频/原文/评论、学习标记、罗盘、MCP订阅或通知规则；发布后仍需iPhone真机验证系统是否直接交接已安装抖音。
+
 ## 2026-10-16 — 社区0.3.10站内文章与4篇尺寸资料正式发布
 
 - 所有者明确要求发布后，`sunmao-production`从`6468e4e`安全快进到功能提交`0503e77649bd9e34ef7240ff606de012fc824880`，通过既有新加坡管理桥只启动一次北京社区发布器。发布器`Result=success`、`ExecMainStatus=0`；公网版本为0.3.10，部署时间`2026-10-16T08:18:22Z`。
