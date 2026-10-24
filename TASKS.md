@@ -7,7 +7,7 @@
 | P2-SUNMAO-17 | DONE | 增加授权文章站内阅读并整理4篇真实尺寸资料 | ADR-0079；0.3.10白名单正文块、同源原图、视频外链、来源保留和插入限定CLI；45项Python与隔离Chromium验收5卡/4文/24图/3视频入口通过，无横向溢出与脚本执行。资料已通过P3-SUNMAO-13受控导入北京正式库 |
 | P3-SUNMAO-13 | DONE | 经明确授权发布0.3.10并把4篇文章导入北京社区 | `sunmao-production`、北京release与公网均为`0503e77`/0.3.10；发布器成功。北京正式库回读5资料/4文章/24图/3视频，24/24公网图片200，后台200/未登录统计401；北京备份已复制新加坡并校验SHA。只重启社区，采集器和下载器InvocationID不变 |
 | P2-MODEL-31 | DONE | 修复 iPhone 点击模型先生抖音链接不能直达对应作品 | ADR-0080；定位`www/video`首跳未落入正式抖音App的AASA路径。iPhone/iPad精确ID改为直接`m.douyin.com/share/video|note/<ID>`顶层点击，桌面和真实短链保持原契约；26项链接/学习浏览器、38项播放器、2项面板、277项Python、10+6项前端、0.28.3构建/静态一致和0漏洞通过；不冒充iPhone系统级App交接验收 |
-| P3-INSTANT-AI-0283 | NOT_STARTED | 经所有者确认正式发布0.28.3并用iPhone验收抖音原作品直达 | 开发候选已完成，本轮未收到“发布”指令；生产仍为0.28.2。待明确授权后走固定发布器，再用已安装抖音的iPhone点击精确视频验收 |
+| P3-INSTANT-AI-0283 | IN_PROGRESS | 正式发布0.28.3并用iPhone验收抖音原作品直达 | 所有者已明确“发布”；固定发布器将生产安全快进至`211581d`/0.28.3，服务器277项、回环/公网/SW、双服务、静态摘要和未登录401门禁通过。仅剩已安装抖音的iPhone系统级作品交接真机验收 |
 | P3-SUNMAO-12 | DONE | 社区发布统一以英文域名验收，中文入口备案后另行接入 | 操作端脚本改为`https://amuyeye.com/health/version`并保留完整SHA校验；社区指令、README和ADR-0069明确暂缓中文入口。Bash语法、9项独立部署契约测试通过，英文公网仍为0.3.9/`6468e4e`；未推进生产分支，未改DNS/Caddy/隧道或重启服务 |
 | P3-SUNMAO-11 | DONE | 正式发布社区0.3.9尺寸真实标题与云端图集底座 | `sunmao-production`、北京release与`amuyeye.com`均为`6468e4e`/0.3.9；发布器`Result=success`、`ExecMainStatus=0`。公网尺寸API返回真实标题，知识迁移版本1和图片目录已创建，SQLite inode未变；后台200、未登录统计401。只重启社区，采集器与模型下载器InvocationID不变；中文域名DNS未解析，不冒充已验收 |
 | P3-SUNMAO-10 | DONE | 正式发布社区0.3.8手机输入修复 | `sunmao-production`、北京release与公网均为`99dce4f`/0.3.8；发布器`Result=success`、`ExecMainStatus=0`。公网确认无昵称输入、正文输入存在、16px与`text-size-adjust: 100%`生效且只提交`body`；后台200、未登录统计401。只重启社区，采集器与模型下载器InvocationID不变 |

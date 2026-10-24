@@ -1,5 +1,12 @@
 # 变更记录
 
+## 2026-10-24 — 即时 AI 0.28.3 抖音原作品直达修复正式发布
+
+- 所有者明确要求“发布”后，固定受限发布器将生产仓库从`3668b6c`安全快进到`211581d4726d8e41bdade89dbb4a1b7b42c0dbae`，服务器277项Python回归全部通过并且只重启`instant-ai.service`。
+- 回环与`https://grandpaamu.com/api/health`均返回0.28.3和`auth_required=true`；公网Service Worker缓存为`instant-ai-shell-v0.28.3`，公网`app.js`与生产仓库SHA-256同为`56a7a079af832d55502c50f7579778e7486330a13ac2ba9297cebb54d2279855`。
+- `instant-ai.service`与`caddy.service`均为`active`；未登录模型先生状态、已学记录及私有媒体入口均继续返回401，发布通道复检为`CODEX_CLOUD_PUBLISH_READY`。
+- 没有修改北京下载器、博主采集器、榫卯社区、时变罗盘、业务资料或通知规则。系统级是否交接已安装的抖音App仍需所有者用iPhone真机点击验收。
+
 ## 2026-10-22 — 模型先生抖音原作品直达修复（0.28.3候选，未发布）
 
 - iPhone真机验收表明0.28.1虽恢复了入口，点击`www.douyin.com/video/<ID>`仍可能停在浏览器、首页或精选。公开AASA核对确认`www` 的正式抖音App关联不含`/video*`，而`m.douyin.com` 明确关联`/share/video*`和`/share/note*`；不再依赖网页302完成App交接。

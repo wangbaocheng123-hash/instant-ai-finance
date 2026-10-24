@@ -1,6 +1,6 @@
 # ADR-0080：模型先生原作品在 iPhone 以抖音 Universal Link 直达
 
-- 状态：`ACCEPTED / IMPLEMENTED ON MAIN CANDIDATE / NOT YET PUBLISHED`
+- 状态：`ACCEPTED / IMPLEMENTED / PUBLISHED`
 - 日期：2026-10-22
 - 决策者：产品所有者
 
@@ -39,4 +39,6 @@
 
 ## 发布边界
 
-0.28.3 当前只是`main`候选。本轮所有者要求“排查并修复”，没有给出正式发布指令；因此不调用即时 AI 固定发布器，生产仍保持0.28.2，待所有者明确说“发布”后再执行生产门禁。
+2026-10-24，所有者明确要求“发布”。固定受限发布器将生产仓库从`3668b6c`安全快进到`211581d4726d8e41bdade89dbb4a1b7b42c0dbae`，服务器277项Python回归通过。回环与公网健康均为0.28.3，Service Worker为`instant-ai-shell-v0.28.3`，公网静态摘要与生产仓库一致，`instant-ai.service`与Caddy均为active，未登录私有入口继续401。
+
+发布已完成，但服务器和Chromium不能代替iOS系统级Universal Link交接；最终仍需所有者用安装了抖音的iPhone点击同一作品验收。
