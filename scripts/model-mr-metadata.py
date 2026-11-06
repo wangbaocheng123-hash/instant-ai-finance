@@ -40,7 +40,7 @@ def saved_metadata() -> dict:
     thoughts = get("/api/investment-thoughts?limit=500")
     categories = [{key: item.get(key) for key in ("id", "name", "description", "level", "parent_id", "video_count")}
                   for item in thoughts["categories"]]
-    works = [{"id": int(item["id"]), "url": public_work_url(item.get("url")),
+    works = [{"id": int(item["id"]), "url": public_work_url(item.get("url")) or public_work_url(item.get("source_url")),
               "title": str(item.get("active_title") or item.get("title") or "")[:120], "published_at": str(item.get("published_at") or "")[:64],
               "keyword_info": clean_keyword_info(item.get("keyword_info"), item.get("keywords"))} for item in videos]
     return {"schema": METADATA_SCHEMA, "exported_at": datetime.now(timezone.utc).isoformat(),

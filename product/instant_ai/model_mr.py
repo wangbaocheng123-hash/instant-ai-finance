@@ -1518,7 +1518,12 @@ class ModelMrClient:
                 detail["work"]["media_file"] = ""
                 detail["work"]["video_url"] = ""
                 detail["work"]["media_available"] = False
-            summary = self._clean_snapshot_work({**self._clean_work(source_work), **detail["work"]})
+            listed_work = self._clean_work(source_work)
+            # A detail response may omit a link present on the list endpoint.
+            # Preserve that verified fallback in both exported records rather
+            # than letting an empty detail URL erase it during the merge.
+            detail["work"]["url"] = _clean_douyin_url(detail["work"].get("url"), listed_work.get("url"))
+            summary = self._clean_snapshot_work({**listed_work, **detail["work"]})
             works.append(summary)
             transcript_count += len(detail.get("transcripts", []))
             comment_count += len(detail.get("comments", []))

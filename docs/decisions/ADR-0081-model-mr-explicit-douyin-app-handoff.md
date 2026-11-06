@@ -1,6 +1,6 @@
 # ADR-0081：模型先生显式抖音客户端入口与可操作的后备
 
-- 状态：`ACCEPTED / IMPLEMENTED / PUBLISHED / AWAITING IPHONE ACCEPTANCE`
+- 状态：`ACCEPTED / IMPLEMENTED / PUBLISHED / VERIFIED FOR SOURCE-AVAILABLE WORKS`
 - 日期：2026-11-06
 - 决策依据：所有者反馈0.28.3发布后点击源链接仍无反应，继续完成已授权的同一跳转修复。
 - 部分替代：ADR-0080的“仅以HTTPS分享页作为iOS主入口”及article到note转换。
@@ -35,3 +35,5 @@
 沿用所有者对同一故障的修复与发布授权，完成测试后走即时AI既有固定发布器。最终仍需所有者手机确认“点击→允许打开→对应作品”结果。
 
 2026-11-06已经固定发布器上线精确提交`976fcf5c9b19b6bcdb3d3877310022ef077f007f`。服务器277项通过，回环/公网健康与SW为0.28.4，公网JS/CSS摘要一致，服务active及未登录401门禁正常；手机系统级交接仍待所有者验收。
+
+同日所有者随后确认最新作品可以正常打开抖音。其补充截图的早期作品显示“抖音原链接暂缺”，属于旧来源资料缺口，另行记录为P3-MODEL-LEGACY-SOURCE-01；本ADR的手机验收仅覆盖已提供真实来源的作品。
