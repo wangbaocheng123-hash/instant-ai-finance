@@ -41,7 +41,8 @@ from .retention import run_retention_cleanup
 from .reader_translation import translate_reader_item
 from .translation import translate_items, translation_status
 from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
-from .watch_events import list_watch_events, refresh_watch_events
+from .watch_events import list_watch_events, refresh_watch_events, sync_watch_events
+from .future_events import supply_future_events
 from .model_mr import MODEL_MR, ModelMrUnavailable, ModelMrWorkNotFound
 from .model_mr_learning import ModelMrLearningConflict
 from .model_mr_transfer import MODEL_MR_TRANSFER_PROJECTOR
@@ -167,6 +168,23 @@ def _scheduler_loop() -> None:
         threading.Event().wait(SCHEDULER_INTERVAL_SECONDS)
         if not COLLECTION_STATE["running"]:
             threading.Thread(target=_collect_in_background, name="instant-ai-scheduled-collector", daemon=True).start()
+
+
+def _calendar_scheduler_loop(*, stop_event: threading.Event | None = None,
+                             interval_seconds: float = SCHEDULER_INTERVAL_SECONDS) -> None:
+    """A slow news source must never delay future-event discovery or its heartbeat."""
+    stop = stop_event or threading.Event()
+    while not stop.is_set():
+        try:
+            result = supply_future_events()
+            COLLECTION_STATE["future_calendar"] = result
+            if result.get("delivered", 0):
+                sync_watch_events()
+        except Exception as error:
+            COLLECTION_STATE["future_calendar"] = {
+                "state": "failed", "errors": [type(error).__name__ + ": " + str(error)[:180]]
+            }
+        stop.wait(interval_seconds)
 
 
 class InstantAIHandler(BaseHTTPRequestHandler):
@@ -1365,6 +1383,7 @@ def run_server(collect_on_start: bool = True) -> None:
             name="model-mr-comment-thread-repair",
             daemon=True,
         ).start()
+    threading.Thread(target=_calendar_scheduler_loop, name="instant-ai-future-calendar", daemon=True).start()
     threading.Thread(target=_scheduler_loop, name="instant-ai-scheduler", daemon=True).start()
     if collect_on_start:
         threading.Thread(target=_collect_in_background, name="instant-ai-initial-collector", daemon=True).start()
