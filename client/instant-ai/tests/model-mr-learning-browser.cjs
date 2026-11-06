@@ -54,14 +54,20 @@ function originalUrl(id) {
   return `https://www.douyin.com/video/${7000000000000000000n + BigInt(id)}`;
 }
 
-function expectedNavigationUrl(sourceUrl, width) {
+function expectedWebUrl(sourceUrl, width) {
   if (width !== 390) return sourceUrl;
   const parsed = new URL(sourceUrl);
   const video = parsed.pathname.match(/^\/(?:share\/)?video\/(\d{15,22})\/?$/);
   if (video) return `https://m.douyin.com/share/video/${video[1]}`;
-  const note = parsed.pathname.match(/^\/(?:(?:share\/)?note|article)\/(\d{15,22})\/?$/);
+  const note = parsed.pathname.match(/^\/(?:share\/)?note\/(\d{15,22})\/?$/);
   if (note) return `https://m.douyin.com/share/note/${note[1]}`;
   return sourceUrl;
+}
+
+function expectedNavigationUrl(sourceUrl, width) {
+  if (width !== 390) return sourceUrl;
+  const exact = new URL(sourceUrl).pathname.match(/^\/(?:share\/)?(?:video|note)\/(\d{15,22})\/?$/);
+  return exact ? `snssdk1128://aweme/detail/${exact[1]}?refer=web&needlaunchlog=1` : sourceUrl;
 }
 
 function selectedUrl(overrides, id) {
@@ -80,12 +86,12 @@ function work(id, url = originalUrl(id)) {
   };
 }
 
-async function mount(browser, compiled, media, width, state = fixture()) {
+async function mount(browser, compiled, media, width, state = fixture(), environment = {}) {
   const page = await browser.newPage({
     viewport: { width, height: 844 },
     isMobile: width === 390,
     hasTouch: width === 390,
-    ...(width === 390 ? { userAgent: iphoneUserAgent } : {}),
+    ...(width === 390 ? { userAgent: environment.userAgent || iphoneUserAgent } : {}),
   });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -100,7 +106,14 @@ async function mount(browser, compiled, media, width, state = fixture()) {
       return scroll.apply(this, args);
     };
   });
-  await page.route('**/*', async route => {
+  await page.addInitScript(environment => {
+    if (environment.standalone) Object.defineProperty(navigator, 'standalone', { configurable: true, value: true });
+    if (environment.platform) Object.defineProperty(navigator, 'platform', { configurable: true, value: environment.platform });
+    if (environment.maxTouchPoints !== undefined) Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: environment.maxTouchPoints });
+  }, environment);
+  // Context routing also intercepts the first request of the HTTPS fallback's
+  // new page; no real Douyin traffic or installed application is used here.
+  await page.context().route('**/*', async route => {
     const url = new URL(route.request().url());
     const p = url.pathname;
     const method = route.request().method();
@@ -179,7 +192,7 @@ async function mount(browser, compiled, media, width, state = fixture()) {
   });
   await page.goto(origin);
   await page.waitForFunction(() => window.ready);
-  return { page, state, errors, compiled, width };
+  return { page, state, errors, compiled, media, width };
 }
 
 async function waitRequests(state, predicate, previous) {
@@ -221,11 +234,23 @@ async function assertAvailableOriginalLink(locator, sourceUrl, label, width) {
   assert.equal(await locator.evaluate(element => element.tagName), 'A', `${label}: available source is a real link`);
   assert.equal(await locator.innerText(), '打开抖音原作品', `${label}: use the explicit source label`);
   assert.equal(await locator.getAttribute('href'), expectedUrl, `${label}: use the exact platform destination`);
-  assert.equal(await locator.getAttribute('target'), width === 390 ? null : '_blank',
-    `${label}: iPhone uses a direct top-level tap while desktop keeps the workspace open`);
+  assert.equal(await locator.getAttribute('target'), expectedUrl.startsWith('snssdk1128:') ? null : '_blank',
+    `${label}: native app anchors keep user activation and HTTPS exits use a separate browser page`);
   const rel = (await locator.getAttribute('rel') || '').split(/\s+/);
   assert.ok(rel.includes('noopener') && rel.includes('noreferrer'), `${label}: isolate the external page`);
   assert.equal(await locator.getAttribute('aria-disabled'), null, `${label}: available links are not disabled`);
+  if (width === 390) {
+    const controls = locator.locator('..');
+    assert.equal(await controls.evaluate(element => element.matches('span.model-original-actions')), true, `${label}: group mobile recovery controls with the source`);
+    assert.equal(await controls.locator('button.model-original-copy').count(), 1, `${label}: copying is always available on iPhone`);
+    const web = controls.locator('a.model-original-web');
+    if (expectedUrl.startsWith('snssdk1128:')) {
+      assert.equal(await web.getAttribute('href'), expectedWebUrl(sourceUrl, width), `${label}: native app and HTTPS recovery identify the same work`);
+      assert.equal(await web.getAttribute('target'), '_blank', `${label}: recovery leaves a standalone web app container`);
+    } else assert.equal(await web.count(), 0, `${label}: do not duplicate the same HTTPS action`);
+  } else {
+    assert.equal(await locator.locator('..').locator('.model-original-copy, .model-original-web').count(), 0, `${label}: desktop behavior stays unchanged`);
+  }
 }
 
 async function assertUnavailableOriginalLink(locator, label) {
@@ -458,9 +483,10 @@ async function exactDouyinNavigation(session) {
   const sources = new Map([
     [750, originalUrl(750)],
     [749, `https://www.douyin.com/note/${sourceId(749)}?from=synthetic#detail`],
-    [748, `https://www.douyin.com/article/${sourceId(748)}`],
+    [748, `https://www.douyin.com/article/${sourceId(748)}?from=synthetic#article`],
     [747, `https://m.douyin.com/share/video/${sourceId(747)}?previous_page=synthetic`],
     [746, 'https://v.douyin.com/synthetic-share/'],
+    [745, `https://m.douyin.com/share/note/${sourceId(745)}?from=synthetic`],
   ]);
   sources.forEach((url, id) => state.listUrls.set(id, url));
   await page.evaluate(() => window.reopen());
@@ -468,14 +494,141 @@ async function exactDouyinNavigation(session) {
     await assertAvailableOriginalLink(cardOriginalLink(page, id), sourceUrl, `exact Douyin navigation ${id}`, session.width);
   }
   if (session.width === 390) {
-    const destination = expectedNavigationUrl(sources.get(750), session.width);
-    state.allowedExternal.add(destination);
-    await Promise.all([
-      page.waitForURL(destination),
-      cardOriginalLink(page, 750).click(),
-    ]);
-    assert.deepEqual(state.externalNavigations, [destination],
-      'the iPhone tap itself starts at the app-associated exact work URL');
+    await interceptNativeAppNavigation(page);
+    for (const id of [750, 749, 747, 745]) {
+      await cardOriginalLink(page, id).click();
+      const controls = cardOriginalLink(page, id).locator('..');
+      await assertRecoveryFeedback(controls);
+    }
+    assert.deepEqual(await page.evaluate(() => window.nativeAppClicks.map(item => item.href)),
+      [750, 749, 747, 745].map(id => expectedNavigationUrl(sources.get(id), session.width)),
+      'real owner clicks request the exact video/note native route, with no internal numeric-ID substitution');
+    assert.ok(await page.evaluate(() => window.nativeAppClicks.every(item => item.trusted)), 'native navigation starts in trusted clicks');
+    await page.waitForTimeout(1800);
+    assert.equal(page.url(), origin + '/', 'an unhandled native-app request must not trigger an automatic web or App Store redirect');
+    const destination = expectedWebUrl(sources.get(750), session.width);
+    await assertExternalPage(session, cardOriginalLink(page, 750).locator('..').locator('.model-original-web'), destination);
+    assert.equal(page.url(), origin + '/', 'fallback does not replace the learning workspace');
+    assert.deepEqual(state.externalNavigations, [destination], 'explicit web recovery requests the same exact work');
+  } else {
+    await assertExternalPage(session, cardOriginalLink(page, 750), sources.get(750));
+    assert.deepEqual(state.externalNavigations, [sources.get(750)], 'desktop still opens the original source in a new page');
+  }
+}
+
+async function interceptNativeAppNavigation(page) {
+  await page.evaluate(() => {
+    window.nativeAppClicks = [];
+    // Replace the unavailable operating-system handler only in this fixture.
+    // Production must keep a real anchor and must not cancel its navigation.
+    document.addEventListener('click', event => {
+      const link = event.target.closest('a.model-original-link');
+      if (!link?.href.startsWith('snssdk1128:')) return;
+      window.nativeAppClicks.push({ href: link.href, trusted: event.isTrusted });
+      event.preventDefault();
+    }, { capture: true });
+  });
+}
+
+async function assertRecoveryFeedback(controls) {
+  const feedback = controls.locator('.model-original-feedback');
+  await feedback.waitFor({ state: 'visible' });
+  assert.equal(await feedback.getAttribute('role'), 'status', 'the attempted handoff has accessible visible feedback');
+  assert.match(await feedback.innerText(), /未|若|没有|无法/, 'feedback explains a recovery path if the app does not open');
+  assert.doesNotMatch(await feedback.innerText(), /已打开|打开成功|唤起成功/, 'a browser click must not claim the OS accepted the handoff');
+}
+
+async function assertExternalPage(session, locator, destination) {
+  session.state.allowedExternal.add(destination);
+  const pending = session.page.waitForEvent('popup');
+  await locator.click();
+  const popup = await pending;
+  await popup.waitForURL(destination);
+  assert.equal(await popup.title(), 'synthetic exact Douyin destination');
+  await popup.close();
+}
+
+async function appLinkWhileVideoPlaying(session) {
+  const { page } = session;
+  await page.locator(`${action('open-detail')}[data-work-id="750"][data-detail-tab="video"]`).click();
+  await page.waitForFunction(() => document.querySelector('video')?.readyState >= 1);
+  await page.evaluate(async () => {
+    window.originalVideo = document.querySelector('video');
+    window.originalVideo.currentTime = 20;
+    window.originalVideo.muted = true;
+    await window.originalVideo.play();
+  });
+  if (session.width === 390) {
+    await interceptNativeAppNavigation(page);
+    await detailOriginalLink(page, 750).click();
+    await assertRecoveryFeedback(detailOriginalLink(page, 750).locator('..'));
+    assert.deepEqual(await page.evaluate(() => window.nativeAppClicks.map(item => item.href)), [expectedNavigationUrl(originalUrl(750), 390)]);
+    await assertExternalPage(session, detailOriginalLink(page, 750).locator('..').locator('.model-original-web'), expectedWebUrl(originalUrl(750), 390));
+  } else await assertExternalPage(session, detailOriginalLink(page, 750), originalUrl(750));
+  assert.equal(await page.evaluate(() => document.querySelector('video') === window.originalVideo && window.originalVideo.isConnected), true,
+    'native and web source actions must not redraw or detach the mounted video');
+  assert.equal(await page.evaluate(() => window.originalVideo.currentTime >= 20), true, 'source navigation preserves the video position');
+}
+
+async function clipboardRecovery(session) {
+  const { page } = session;
+  if (session.width !== 390) {
+    assert.equal(await page.locator('.model-original-copy').count(), 0, 'desktop does not gain mobile-only copy controls');
+    return;
+  }
+  const controls = cardOriginalLink(page, 750).locator('..');
+  await page.evaluate(() => {
+    window.copiedSources = [];
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async value => { window.copiedSources.push(value); },
+    } });
+  });
+  await controls.locator('.model-original-copy').click();
+  await page.waitForFunction(() => window.copiedSources.length === 1);
+  assert.deepEqual(await page.evaluate(() => window.copiedSources), [expectedWebUrl(originalUrl(750), 390)], 'copy shares a portable exact HTTPS source, not an app-only scheme');
+  assert.match(await controls.locator('.model-original-feedback').innerText(), /已复制/);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async () => { throw new DOMException('synthetic clipboard denied', 'NotAllowedError'); },
+    } });
+  });
+  await controls.locator('.model-original-copy').click();
+  const manual = controls.locator('input.model-original-copy-value');
+  await manual.waitFor({ state: 'visible' });
+  assert.equal(await manual.inputValue(), expectedWebUrl(originalUrl(750), 390));
+  assert.equal(await manual.evaluate(input => input.readOnly), true, 'permission-denied recovery exposes a readonly exact URL');
+  assert.match(await controls.locator('.model-original-feedback').innerText(), /长按|手动/);
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }));
+  await controls.locator('.model-original-copy').click();
+  await controls.locator('.model-original-copy').click();
+  assert.equal(await controls.locator('input.model-original-copy-value').count(), 1, 'missing clipboard API and repeated retries reuse the same manual-copy input');
+  assert.equal(await manual.inputValue(), expectedWebUrl(originalUrl(750), 390));
+  await manual.waitFor({ state: 'visible' });
+  assert.match(await controls.locator('.model-original-feedback').innerText(), /长按|手动/);
+  assert.equal(await page.locator('input[type="password"]').count(), 0, 'copy recovery does not ask for credentials');
+}
+
+async function mobileBrowserEnvironments(session) {
+  if (session.width !== 390) {
+    assert.equal(await cardOriginalLink(session.page, 750).getAttribute('target'), '_blank');
+    return;
+  }
+  const environments = [
+    { label: 'standalone', standalone: true },
+    { label: 'CriOS', userAgent: iphoneUserAgent.replace('Version/18.6', 'CriOS/141.0.7390.98') },
+    { label: 'iPad desktop UA', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15', platform: 'MacIntel', maxTouchPoints: 5 },
+  ];
+  for (const environment of environments) {
+    const variant = await mount(session.page.context().browser(), session.compiled, session.media, 390, fixture(), environment);
+    try {
+      await assertAvailableOriginalLink(cardOriginalLink(variant.page, 750), originalUrl(750), environment.label, 390);
+      await interceptNativeAppNavigation(variant.page);
+      await cardOriginalLink(variant.page, 750).click();
+      await assertRecoveryFeedback(cardOriginalLink(variant.page, 750).locator('..'));
+      assert.deepEqual(await variant.page.evaluate(() => window.nativeAppClicks.map(item => item.href)), [expectedNavigationUrl(originalUrl(750), 390)], environment.label);
+      assert.deepEqual(variant.errors, []);
+      assert.deepEqual(variant.state.unexpected, []);
+    } finally { await variant.page.context().close(); }
   }
 }
 
@@ -492,6 +645,7 @@ async function unavailableOriginalLink(session) {
     [746, 'https://douyin.com.example/video/746'],
     [745, `https://example.test@www.douyin.com/video/${7000000000000000745n}`],
     [744, `https://www.douyin.com:444/video/${7000000000000000744n}`],
+    [743, 'snssdk1128://aweme/detail/7000000000000000743?refer=web'],
   ]);
   malicious.forEach((url, id) => {
     state.listUrls.set(id, url);
@@ -515,8 +669,8 @@ async function unavailableOriginalLink(session) {
     await page.locator(`${action('close-detail')}[data-work-id="${id}"]`).click();
     await page.waitForFunction(id => !document.querySelector(`[data-work-id="${id}"] .model-work-detail`), id);
   }
-  assert.equal(await page.locator('.model-original-link[href]').count(), 17,
-    'only the other seventeen trusted cards remain navigable after the malicious URL matrix');
+  assert.equal(await page.locator('.model-original-link[href]').count(), 16,
+    'only the other sixteen trusted HTTPS source cards remain navigable; metadata cannot inject a custom scheme');
 }
 
 async function pendingPageNavigation(session) {
@@ -570,7 +724,7 @@ async function main() {
   let passed = 0, failed = 0;
   try {
     for (const width of [390, 1280]) {
-      for (const scenario of [emptyAndMark, persistAcrossPanels, farWindow, failedSave, conflictRefresh, pendingAndStaleRead, readFailure, preserveVideo, detailFallbackOriginalLink, exactDouyinNavigation, unavailableOriginalLink, pendingPageNavigation, lateLocatorRespectsVideo]) {
+      for (const scenario of [emptyAndMark, persistAcrossPanels, farWindow, failedSave, conflictRefresh, pendingAndStaleRead, readFailure, preserveVideo, detailFallbackOriginalLink, exactDouyinNavigation, appLinkWhileVideoPlaying, clipboardRecovery, mobileBrowserEnvironments, unavailableOriginalLink, pendingPageNavigation, lateLocatorRespectsVideo]) {
         const session = await mount(browser, compiled, media, width);
         const label = `${scenario.name} ${width}`;
         try {
@@ -582,7 +736,7 @@ async function main() {
           passed++;
         } catch (error) {
           failed++; console.error(`${label}: ${error.stack}`);
-        } finally { await session.page.close(); }
+        } finally { await session.page.context().close(); }
       }
     }
   } finally { await browser.close(); }
