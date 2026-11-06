@@ -67,7 +67,7 @@ class SourceSchedulingTests(unittest.TestCase):
         self.assertEqual(_source_failure_delay(source, 3, error), 4 * 60 * 60)
         self.assertEqual(_source_failure_delay(source, 8, error), MAX_SOURCE_BACKOFF_SECONDS)
 
-    def test_schema_thirteen_persists_schedule_and_rotates_google_sources(self) -> None:
+    def test_schema_fourteen_preserves_schedule_and_rotates_google_sources(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path = root / "instant-ai.db"
@@ -122,7 +122,7 @@ class SourceSchedulingTests(unittest.TestCase):
                 columns = {
                     row[1] for row in connection.execute("PRAGMA table_info(sources)").fetchall()
                 }
-            self.assertEqual(version, "13")
+            self.assertEqual(version, "14")
             self.assertEqual(scheduled, 3)
             self.assertTrue({"last_attempt_at", "next_fetch_at", "failure_count"} <= columns)
 

@@ -1,0 +1,25 @@
+# ADR-0082：即时AI统一发现并持久供给罗盘未来事件
+
+- 状态：已采纳，2026-11-06；正式发布另验收。
+- 依据：所有者要求修复AI事件接收、补齐缺失链路、撤掉GPT独立搜取。
+
+## 证据与复用
+
+ADR-0016/17/18及watch_events.py已实现罗盘事件拉取、官方变化监测和可靠信号投递。原链路依赖已有节点，不能独立补空未来日历；黄金候选接口不能替代首页AI供给。罗盘GPT全局搜取只产生文章，没有维护未来节点。
+
+复用 `official_monitor.py::_fetch_official_channel` 的官方HTTPS/DNS白名单和 `collectors.py::parse_feed`。不新增搜索模型、不重造采集、不复制未知许可证源码。
+
+## 决定
+
+1. 在原监测链前增加future_events供给器。首期适配TSMC日历、NVIDIA/Micron官方业绩公告、BLS月历，只接收明确日期/时区证据；RSS发布日期不是事件日，没有日期不猜。覆盖清单不代表全市场。
+2. schema14增加future_calendar_events待投递表和future_calendar_sources状态。按报告期稳定key，新事实递增版本，同内容幂等；未来事件独立于新闻TTL，发生后7天清理。数据仍在Git外原SQLite，纳入原在线备份/恢复。
+3. 回环GET watch-events取得home/zijin/status短期凭据和acceptedVersions目录；固定calendar POST投递公开字段。匹配回执后确认；失败退避，罗盘恢复旧备份后补送。旧罗盘无契约时安全waiting_receiver，继续原监测。
+4. 罗盘独立日历SQLite与手工状态合并读取，手工优先、不改投资资料。节点先展示，具体扫描/变化信号再触发GPT解读。撤掉GPT全局搜取，保留具体事件解读、政策核验和独立每日报告。
+5. 官方源成功6小时复查、失败30分钟复查，由原调度驱动。来源结构变化或网络失败保留旧节点，反馈状态；新入口异常不阻断原信号链。
+6. 两端contractVersion=1，保留原始IANA时区与偏移时间，核对北京时间跨日/夏令时。凭据不进Git/浏览器，不传投资资料；请求/响应限长，冲突保留现场。
+
+## 验收与后果
+
+新增来源需官方适配器和时间测试，不让模型猜日历。未覆盖/未发布必须明确，不把采集成功当作完整覆盖。
+
+`test_future_events`覆盖发布日期/时区、月外格、同日多项不同时间、持久化、重试、改期和备份补送。`test_compass_calendar_integration`在显式COMPASS_SOURCE_ROOT下验收真实Python→Node回环，仅用合成数据。正式发布前两端完整回归、桌面/手机预览、差异审阅并推送各自origin/main；之后按用户发布授权走固定发布器，不手工重启服务。

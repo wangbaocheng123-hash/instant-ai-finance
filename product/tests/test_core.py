@@ -528,7 +528,7 @@ class DatabaseTests(unittest.TestCase):
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             self.assertEqual(source_count, len(DEFAULT_SOURCES))
-            self.assertEqual(version, "13")
+            self.assertEqual(version, "14")
             with connect(path) as connection:
                 tables = {
                     row[0]
@@ -1077,7 +1077,8 @@ class MobileShellTests(unittest.TestCase):
         self.assertIn("url.pathname.startsWith('/api/')", worker)
         self.assertIn("url.pathname.startsWith('/media/')", worker)
         self.assertIn("fetch(request)", worker)
-        self.assertIn("instant-ai-shell-v0.28.4", worker)
+        from instant_ai import __version__
+        self.assertIn(f"instant-ai-shell-v{__version__}", worker)
         self.assertIn("showNotification", worker)
         self.assertIn("notificationclick", worker)
         self.assertIn("手机通知", app)

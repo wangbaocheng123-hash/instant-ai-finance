@@ -13,7 +13,7 @@ from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensur
 from .publishers import resolve_publisher_identity
 
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -449,6 +449,18 @@ def initialize(path: Path | str | None = None) -> None:
             CREATE TABLE IF NOT EXISTS schema_meta (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS future_calendar_events (
+                scope TEXT NOT NULL,event_key TEXT NOT NULL,version INTEGER NOT NULL,
+                facts_hash TEXT NOT NULL,payload_json TEXT NOT NULL,checked_at TEXT NOT NULL,
+                delivered_version INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at TEXT NOT NULL DEFAULT '',last_error TEXT NOT NULL DEFAULT '',
+                received_at TEXT NOT NULL DEFAULT '',PRIMARY KEY(scope,event_key)
+            );
+            CREATE TABLE IF NOT EXISTS future_calendar_sources (
+                source_key TEXT PRIMARY KEY,last_attempt_at TEXT NOT NULL,
+                last_success_at TEXT NOT NULL DEFAULT '',last_error TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS sources (

@@ -457,6 +457,12 @@ def scan_watch_events(*, path: object = None) -> dict[str, Any]:
 
 
 def refresh_watch_events(*, path: object = None) -> dict[str, Any]:
+    from .future_events import supply_future_events
+    try:
+        calendar = supply_future_events(path=path)
+    except Exception as error:
+        # New calendar failures must not interrupt the established signal loop.
+        calendar = {'state': 'failed', 'errors': [type(error).__name__ + ': ' + str(error)[:180]]}
     sync = sync_watch_events(path=path)
     official = monitor_official_channels(path=path)
     delivery = deliver_event_signals(
@@ -464,7 +470,7 @@ def refresh_watch_events(*, path: object = None) -> dict[str, Any]:
         target_url=os.environ.get("INSTANT_AI_COMPASS_SIGNAL_URL", DEFAULT_COMPASS_SIGNAL_URL),
     )
     scan = scan_watch_events(path=path)
-    return {"sync": sync, "official": official, "delivery": delivery, "scan": scan}
+    return {"calendar": calendar, "sync": sync, "official": official, "delivery": delivery, "scan": scan}
 
 
 def _recent_change(value: object, *, now: datetime) -> bool:
