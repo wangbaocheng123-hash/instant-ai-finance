@@ -5,7 +5,8 @@
 ## 当前发布验收入口
 
 - 电脑端与新加坡云端均以 `https://amuyeye.com/health/version` 返回的完整 `repository_revision` 验收目标提交，不能只凭 Git 推送成功或首页200宣称上线。
-- `阿木爷爷.com`暂缓接入，不参与发布等待，也不作为社区功能发布失败的依据。备案完成后，须单独验收DNS、HTTPS及同一社区服务，再恢复入口；当前不要修改其DNS或Caddy，不得影响`mcp.amuyeye.com`。
+- 所有者于2026-11-09确认`阿木爷爷.com`备案通过并要求接回。中文北京站点定向TLS已通过，但两个根域名当日均缺A解析，DNS恢复及普通公网验收尚未完成。根记录预期为中文`47.93.214.76`、英文`47.236.175.118`；先核对实际记录，优先启用原记录而非新建重复项，永久不得影响`mcp.amuyeye.com`或添加通配符。入口未验收前不要把备案通过等同网址已恢复。
+- 新加坡英文站点由`/etc/caddy/Caddyfile.instant-ai`独立import `/etc/caddy/sunmao-community.caddy`，不要写回会被时变罗盘更新的共享Caddyfile。关闭admin端口时，现场Caddy 2.11+用SIGUSR1平滑加载；操作手册见`deploy/singapore/README.md`。
 - 沿用既有新加坡`/home/compassdev/bin/beijing-admin`，在北京执行一次`sudo -n systemctl start --no-block sunmao-community-git-deploy.service`。不得新建定时轮询，不得调用采集套件发布器。普通修改仍停在`main`，不触发生产发布。
 
 ## 接到所有者从手机或新加坡云端 Codex 提供的新资料时
