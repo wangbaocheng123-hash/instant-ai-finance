@@ -10,7 +10,7 @@
 - 运行数据库：`/var/lib/sunmao-community/community.sqlite3`
 - 原子发布目录：`/opt/sunmao-community/`
 - 生产分支：`sunmao-production`
-- 正式入口：所有者于2026-11-09确认已备案的`https://阿木爷爷.com/`为社区正式网址，由北京直连现有18808服务。中文服务器定向TLS通过，DNS恢复与普通公网验收仍待完成。英文`amuyeye.com`仍在备案申请中，本轮不调整其DNS或接入北京，既有新加坡隧道只作为历史独立入口保留。详细步骤见`deploy/singapore/README.md`。不得接管`www.amuyeye.com`、`mcp.amuyeye.com`或创建`*.amuyeye.com`通配符。
+- 正式入口：所有者于2026-11-09确认已备案的`https://阿木爷爷.com/`为社区正式网址，由北京直连现有18808服务。中文原DNS记录已于当日17:14启用，普通公网版本/资料/24图/后台保护与右侧浏览器验收通过。英文`amuyeye.com`仍在备案申请中，本轮不调整其DNS或接入北京，既有新加坡隧道只作为历史独立入口保留。详细步骤见`deploy/singapore/README.md`。不得接管`www.amuyeye.com`、`mcp.amuyeye.com`或创建`*.amuyeye.com`通配符。
 
 公共页面顶部固定显示“尺寸型 / 交流区 / 榫卯108道”三项导航；尺寸型由同源`/api/size-resources`按顺序展示统一知识表中的已发布外部资料卡或社区图片图集，`web/size-resources.json`继续作为经审核的Git种子清单；交流区的中央大屏显示公开问题、咨询、经验和意见，底部固定输入栏只填写纯文字内容，不要求访客设置昵称。切换到尺寸型或榫卯108道时，底部输入栏隐藏。手机输入框保持至少16px字号，不通过禁用页面缩放来规避浏览器聚焦放大。
 
