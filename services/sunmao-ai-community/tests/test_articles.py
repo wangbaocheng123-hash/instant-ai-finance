@@ -26,6 +26,7 @@ class ArticleTests(unittest.TestCase):
         self.database = self.root / "community.sqlite3"
         self.knowledge = self.root / "knowledge"
         self.store = SizeLibraryStore(self.database, self.knowledge, SEED_PATH)
+        self.seed_count = len(self.store.list_resources())
         self.image = self.root / "source.png"
         self.image.write_bytes(ONE_PIXEL_PNG)
         self.metadata = {
@@ -70,7 +71,7 @@ class ArticleTests(unittest.TestCase):
         changed = dict(self.metadata, title="另一个标题")
         with self.assertRaisesRegex(ValueError, "different_content"):
             import_article(self.store, changed, [self.image])
-        self.assertEqual(self.store.list_resources()[-1], first)
+        self.assertEqual(next(item for item in self.store.list_resources() if item["id"] == first["id"]), first)
 
     def test_duplicate_source_and_sequence_conflicts_do_not_replace_items(self):
         self.imported()
@@ -78,7 +79,7 @@ class ArticleTests(unittest.TestCase):
             import_article(self.store, dict(self.metadata, id="another-id", sequence=3), [self.image])
         with self.assertRaisesRegex(ValueError, "sequence_in_use"):
             import_article(self.store, dict(self.metadata, id="another-id", source_url="https://mp.weixin.qq.com/s/another-test-source"), [self.image])
-        self.assertEqual(len(self.store.list_resources()), 2)
+        self.assertEqual(len(self.store.list_resources()), self.seed_count + 1)
 
     def test_video_only_article_does_not_need_a_fake_image(self):
         metadata = dict(self.metadata, blocks=[self.metadata["blocks"][-1]])
@@ -91,7 +92,7 @@ class ArticleTests(unittest.TestCase):
         self.image.write_bytes(b"<html>blocked</html>")
         with self.assertRaisesRegex(ValueError, "unsupported_image_type"):
             self.imported()
-        self.assertEqual(len(self.store.list_resources()), 1)
+        self.assertEqual(len(self.store.list_resources()), self.seed_count)
         self.assertFalse(list(self.knowledge.rglob("original.*")))
 
     def test_url_allowlist_rejects_scripts_untrusted_hosts_and_extra_query(self):
@@ -114,12 +115,12 @@ class ArticleTests(unittest.TestCase):
         asset_id = result["blocks"][1]["url"].rsplit("/", 1)[-1]
         with closing(sqlite3.connect(self.database)) as connection, connection:
             connection.execute("UPDATE knowledge_assets SET public_level='private' WHERE id=?", (asset_id,))
-        self.assertEqual(len(self.store.list_resources()), 1)
+        self.assertEqual(len(self.store.list_resources()), self.seed_count)
         self.assertIsNone(self.store.get_asset(asset_id))
         with closing(sqlite3.connect(self.database)) as connection, connection:
             connection.execute("UPDATE knowledge_assets SET public_level='public' WHERE id=?", (asset_id,))
             connection.execute("UPDATE knowledge_items SET review_status='withdrawn' WHERE id=?", (self.metadata["id"],))
-        self.assertEqual(len(self.store.list_resources()), 1)
+        self.assertEqual(len(self.store.list_resources()), self.seed_count)
         self.assertIsNone(self.store.get_asset(asset_id))
 
     def test_failed_file_write_rolls_back_new_item_and_files(self):
@@ -128,7 +129,7 @@ class ArticleTests(unittest.TestCase):
             metadata["blocks"].append({"type": "image", "position": 2})
             with self.assertRaises(FileExistsError):
                 import_article(self.store, metadata, [self.image, self.image])
-        self.assertEqual(len(self.store.list_resources()), 1)
+        self.assertEqual(len(self.store.list_resources()), self.seed_count)
         self.assertEqual(list((self.knowledge / "originals" / "images").iterdir()), [])
 
     def test_manifest_verifies_sha_and_rejects_escape(self):
@@ -152,7 +153,8 @@ class ArticleTests(unittest.TestCase):
             connection.request("GET", "/api/size-resources")
             response = connection.getresponse()
             self.assertEqual(response.status, 200)
-            self.assertEqual(json.loads(response.read())["resources"][-1], result)
+            resources = json.loads(response.read())["resources"]
+            self.assertEqual(next(item for item in resources if item["id"] == result["id"]), result)
             connection.close()
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
             connection.request("GET", result["blocks"][1]["url"])

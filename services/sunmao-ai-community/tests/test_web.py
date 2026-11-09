@@ -59,7 +59,7 @@ class SunmaoCommunityTests(unittest.TestCase):
 
     def test_size_library_contains_the_first_canonical_wechat_article(self) -> None:
         self.assertEqual(self.size_payload["series"], "尺寸型")
-        self.assertEqual(len(self.size_resources), 1)
+        self.assertEqual(len(self.size_resources), 2)
         resource = self.size_resources[0]
         source = urlsplit(resource["url"])
         self.assertEqual(resource["sequence"], 1)
@@ -72,6 +72,11 @@ class SunmaoCommunityTests(unittest.TestCase):
         self.assertEqual(source.query, "")
         self.assertTrue(resource["title"].strip())
         self.assertTrue(resource["summary"].strip())
+        last = self.size_resources[-1]
+        self.assertEqual(last["sequence"], 6)
+        self.assertEqual(last["id"], "wechat-xvttOA4B0nXX4hSd3_g-sA")
+        self.assertEqual(last["url"], "https://mp.weixin.qq.com/s/xvttOA4B0nXX4hSd3_g-sA")
+        self.assertEqual(last["type"], "external")
 
     def test_sizes_view_loads_safe_text_only_resource_cards(self) -> None:
         html = (COMMUNITY_ROOT / "index.html").read_text(encoding="utf-8")
