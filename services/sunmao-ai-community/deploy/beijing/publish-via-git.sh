@@ -3,8 +3,8 @@ set -euo pipefail
 
 readonly REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
 readonly EXPECTED_REPOSITORY="wangbaocheng123-hash/instant-ai-finance.git"
-# The Chinese domain is deferred until ICP filing, DNS and HTTPS are verified.
-readonly VERSION_URL="https://amuyeye.com/health/version"
+# The owner confirmed ICP filing for the Chinese domain and selected it as primary.
+readonly VERSION_URL="https://xn--4pv19va7008a.com/health/version"
 
 fail() { printf 'SUNMAO_GIT_PUBLISH_FAILED: %s\n' "$*" >&2; exit 1; }
 [[ $# -eq 1 ]] || fail "只接受一个完整 Git 提交 SHA"
@@ -14,6 +14,11 @@ target="$1"
 cd "${REPOSITORY_ROOT}"
 [[ -z "$(git status --porcelain --untracked-files=normal)" ]] || fail "工作区存在未提交修改"
 [[ "$(git remote get-url origin)" == *"${EXPECTED_REPOSITORY}" ]] || fail "origin不是统一公共仓库"
+
+# Reject an unavailable or wrong public entry before advancing any production ref.
+preflight="$(curl --fail --silent --show-error --connect-timeout 5 --max-time 10 "${VERSION_URL}" 2>/dev/null || true)"
+public_service="$(printf '%s' "${preflight}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("service", ""))' 2>/dev/null || true)"
+[[ "${public_service}" == sunmao-ai-community ]] || fail "中文正式域名DNS或HTTPS尚未就绪，未推进生产分支：${VERSION_URL}"
 git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
 git cat-file -e "${target}^{commit}" 2>/dev/null || fail "目标提交不存在"
 remote_main="$(git rev-parse refs/remotes/origin/main^{commit})"

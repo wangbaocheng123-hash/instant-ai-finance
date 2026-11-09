@@ -10,7 +10,7 @@
 - 运行数据库：`/var/lib/sunmao-community/community.sqlite3`
 - 原子发布目录：`/opt/sunmao-community/`
 - 生产分支：`sunmao-production`
-- 社区入口设计：`https://amuyeye.com/`在新加坡通过仅监听 `127.0.0.1:18818` 的 SSH 隧道转发到北京同一个18808服务，不另建应用或数据库；`https://阿木爷爷.com/`由北京直连同一服务。所有者于2026-11-09确认中文备案通过，当日服务器定向TLS均通过，但中英文根域名的DNS仍待恢复，不能称普通公网已恢复。详细恢复步骤见`deploy/singapore/README.md`。不得接管`www.amuyeye.com`、`mcp.amuyeye.com`或创建`*.amuyeye.com`通配符。
+- 正式入口：所有者于2026-11-09确认已备案的`https://阿木爷爷.com/`为社区正式网址，由北京直连现有18808服务。中文服务器定向TLS通过，DNS恢复与普通公网验收仍待完成。英文`amuyeye.com`仍在备案申请中，本轮不调整其DNS或接入北京，既有新加坡隧道只作为历史独立入口保留。详细步骤见`deploy/singapore/README.md`。不得接管`www.amuyeye.com`、`mcp.amuyeye.com`或创建`*.amuyeye.com`通配符。
 
 公共页面顶部固定显示“尺寸型 / 交流区 / 榫卯108道”三项导航；尺寸型由同源`/api/size-resources`按顺序展示统一知识表中的已发布外部资料卡或社区图片图集，`web/size-resources.json`继续作为经审核的Git种子清单；交流区的中央大屏显示公开问题、咨询、经验和意见，底部固定输入栏只填写纯文字内容，不要求访客设置昵称。切换到尺寸型或榫卯108道时，底部输入栏隐藏。手机输入框保持至少16px字号，不通过禁用页面缩放来规避浏览器聚焦放大。
 
@@ -63,7 +63,7 @@ python -m sunmao_community --host 127.0.0.1 --port 4173 --database .runtime/comm
 
 社区已经从早期“由采集器代为提供页面”的临时拓扑迁移为独立服务。以后普通社区功能发布只更新社区 release 和进程，不修改 Caddy 或并列应用。
 
-电脑端与新加坡云端都使用`deploy/beijing/publish-via-git.sh <完整提交SHA>`。脚本推进社区生产分支并输出等待提示后，通过既有`/home/compassdev/bin/beijing-admin`在北京执行一次`sudo -n systemctl start --no-block sunmao-community-git-deploy.service`。发布器回环检查成功后，脚本以`https://amuyeye.com/health/version`的完整`repository_revision`确认上线；中文域名不纳入等待，备案问题不再拖住社区功能验收。此脚本更改只需操作端更新`main`，不需要重启网站或重新安装北京发布器。
+电脑端与新加坡云端都使用`deploy/beijing/publish-via-git.sh <完整提交SHA>`。脚本先核对中文正式域名DNS/HTTPS及服务身份，不就绪时在推进生产分支前停止；就绪后推进社区生产分支并输出等待提示，通过既有`/home/compassdev/bin/beijing-admin`在北京执行一次`sudo -n systemctl start --no-block sunmao-community-git-deploy.service`。发布器回环成功后，脚本以`https://xn--4pv19va7008a.com/health/version`的完整`repository_revision`确认上线。操作端更新此脚本不需要重启网站或重装北京发布器。
 
 ## 管理后台与访问统计
 
