@@ -128,7 +128,7 @@ async function mount(browser, compiled, media, width, state = fixture(), environ
     }
     if (p === '/') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/styles.css"><body><main id="root"></main><script type="module">import {ModelMrPanel} from '/ModelMrPanel.js';window.reopen=async()=>{window.panel=new ModelMrPanel();document.querySelector('#root').replaceChildren(window.panel.element);window.panel.element.hidden=false;await window.panel.refresh();};await window.reopen();window.ready=true;</script></body></html>` });
     if (p === '/styles.css') return route.fulfill({ contentType: 'text/css', body: fs.readFileSync(path.resolve(__dirname, '../src/instant-ai/styles.css'), 'utf8') });
-    if (['/ModelMrPanel.js', '/ModelMrComments.js', '/api.js', '/ModelMrComments', '/api'].includes(p))
+    if (['/ModelMrPanel.js', '/ModelMrAudioPlayer', '/ModelMrAudioPlayer.js', '/ModelMrComments.js', '/api.js', '/ModelMrComments', '/api'].includes(p))
       return route.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(path.join(compiled, `${p.slice(1)}${p.endsWith('.js') ? '' : '.js'}`), 'utf8') });
     if (p.startsWith('/media/')) {
       state.requests.push({ p, method });

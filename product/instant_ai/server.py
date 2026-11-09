@@ -44,6 +44,7 @@ from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 from .watch_events import list_watch_events, refresh_watch_events, sync_watch_events
 from .future_events import supply_future_events
 from .model_mr import MODEL_MR, ModelMrUnavailable, ModelMrWorkNotFound
+from .model_mr_audio import ModelMrAudioUnavailable, prepare_model_mr_audio
 from .model_mr_learning import ModelMrLearningConflict
 from .model_mr_transfer import MODEL_MR_TRANSFER_PROJECTOR
 from .model_mr_processing import MODEL_MR_PROCESSOR
@@ -818,13 +819,31 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
 
     def _serve_model_mr_media_path(self, path: str) -> bool:
         video_match = re.fullmatch(r"/media/model-mr/works/(\d+)/video", path)
+        audio_match = re.fullmatch(r"/media/model-mr/works/(\d+)/audio", path)
         image_match = re.fullmatch(r"/media/model-mr/works/(\d+)/images/(\d+)", path)
-        if video_match is None and image_match is None:
+        if video_match is None and image_match is None and audio_match is None:
             return False
         if not self._require_auth():
             return True
         if video_match is not None:
             self._serve_model_mr_video(int(video_match.group(1)))
+        elif audio_match is not None:
+            try:
+                query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                values = query.get("minutes", ["0"])
+                if len(values) != 1 or not re.fullmatch(r"0|15|30|60|90", values[0]):
+                    raise ValueError("定时仅支持15、30、60、90分钟。")
+                local = MODEL_MR.video_path(int(audio_match.group(1)))
+                if local is None:
+                    self._json({"error": "这条作品暂没有本地视频音轨。"}, HTTPStatus.NOT_FOUND)
+                    return True
+                audio = prepare_model_mr_audio(local[0], MODEL_MR.snapshot_path.parent, int(values[0]))
+            except (ValueError, ModelMrWorkNotFound) as error:
+                self._json({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            except (ModelMrAudioUnavailable, ModelMrUnavailable) as error:
+                self._json({"error": str(error)}, HTTPStatus.SERVICE_UNAVAILABLE)
+            else:
+                self._serve_private_file(audio, "audio/mp4", max_open_ended_range_bytes=MEDIA_OPEN_ENDED_RANGE_BYTES)
         else:
             assert image_match is not None
             self._serve_model_mr_image(int(image_match.group(1)), int(image_match.group(2)))

@@ -78,7 +78,7 @@ async function mount(browser, compiled, media, kind, width) {
     const p = url.pathname;
     const json = value => route.fulfill({ contentType: 'application/json', body: JSON.stringify(value) });
     if (p === '/') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><div id="root"></div><script type="module">import {${blogger ? 'BloggerPanel' : 'ModelMrPanel'}} from '/${blogger ? 'BloggerPanel' : 'ModelMrPanel'}.js';window.panel=new ${blogger ? 'BloggerPanel' : 'ModelMrPanel'}();document.querySelector('#root').append(window.panel.element);window.panel.element.hidden=false;await window.panel.refresh();window.ready=true;</script>` });
-    if (['/BloggerPanel.js', '/ModelMrPanel.js', '/ModelMrComments.js', '/api.js', '/ModelMrComments', '/api'].includes(p))
+    if (['/BloggerPanel.js', '/ModelMrPanel.js', '/ModelMrAudioPlayer', '/ModelMrAudioPlayer.js', '/ModelMrComments.js', '/api.js', '/ModelMrComments', '/api'].includes(p))
       return route.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(path.join(compiled, `${p.slice(1)}${p.endsWith('.js') ? '' : '.js'}`), 'utf8') });
     if (p.startsWith('/media/')) {
       const range = route.request().headers().range?.match(/^bytes=(\d+)-(\d*)$/);

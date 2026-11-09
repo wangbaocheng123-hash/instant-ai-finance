@@ -1,4 +1,5 @@
 import { instantApi } from './api';
+import { ModelMrAudioPlayer } from './ModelMrAudioPlayer';
 import { commentThreads, isAuthorComment, rankCommentThreads, threadHasAuthorInteraction, type ModelMrCommentThread } from './ModelMrComments';
 import type {
   ModelMrChatConfig, ModelMrComment, ModelMrThoughtCategory, ModelMrWork, ModelMrWorkDetail, ModelMrProcessing, ModelMrLearningState, ModelMrWorksPage,
@@ -14,6 +15,7 @@ export class ModelMrPanel {
   private readonly body: HTMLElement;
   private readonly badge: HTMLElement;
   private readonly learningToolbar: HTMLElement;
+  private readonly audioPlayer = new ModelMrAudioPlayer();
   private activeTab: ModelMrTab = 'works';
   private works: ModelMrWork[] = [];
   private totalWorks = 0;
@@ -85,6 +87,7 @@ export class ModelMrPanel {
     this.body = this.required('.model-mr-body');
     this.badge = this.required('.panel-count');
     this.learningToolbar = this.required('.model-learning-toolbar');
+    this.learningToolbar.before(this.audioPlayer.element);
     this.renderLearningToolbar();
     this.element.addEventListener('click', (event) => void this.handleClick(event));
     this.element.addEventListener('submit', (event) => {
@@ -228,7 +231,14 @@ export class ModelMrPanel {
     const workId = Number(action.dataset.workId || 0);
     if (!workId) return;
     const command = action.dataset.modelAction;
-    if (command === 'toggle-learned') await this.toggleLearned(workId);
+    if (command === 'play-audio') {
+      const work = [...this.works, ...this.relatedWorks].find(item => item.id === workId) || this.details.get(workId)?.work;
+      if (work?.video_available) {
+        this.audioPlayer.play(work);
+        this.audioPlayer.element.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+    else if (command === 'toggle-learned') await this.toggleLearned(workId);
     else if (command === 'open-detail') await this.openWorkDetail(workId, (action.dataset.detailTab || 'video') as WorkDetailTab);
     else if (command === 'detail-tab') this.setWorkDetailTab(workId, (action.dataset.detailTab || 'video') as WorkDetailTab);
     else if (command === 'close-detail') this.closeWorkDetail(workId);
@@ -731,6 +741,13 @@ export class ModelMrPanel {
     const actions = document.createElement('div');
     actions.className = 'model-work-actions';
     if (work.media_available) actions.append(this.actionButton(isImagePost ? '查看图文原图' : '播放本地视频', work.id, 'open-detail', 'video', true));
+    const audio = this.actionButton('播放音频', work.id, 'play-audio');
+    audio.disabled = !work.video_available;
+    if (audio.disabled) {
+      audio.textContent = isImagePost ? '图文暂无音轨' : '音频暂缺';
+      audio.title = '需要已保存的有声视频才能播放音频。';
+    }
+    actions.append(audio);
     actions.append(this.originalLink(detail?.work.url, work.url));
     const learned = this.actionButton('标为已学', work.id, 'toggle-learned');
     learned.classList.add('model-learned-toggle');
@@ -809,6 +826,7 @@ export class ModelMrPanel {
     source.className = 'model-detail-source';
     const listed = [...this.works, ...this.relatedWorks].find((work) => work.id === detail.work.id);
     source.append(this.originalLink(detail.work.url, listed?.url, '打开抖音原作品'));
+    if (detail.work.video_available) source.append(this.actionButton('播放音频', workId, 'play-audio'));
     const content = document.createElement('div');
     content.className = 'model-detail-content';
     if (tab === 'video') content.append(this.renderVideo(detail));

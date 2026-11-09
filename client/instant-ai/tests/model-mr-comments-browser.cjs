@@ -21,7 +21,7 @@ async function main(){
    const u=new URL(route.request().url()),p=u.pathname;requests.push(p);
    const json=x=>route.fulfill({contentType:'application/json',body:JSON.stringify(x)});
    if(p==='/')return route.fulfill({contentType:'text/html; charset=utf-8',body:'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/styles.css"><main></main><script type="module">import{ModelMrPanel}from"/ModelMrPanel.js";const p=new ModelMrPanel();document.querySelector("main").append(p.element);p.element.hidden=false;await p.refresh();window.ready=true;</script>'});
-   if(['/ModelMrPanel.js','/ModelMrComments.js','/api.js','/styles.css'].includes(p))return route.fulfill({contentType:p.endsWith('.css')?'text/css':'text/javascript',body:fs.readFileSync(path.join(compiled,p.slice(1)),'utf8')});
+   if(['/ModelMrPanel.js','/ModelMrAudioPlayer.js','/ModelMrComments.js','/api.js','/styles.css'].includes(p))return route.fulfill({contentType:p.endsWith('.css')?'text/css':'text/javascript',body:fs.readFileSync(path.join(compiled,p.slice(1)),'utf8')});
    if(p.endsWith('/status'))return json({available:true,counts:{works:1}});
    if(p.endsWith('/thoughts'))return json({categories:[]});
    if(p.endsWith('/chat/config'))return json({enabled:false,models:[]});

@@ -26,7 +26,7 @@ async function main() {
         const p = new URL(route.request().url()).pathname;
         const json = data => route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
         if (p === '/') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/styles.css"><div id="root"></div><script type="module">import {ModelMrPanel} from '/ModelMrPanel.js';const p=new ModelMrPanel();document.querySelector('#root').append(p.element);p.element.hidden=false;await p.refresh();window.ready=true;</script>` });
-        if (['/ModelMrPanel.js', '/ModelMrComments.js', '/api.js', '/styles.css'].includes(p)) return route.fulfill({ contentType: p.endsWith('.css') ? 'text/css' : 'text/javascript', body: fs.readFileSync(path.join(compiled, p.slice(1)), 'utf8') });
+        if (['/ModelMrPanel.js', '/ModelMrAudioPlayer.js', '/ModelMrComments.js', '/api.js', '/styles.css'].includes(p)) return route.fulfill({ contentType: p.endsWith('.css') ? 'text/css' : 'text/javascript', body: fs.readFileSync(path.join(compiled, p.slice(1)), 'utf8') });
         if (p.endsWith('/status')) return json({ available: true, counts: { works: 1, media: 0 } });
         if (p.endsWith('/chat/config')) return json({ enabled: false, models: [] });
         if (p.endsWith('/thoughts')) return json({ categories: [] });
