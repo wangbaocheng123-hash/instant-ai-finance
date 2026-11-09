@@ -75,6 +75,7 @@ class SunmaoCommunityTests(unittest.TestCase):
         last = self.size_resources[-1]
         self.assertEqual(last["sequence"], 6)
         self.assertEqual(last["id"], "wechat-xvttOA4B0nXX4hSd3_g-sA")
+        self.assertEqual(last["title"], "百变支架制作图纸")
         self.assertEqual(last["url"], "https://mp.weixin.qq.com/s/xvttOA4B0nXX4hSd3_g-sA")
         self.assertEqual(last["type"], "external")
 

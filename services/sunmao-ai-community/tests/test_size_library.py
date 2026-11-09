@@ -39,6 +39,7 @@ class SizeLibraryTests(unittest.TestCase):
         self.assertEqual(resources[0]["title"], "七代鲁班凳视频完整制作过程")
         self.assertEqual(resources[0]["type"], "external")
         self.assertEqual(resources[-1]["sequence"], 6)
+        self.assertEqual(resources[-1]["title"], "百变支架制作图纸")
         self.assertEqual(resources[-1]["url"], "https://mp.weixin.qq.com/s/xvttOA4B0nXX4hSd3_g-sA")
         with closing(sqlite3.connect(self.root / "community.sqlite3")) as connection:
             tables = {
