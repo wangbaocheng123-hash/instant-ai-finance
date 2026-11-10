@@ -283,6 +283,7 @@ export interface ModelMrThoughtWorks {
 
 export interface ModelMrWork {
   id: number;
+  sequence_number?: number | null;
   title: string;
   title_source?: 'source' | 'source_placeholder' | 'cover_ocr' | 'ai_video_original' | 'manual';
   title_confidence?: number | null;

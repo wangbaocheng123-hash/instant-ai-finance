@@ -228,6 +228,8 @@ class ModelMrClient:
             page = public_items[safe_offset : safe_offset + safe_limit]
             cleaned = [self._clean_snapshot_work(item) for item in page]
             total = len(public_items)
+            for index, item in enumerate(cleaned, start=safe_offset):
+                item["sequence_number"] = total - index
             return {
                 "items": cleaned,
                 "count": len(cleaned),
@@ -256,11 +258,15 @@ class ModelMrClient:
         source_total = source.get("total")
         try:
             total = max(len(cleaned_prefix), int(source_total))
+            known_total = total if type(source_total) is not bool and int(source_total) >= len(cleaned_prefix) else None
         except (TypeError, ValueError):
             total = len(cleaned_prefix)
+            known_total = total if len(cleaned_prefix) < source_limit else None
         prefix_may_continue = len(cleaned_prefix) >= source_limit and source_limit < 500
         if prefix_may_continue:
             total = max(total, safe_offset + len(cleaned) + 1)
+        for index, item in enumerate(cleaned, start=safe_offset):
+            item["sequence_number"] = known_total - index if known_total is not None else None
         return {
             "items": cleaned,
             "count": len(cleaned),
@@ -292,7 +298,7 @@ class ModelMrClient:
             detail["stock_mentions"] = self._clean_stock_mentions(stock_mentions, comment_id_map)
             return detail
         except ModelMrUnavailable:
-            self._require_snapshot()
+            snapshot = self._require_snapshot()
             detail_path = self._detail_path(safe_id)
             try:
                 value = json.loads(detail_path.read_text(encoding="utf-8"))
@@ -300,7 +306,24 @@ class ModelMrClient:
                 raise ModelMrUnavailable("这条作品的原文和评论资料尚未同步。") from error
             if not isinstance(value, dict):
                 raise ModelMrUnavailable("这条作品的资料格式不正确。")
-            return self._clean_snapshot_detail(value, safe_id)
+            detail = self._clean_snapshot_detail(value, safe_id)
+            detail["work"]["sequence_number"] = self._snapshot_work_numbers(snapshot).get(safe_id)
+            return detail
+
+    @staticmethod
+    def _snapshot_work_numbers(snapshot: dict[str, Any]) -> dict[int, int]:
+        # The index is maintained newest first by import/export. Count backwards
+        # over that whole index before filtering, never over a page or category.
+        works = [item for item in snapshot.get("works", []) if isinstance(item, dict)]
+        numbers = {}
+        for index, item in enumerate(works):
+            try:
+                work_id = int(item.get("id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if work_id > 0:
+                numbers[work_id] = len(works) - index
+        return numbers
 
     def save_title(self, work_id: int, title: str) -> dict[str, Any]:
         safe_id = self._safe_work_id(work_id)
@@ -1322,6 +1345,9 @@ class ModelMrClient:
             related = {safe_id, *(item["id"] for item in categories if item.get("parent_id") == safe_id)}
             items = [self._clean_snapshot_work(item) for item in works
                      if related.intersection(links.get(str(item["id"]), []))]
+            numbers = self._snapshot_work_numbers(snapshot)
+            for item in items:
+                item["sequence_number"] = numbers.get(item["id"])
         else:
             categories = [self._clean_thought(item) for item in source.get("categories", []) if isinstance(item, dict)]
             links_available = True

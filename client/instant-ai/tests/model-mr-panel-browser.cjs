@@ -19,7 +19,7 @@ async function main() {
       page.on('pageerror', error => errors.push(error.message));
       const categories = [{ id: 1, name: '行业主题', level: 1, parent_id: null, description: '分类回归样例', video_count: 30 },
         { id: 2, name: '科技总论与自主可控', level: 2, parent_id: 1, description: '已有关键词与关联作品', video_count: 30 }];
-      const works = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, title: `回归样例作品 ${i + 1}`, description: '', url: `https://www.douyin.com/video/${7000000000000000000n + BigInt(i + 1)}`, published_at: '2026-09-01', work_type: 'video', media_available: true, video_available: true, video_url: `/media/model-mr/works/${i + 1}/video`, image_count: 0, image_urls: [], has_video_text: true, has_interpretation: true, comment_count: 0, keywords: ['科技股', '长期研究'], keyword_revision: 'revision1', keyword_info: { categories: { '行业与板块': ['科技股'], '投资战略、战术与选股方法': ['长期研究'] }, keywords: ['科技股', '长期研究'] } }));
+      const works = Array.from({ length: 30 }, (_, i) => ({ id: i + 1, sequence_number: 30 - i, title: `回归样例作品 ${i + 1}`, description: '', url: `https://www.douyin.com/video/${7000000000000000000n + BigInt(i + 1)}`, published_at: '2026-09-01', work_type: 'video', media_available: true, video_available: true, video_url: `/media/model-mr/works/${i + 1}/video`, image_count: 0, image_urls: [], has_video_text: true, has_interpretation: true, comment_count: 0, keywords: ['科技股', '长期研究'], keyword_revision: 'revision1', keyword_info: { categories: { '行业与板块': ['科技股'], '投资战略、战术与选股方法': ['长期研究'] }, keywords: ['科技股', '长期研究'] } }));
       let keywordSaves = 0;
       await page.route('http://127.0.0.1:19846/**', async route => {
         const url = new URL(route.request().url());
@@ -55,6 +55,7 @@ async function main() {
       });
       await page.goto('http://127.0.0.1:19846/');
       await page.waitForFunction(() => window.ready);
+      assert.equal(await page.locator('.model-work-number').first().textContent(), '第 30 条');
       await page.locator('[data-model-tab="thoughts"]').click();
       assert(!requests.some(url => /thoughts\/\d+\/works/.test(url)), 'opening index must not load every category');
       await page.locator('[data-category-id="1"]').click();
@@ -63,9 +64,13 @@ async function main() {
       assert.equal(await page.locator('video').count(), 0, 'media must be click-to-load');
       await page.locator('[data-model-action="thought-more"]').click();
       await page.waitForFunction(() => document.querySelectorAll('.model-work-card').length === 30);
-      await page.locator('#modelMrThoughtQuery').fill('作品 30');
+      for (const [id, number] of [[30, '01'], [29, '02'], [21, '10'], [20, '11']]) {
+        assert.equal(await page.locator(`.model-work-card[data-work-id="${id}"] .model-work-number`).textContent(), `第 ${number} 条`);
+      }
+      await page.locator('#modelMrThoughtQuery').fill('作品 20');
       await page.locator('#modelMrThoughtSearch button').click();
       await page.waitForFunction(() => document.querySelectorAll('.model-work-card').length === 1);
+      assert.equal(await page.locator('.model-work-number').textContent(), '第 11 条', 'filter must preserve the library number');
       await page.locator('[data-model-action="open-detail"][data-detail-tab="keywords"]').click();
       await page.locator('.model-keyword-panel').waitFor();
       assert.match(await page.locator('.model-keyword-panel').innerText(), /行业与板块/);

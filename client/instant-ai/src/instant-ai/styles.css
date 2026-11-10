@@ -313,6 +313,7 @@ img { display: block; }
 .model-work-card h3 { margin: 6px 0 8px; color: #172033; font-size: 16px; line-height: 1.5; }
 .model-work-card p { margin: 7px 0 0; color: #667085; font-size: 12px; line-height: 1.6; }
 .model-work-card-full { padding: 14px; }
+.model-work-number { display: inline-flex; margin-bottom: 8px; padding: 4px 9px; border-radius: 6px; background: #eeeafe; color: #5f43c7; font-size: 12px; font-weight: 750; font-variant-numeric: tabular-nums; }
 .model-work-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 10px; }
 .model-work-heading h3 { margin-top: 0; }
 .model-work-heading time { padding-top: 3px; white-space: nowrap; }

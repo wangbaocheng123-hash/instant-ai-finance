@@ -685,6 +685,14 @@ export class ModelMrPanel {
     const card = document.createElement('article');
     card.className = 'model-work-card model-work-card-full';
     card.dataset.workId = String(work.id);
+    const sequence = work.sequence_number ?? this.works.find(item => item.id === work.id)?.sequence_number;
+    if (Number.isSafeInteger(sequence) && sequence! > 0) {
+      const number = document.createElement('span');
+      number.className = 'model-work-number';
+      number.textContent = `第 ${String(sequence).padStart(2, '0')} 条`;
+      number.title = '按作品时间从早到晚编号';
+      card.append(number);
+    }
     card.classList.toggle('is-learning-target', this.learningTarget === work.id);
     const heading = document.createElement('div');
     heading.className = 'model-work-heading';
