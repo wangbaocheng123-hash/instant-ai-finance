@@ -12,6 +12,8 @@ const DEVICE_LABELS = {
   bot: "自动程序",
 };
 const NUMBER_FORMAT = new Intl.NumberFormat("zh-CN");
+const ANALYTICS_VISITOR_STORAGE_KEY = "sunmao.analytics.visitor.v1";
+const ANALYTICS_VISITOR_TOKEN_PATTERN = /^[A-Za-z0-9_-]{24,96}$/;
 const TIME_FORMAT = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai",
   month: "numeric",
@@ -41,6 +43,24 @@ function sourceLabel(value) {
 
 function setText(id, value) {
   document.querySelector(`#${id}`).textContent = value;
+}
+
+function storedAnalyticsVisitorToken() {
+  try {
+    const value = window.localStorage.getItem(ANALYTICS_VISITOR_STORAGE_KEY) || "";
+    return ANALYTICS_VISITOR_TOKEN_PATTERN.test(value) ? value : "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+function storeAnalyticsVisitorToken(value) {
+  if (!ANALYTICS_VISITOR_TOKEN_PATTERN.test(value || "")) return;
+  try {
+    window.localStorage.setItem(ANALYTICS_VISITOR_STORAGE_KEY, value);
+  } catch (_error) {
+    // The one-year first-party cookie remains the primary identity.
+  }
 }
 
 function renderSummary(summary) {
@@ -201,13 +221,16 @@ async function login(event) {
   button.textContent = "正在验证…";
   status.textContent = "";
   try {
+    const loginPayload = {
+      username: form.elements.username.value,
+      password: form.elements.password.value,
+    };
+    const visitorToken = storedAnalyticsVisitorToken();
+    if (visitorToken) loginPayload.visitor_token = visitorToken;
     const response = await fetch("/api/admin/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: form.elements.username.value,
-        password: form.elements.password.value,
-      }),
+      body: JSON.stringify(loginPayload),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -215,6 +238,7 @@ async function login(event) {
       if (payload.error === "invalid_credentials") throw new Error("管理账号或密码不正确。");
       throw new Error("暂时无法登录，请稍后重试。");
     }
+    storeAnalyticsVisitorToken(payload.visitor_token);
     form.reset();
     showOnly("dashboardView");
     await loadDashboard();

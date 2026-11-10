@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 import threading
 import time
@@ -15,6 +16,8 @@ from zoneinfo import ZoneInfo
 ANALYTICS_RETENTION_DAYS = 365
 VALID_ANALYTICS_VIEWS = frozenset({"exchange", "sizes", "joints"})
 BEIJING_TIME = ZoneInfo("Asia/Shanghai")
+ANALYTICS_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{24,96}")
+OWNER_VISITOR_LABEL = "主理人"
 
 
 def classify_device(user_agent: Any) -> str:
@@ -112,6 +115,11 @@ class CommunityAnalyticsStore:
                 CREATE INDEX IF NOT EXISTS analytics_sessions_last_seen
                 ON analytics_sessions (last_seen_epoch);
 
+                CREATE TABLE IF NOT EXISTS analytics_owner_visitors (
+                    visitor_hash TEXT PRIMARY KEY,
+                    linked_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS analytics_daily (
                     day TEXT PRIMARY KEY,
                     visits INTEGER NOT NULL DEFAULT 0,
@@ -145,6 +153,38 @@ class CommunityAnalyticsStore:
             current_epoch = int(time.time())
             self._purge_expired(connection, current_epoch)
             self._last_purge_epoch = current_epoch
+
+    def mark_owner(
+        self,
+        visitor_token: str,
+        *,
+        now_epoch: int | None = None,
+    ) -> None:
+        if (
+            not isinstance(visitor_token, str)
+            or ANALYTICS_TOKEN_PATTERN.fullmatch(visitor_token) is None
+        ):
+            raise ValueError("invalid_analytics_visitor")
+        visitor_hash = _token_hash(visitor_token)
+        current_epoch = int(time.time()) if now_epoch is None else int(now_epoch)
+        linked_at = datetime.fromtimestamp(current_epoch, UTC).isoformat()
+        with self._write_lock:
+            with closing(self._connect()) as connection, connection:
+                connection.execute(
+                    """
+                    INSERT INTO analytics_owner_visitors (visitor_hash, linked_at)
+                    VALUES (?, ?)
+                    ON CONFLICT(visitor_hash) DO UPDATE SET linked_at = excluded.linked_at
+                    """,
+                    (visitor_hash, linked_at),
+                )
+                connection.execute(
+                    """
+                    UPDATE analytics_visitors SET visitor_label = ?
+                    WHERE visitor_hash = ?
+                    """,
+                    (OWNER_VISITOR_LABEL, visitor_hash),
+                )
 
     @staticmethod
     def _day_for_epoch(now_epoch: int) -> str:
@@ -182,7 +222,6 @@ class CommunityAnalyticsStore:
             raise ValueError("invalid_analytics_view")
         visitor_hash = _token_hash(visitor_token)
         session_hash = _token_hash(session_token)
-        visitor_label = f"木友-{visitor_hash[:6].upper()}"
         event_epoch = int(time.time()) if now_epoch is None else int(now_epoch)
         event_time = datetime.fromtimestamp(event_epoch, UTC).isoformat()
         event_day = self._day_for_epoch(event_epoch)
@@ -195,6 +234,15 @@ class CommunityAnalyticsStore:
                     "SELECT 1 FROM analytics_visitors WHERE visitor_hash = ?",
                     (visitor_hash,),
                 ).fetchone() is not None
+                owner_visitor = connection.execute(
+                    "SELECT 1 FROM analytics_owner_visitors WHERE visitor_hash = ?",
+                    (visitor_hash,),
+                ).fetchone() is not None
+                visitor_label = (
+                    OWNER_VISITOR_LABEL
+                    if owner_visitor
+                    else f"木友-{visitor_hash[:6].upper()}"
+                )
                 session_exists = connection.execute(
                     "SELECT 1 FROM analytics_sessions WHERE session_hash = ?",
                     (session_hash,),
@@ -208,7 +256,7 @@ class CommunityAnalyticsStore:
                         UPDATE analytics_visitors
                         SET last_seen_at = ?, last_seen_epoch = ?,
                             visits = visits + ?, pageviews = pageviews + 1,
-                            last_view = ?, device_type = ?
+                            last_view = ?, device_type = ?, visitor_label = ?
                         WHERE visitor_hash = ?
                         """,
                         (
@@ -217,6 +265,7 @@ class CommunityAnalyticsStore:
                             is_new_session,
                             view,
                             device,
+                            visitor_label,
                             visitor_hash,
                         ),
                     )

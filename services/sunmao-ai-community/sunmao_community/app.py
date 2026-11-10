@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import parse_qs, urlsplit
 
-from .analytics import CommunityAnalyticsStore, VALID_ANALYTICS_VIEWS
+from .analytics import (
+    CommunityAnalyticsStore,
+    OWNER_VISITOR_LABEL,
+    VALID_ANALYTICS_VIEWS,
+)
 from .auth import ADMIN_SESSION_SECONDS, AdminSessionManager
 from .size_library import ASSET_ID_PATTERN, SizeLibraryStore
 from .store import (
@@ -516,11 +520,21 @@ class CommunityRequestHandler(BaseHTTPRequestHandler):
             return
         if (
             not isinstance(payload, dict)
-            or set(payload) != {"username", "password"}
+            or set(payload) not in (
+                {"username", "password"},
+                {"username", "password", "visitor_token"},
+            )
             or not isinstance(payload.get("username"), str)
             or not isinstance(payload.get("password"), str)
             or len(payload["username"]) > 64
             or len(payload["password"]) > 256
+            or (
+                "visitor_token" in payload
+                and (
+                    not isinstance(payload["visitor_token"], str)
+                    or COOKIE_TOKEN_PATTERN.fullmatch(payload["visitor_token"]) is None
+                )
+            )
         ):
             self._json({"error": "invalid_request"}, HTTPStatus.BAD_REQUEST)
             return
@@ -538,15 +552,38 @@ class CommunityRequestHandler(BaseHTTPRequestHandler):
         if session_token is None:
             self._json({"error": "invalid_credentials"}, HTTPStatus.UNAUTHORIZED)
             return
+        visitor_token = (
+            self._cookie_value(VISITOR_COOKIE)
+            or payload.get("visitor_token")
+            or secrets.token_urlsafe(24)
+        )
+        try:
+            self.server.analytics_store.mark_owner(visitor_token)
+        except (OSError, sqlite3.Error, ValueError):
+            self.server.admin_auth.logout(session_token)
+            self._json(
+                {"error": "analytics_unavailable"},
+                HTTPStatus.SERVICE_UNAVAILABLE,
+            )
+            return
         self._json(
-            {"authenticated": True},
+            {
+                "authenticated": True,
+                "visitor_token": visitor_token,
+                "visitor_label": OWNER_VISITOR_LABEL,
+            },
             cookies=[
                 self._cookie_header(
                     ADMIN_COOKIE,
                     session_token,
                     max_age=ADMIN_SESSION_SECONDS,
                     same_site="Strict",
-                )
+                ),
+                self._cookie_header(
+                    VISITOR_COOKIE,
+                    visitor_token,
+                    max_age=ANALYTICS_VISITOR_SECONDS,
+                ),
             ],
         )
 

@@ -71,16 +71,39 @@ class CommunityAnalyticsTests(unittest.TestCase):
         )
 
     def test_analytics_schema_does_not_store_ip_or_raw_user_agent(self) -> None:
-        CommunityAnalyticsStore(self.database)
+        owner_token = "owner-token-persistence-1234567890"
+        store = CommunityAnalyticsStore(self.database)
+        store.mark_owner(owner_token)
         with closing(sqlite3.connect(self.database)) as connection:
             columns = {
                 row[1]
-                for table in ("analytics_visitors", "analytics_sessions")
+                for table in (
+                    "analytics_visitors",
+                    "analytics_sessions",
+                    "analytics_owner_visitors",
+                )
                 for row in connection.execute(f"PRAGMA table_info({table})")
             }
+            owner_row = connection.execute(
+                "SELECT visitor_hash, linked_at FROM analytics_owner_visitors"
+            ).fetchone()
         self.assertNotIn("ip", columns)
         self.assertNotIn("ip_address", columns)
         self.assertNotIn("user_agent", columns)
+        self.assertIsNotNone(owner_row)
+        self.assertEqual(len(owner_row[0]), 64)
+        self.assertNotIn(owner_token, owner_row)
+
+        restarted_store = CommunityAnalyticsStore(self.database)
+        restarted_store.record_pageview(
+            visitor_token=owner_token,
+            session_token="owner-session-persistence-1234567",
+            view="sizes",
+        )
+        self.assertEqual(
+            restarted_store.dashboard()["recent_visitors"][0]["visitor_label"],
+            "主理人",
+        )
 
     def test_password_hash_and_admin_session_expiry(self) -> None:
         encoded = create_password_hash(
@@ -192,11 +215,15 @@ class CommunityAnalyticsHTTPTests(unittest.TestCase):
             "POST",
             "/api/admin/login",
             {"username": self.username, "password": self.password},
+            cookie=visitor_cookies,
         )
         self.assertEqual(status, 200)
         self.assertTrue(payload["authenticated"])
+        self.assertEqual(payload["visitor_label"], "主理人")
+        self.assertEqual(payload["visitor_token"], visitor_token)
         admin_cookie = self.cookie_header(headers)
         self.assertIn("sunmao_admin_session=", admin_cookie)
+        self.assertIn("sunmao_visitor=", admin_cookie)
 
         status, _headers, payload = self.request(
             "GET", "/api/admin/analytics?days=7", cookie=admin_cookie
@@ -205,7 +232,35 @@ class CommunityAnalyticsHTTPTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["total_visitors"], 1)
         self.assertEqual(payload["summary"]["total_visits"], 2)
         self.assertEqual(payload["summary"]["total_pageviews"], 3)
+        self.assertEqual(payload["recent_visitors"][0]["visitor_label"], "主理人")
         self.assertEqual(payload["recent_visitors"][0]["referrer_host"], "www.baidu.com")
+
+    def test_admin_login_marks_future_browser_pageviews_as_owner(self) -> None:
+        status, headers, payload = self.request(
+            "POST",
+            "/api/admin/login",
+            {
+                "username": self.username,
+                "password": self.password,
+                "visitor_token": "owner-browser-token-1234567890",
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["visitor_label"], "主理人")
+        owner_cookies = self.cookie_header(headers)
+
+        status, _headers, _payload = self.request(
+            "POST",
+            "/api/analytics/pageview",
+            {"view": "sizes", "referrer": ""},
+            cookie=owner_cookies,
+        )
+        self.assertEqual(status, 202)
+        status, _headers, dashboard = self.request(
+            "GET", "/api/admin/analytics?days=7", cookie=owner_cookies
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(dashboard["recent_visitors"][0]["visitor_label"], "主理人")
 
     def test_pageview_rejects_invalid_browser_visitor_token(self) -> None:
         status, _headers, payload = self.request(
@@ -217,13 +272,24 @@ class CommunityAnalyticsHTTPTests(unittest.TestCase):
         self.assertEqual(payload["error"], "invalid_analytics_event")
 
     def test_admin_login_rejects_another_username(self) -> None:
+        self.server.analytics_store.record_pageview(
+            visitor_token="anonymous-browser-token-1234567",
+            session_token="anonymous-session-token-1234567",
+            view="exchange",
+        )
         status, _headers, payload = self.request(
             "POST",
             "/api/admin/login",
-            {"username": "another-owner", "password": self.password},
+            {
+                "username": "another-owner",
+                "password": self.password,
+                "visitor_token": "anonymous-browser-token-1234567",
+            },
         )
         self.assertEqual(status, 401)
         self.assertEqual(payload["error"], "invalid_credentials")
+        visitor = self.server.analytics_store.dashboard()["recent_visitors"][0]
+        self.assertTrue(visitor["visitor_label"].startswith("木友-"))
 
     def test_admin_assets_are_not_indexable(self) -> None:
         connection = http.client.HTTPConnection(
