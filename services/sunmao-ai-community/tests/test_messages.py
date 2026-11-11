@@ -114,12 +114,16 @@ class CommunityMessageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             create_http_server(host="0.0.0.0", port=0, database_path=self.root / "bad.sqlite3")
 
-    def test_only_the_two_exact_public_hosts_may_post(self) -> None:
+    def test_only_the_exact_community_hosts_may_post(self) -> None:
         cases = (
             ("amuyeye.com", True),
+            ("sunmao.grandpaamu.com", True),
             ("xn--4pv19va7008a.com", True),
             ("mcp.amuyeye.com", False),
             ("www.amuyeye.com", False),
+            ("mcp.grandpaamu.com", False),
+            ("collector.grandpaamu.com", False),
+            ("grandpaamu.com", False),
         )
         for hostname, expected in cases:
             with self.subTest(hostname=hostname):

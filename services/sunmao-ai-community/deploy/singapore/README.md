@@ -6,7 +6,7 @@
 
 新加坡共享`/etc/caddy/Caddyfile`由时变罗盘维护，2026-11-07更新曾移除其中的社区站点。社区现在独立保存为`/etc/caddy/sunmao-community.caddy`，由既有包装文件`/etc/caddy/Caddyfile.instant-ai`追加精确import加载；保持包装文件原有两个import。不要把社区块再次写回共享文件或覆盖其MCP块。
 
-一次性恢复脚本`restore-root-entry.sh`和`sunmao-community-root.Caddyfile.example`放在同一暂存目录，由已授权服务器连接运行。脚本要求现有包装布局、健康隧道及Caddy 2.11+，遇到不同的社区配置或共享文件已有根站点会停止；新建前备份、配置校验，失败恢复包装文件并保留失败配置，重复执行无额外变更。
+迁移候选 `sunmao.grandpaamu.com`沿用同一条 18818 隧道。在社区候选通过独立发布流程、准备启用新域名时，将 `restore-root-entry.sh` 与 `sunmao-community-grandpaamu.Caddyfile.example` 放在同一暂存目录，由已授权服务器连接执行。脚本核验隧道返回的服务身份，备份并校验包装配置，只追加 `import /etc/caddy/sunmao-community-grandpaamu.caddy`。原 `sunmao-community-root.Caddyfile.example` 作为旧入口和回滚的参考。安装后用普通公网访问 `https://sunmao.grandpaamu.com/health/version`，与中文入口比较完整提交号，再核验公开页面及未授权后台请求。
 
 现场Caddy关闭admin API，默认`systemctl reload caddy`因此不可用。Caddy 2.11+在`caddy run --config`且没有API改配的条件下支持SIGUSR1平滑重读原文件；本次用`systemctl kill --kill-whom=main --signal=USR1 caddy.service`完成，Caddy InvocationID未变。官方说明：[命令与信号](https://caddyserver.com/docs/command-line#signals)。不能对未确认版本或启动模式的进程盲发信号。
 

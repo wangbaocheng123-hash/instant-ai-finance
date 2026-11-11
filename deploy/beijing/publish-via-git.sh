@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
 readonly EXPECTED_REPOSITORY="wangbaocheng123-hash/instant-ai-finance.git"
-readonly VERSION_URL="https://collector.amuyeye.com/health/version"
+readonly VERSION_URL="https://collector.grandpaamu.com/health/version"
 
 fail() {
   printf 'BEIJING_GIT_PUBLISH_FAILED: %s\n' "$*" >&2
@@ -53,14 +53,17 @@ if git ls-remote --exit-code --heads origin beijing-production >/dev/null 2>&1; 
   git merge-base --is-ancestor "${current_production}" "${target}" || fail "生产分支不能安全快进到目标提交"
 fi
 
+payload="$(fetch_version_payload)"
+printf '%s' "${payload}" | python3 -c 'import json,sys; value=json.load(sys.stdin); assert value["service"]=="blogger-collector" and value["status"]=="ok"' 2>/dev/null || fail "新域名尚未返回北京采集器版本，未推进生产分支：${VERSION_URL}"
+
 git push origin "${target}:refs/heads/beijing-production"
 
 printf 'BEIJING_ON_DEMAND_TRIGGER_REQUIRED\n'
-printf 'remote_command=systemctl start --no-block blogger-collector-git-deploy.service\n'
+printf 'remote_command=sudo -n /usr/local/sbin/beijing-suite-publish\n'
 
 for attempt in $(seq 1 90); do
   payload="$(fetch_version_payload)"
-  deployed="$(printf '%s' "${payload}" | python3 -c 'import json,sys; value=json.load(sys.stdin); required={"service","status","version","repository_revision","deployed_time"}; assert set(value)==required and value["status"]=="ok"; print(value["repository_revision"])' 2>/dev/null || true)"
+  deployed="$(printf '%s' "${payload}" | python3 -c 'import json,sys; value=json.load(sys.stdin); required={"service","status","version","repository_revision","deployed_time"}; assert set(value)==required and value["service"]=="blogger-collector" and value["status"]=="ok"; print(value["repository_revision"])' 2>/dev/null || true)"
   if [[ "${deployed}" == "${target}" ]]; then
     printf 'BEIJING_GIT_PUBLISH_OK\n'
     printf 'previous=%s\n' "${current_production:-none}"

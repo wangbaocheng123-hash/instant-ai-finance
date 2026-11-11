@@ -3,7 +3,7 @@
 # downloader and the full blogger collector without merging their runtimes or
 # data. The model-downloader login remains the only owner login.
 
-collector.amuyeye.com {
+collector.grandpaamu.com {
     encode zstd gzip
 
     @collector_without_slash path /collector

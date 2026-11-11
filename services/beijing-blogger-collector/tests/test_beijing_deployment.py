@@ -111,7 +111,7 @@ class BeijingDeploymentContractTests(unittest.TestCase):
 
     def test_unified_domain_reuses_model_login_and_keeps_both_backends_loopback(self) -> None:
         caddy = self.read("collector.Caddyfile.example")
-        self.assertIn("collector.amuyeye.com", caddy)
+        self.assertIn("collector.grandpaamu.com {", caddy)
         self.assertIn("forward_auth 127.0.0.1:8787", caddy)
         self.assertIn("reverse_proxy 127.0.0.1:18797", caddy)
         self.assertIn("reverse_proxy 127.0.0.1:8787", caddy)
@@ -131,10 +131,10 @@ class BeijingDeploymentContractTests(unittest.TestCase):
 
     def test_collector_caddy_apply_script_is_scoped_and_recoverable(self) -> None:
         script = self.read("apply-collector-caddy.sh")
-        self.assertIn("collector.amuyeye.com {", script)
-        self.assertIn('TEMPLATE="${SOURCE_DIR}/collector.Caddyfile.example"', script)
+        self.assertIn("SITE='/etc/caddy/collector-grandpaamu.caddy'", script)
+        self.assertIn('TEMPLATE="$SOURCE_DIR/collector.Caddyfile.example"', script)
         self.assertNotIn("/opt/blogger-agent/repository", script)
-        self.assertIn("site_block_count", script)
+        self.assertIn("duplicate collector import", script)
         self.assertIn("caddy validate --adapter caddyfile", script)
         self.assertIn("restore_previous_config", script)
         self.assertIn("systemctl reload caddy.service", script)

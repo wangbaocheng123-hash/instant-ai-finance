@@ -1,82 +1,64 @@
 #!/usr/bin/env bash
+# Install the exact Beijing entry after confirming this domain can use Beijing ingress.
 set -Eeuo pipefail
 
 readonly SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly TARGET='/etc/caddy/Caddyfile'
-readonly TEMPLATE="${SOURCE_DIR}/collector.Caddyfile.example"
+readonly SITE='/etc/caddy/collector-grandpaamu.caddy'
+readonly IMPORT="import $SITE"
+readonly TEMPLATE="$SOURCE_DIR/collector.Caddyfile.example"
 readonly BACKUP_DIR='/etc/caddy/backups'
 
-[[ "$(id -u)" -eq 0 ]] || {
-  printf '%s\n' 'collector_caddy_error=must_run_as_root' >&2
-  exit 1
-}
-[[ -f "${TARGET}" && -f "${TEMPLATE}" ]] || {
-  printf '%s\n' 'collector_caddy_error=required_file_missing' >&2
-  exit 1
-}
+fail() { printf 'COLLECTOR_ENTRY_FAILED: %s\n' "$*" >&2; exit 1; }
+[[ "$(id -u)" == 0 ]] || fail 'root required'
+[[ -f "$TARGET" && ! -L "$TARGET" && -f "$TEMPLATE" && ! -L "$SITE" ]] || fail 'unexpected Caddy layout'
+if [[ -e "$SITE" ]]; then
+    cmp -s "$TEMPLATE" "$SITE" || fail 'existing collector site differs; review first'
+fi
+import_count="$(grep -Fxc "$IMPORT" "$TARGET" || true)"
+[[ "$import_count" -le 1 ]] || fail 'duplicate collector import'
+if [[ "$import_count" == 1 ]]; then
+    [[ -f "$SITE" ]] || fail 'import exists without the collector site file'
+    caddy validate --adapter caddyfile --config "$TARGET"
+    printf 'COLLECTOR_ENTRY_ALREADY_INSTALLED\n'
+    exit 0
+fi
 
-install -d -o root -g root -m 0750 "${BACKUP_DIR}"
-readonly STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-readonly BACKUP="${BACKUP_DIR}/Caddyfile.${STAMP}"
-readonly STAGED="$(mktemp /etc/caddy/.Caddyfile.collector.XXXXXX)"
-
+curl --fail --silent --show-error --max-time 8 http://127.0.0.1:18797/health >/dev/null
+[[ -d "$BACKUP_DIR" ]] || install -d -o root -g root -m 0700 "$BACKUP_DIR"
+backup="$(mktemp -d "$BACKUP_DIR/collector-entry.XXXXXX")"
+cp --preserve=mode,ownership,timestamps -- "$TARGET" "$backup/Caddyfile"
+staged="$(mktemp /etc/caddy/.Caddyfile.collector.XXXXXX)"
+site_created=false
+target_changed=false
 restore_previous_config() {
-  if [[ -f "${BACKUP}" ]]; then
-    cp --preserve=mode,ownership,timestamps -- "${BACKUP}" "${TARGET}"
-    caddy validate --adapter caddyfile --config "${TARGET}" >/dev/null
-    systemctl reload caddy.service
-  fi
+    local result=$?
+    trap - ERR
+    if [[ "$target_changed" == true ]]; then
+        cp --preserve=mode,ownership,timestamps -- "$backup/Caddyfile" "$TARGET" || exit "$result"
+        caddy validate --adapter caddyfile --config "$TARGET" && systemctl reload caddy.service || true
+    fi
+    if [[ "$site_created" == true ]]; then
+        mv -- "$SITE" "$backup/failed-collector-grandpaamu.caddy" || true
+    fi
+    printf 'COLLECTOR_ENTRY_FAILED backup=%s\n' "$backup" >&2
+    exit "$result"
 }
+trap 'rm -f -- "$staged"' EXIT
+trap restore_previous_config ERR
 
-cleanup() {
-  rm -f -- "${STAGED}"
-}
-
-trap cleanup EXIT
-trap 'restore_previous_config' ERR
-
-cp --preserve=mode,ownership,timestamps -- "${TARGET}" "${BACKUP}"
-
-python3 - "${TARGET}" "${TEMPLATE}" "${STAGED}" <<'PY'
-from pathlib import Path
-import sys
-
-target_path, template_path, staged_path = map(Path, sys.argv[1:])
-target = target_path.read_text(encoding="utf-8")
-template = template_path.read_text(encoding="utf-8").strip() + "\n"
-marker = "collector.amuyeye.com {"
-
-start = target.find(marker)
-if start < 0 or target.find(marker, start + len(marker)) >= 0:
-    raise SystemExit("collector_caddy_error=site_block_count")
-
-depth = 0
-end = None
-for index in range(start, len(target)):
-    character = target[index]
-    if character == "{":
-        depth += 1
-    elif character == "}":
-        depth -= 1
-        if depth == 0:
-            end = index + 1
-            break
-if end is None:
-    raise SystemExit("collector_caddy_error=unterminated_site_block")
-
-prefix = target[:start].rstrip()
-suffix = target[end:].lstrip()
-parts = [part for part in (prefix, template.rstrip(), suffix.rstrip()) if part]
-Path(staged_path).write_text("\n\n".join(parts) + "\n", encoding="utf-8")
-PY
-
-chown --reference="${TARGET}" "${STAGED}"
-chmod --reference="${TARGET}" "${STAGED}"
-caddy fmt --overwrite "${STAGED}" >/dev/null
-caddy validate --adapter caddyfile --config "${STAGED}" >/dev/null
-mv -f -- "${STAGED}" "${TARGET}"
+if [[ ! -e "$SITE" ]]; then
+    site_created=true
+    install -o root -g root -m 0644 "$TEMPLATE" "$SITE"
+fi
+{ cat -- "$backup/Caddyfile"; printf '\n%s\n' "$IMPORT"; } >"$staged"
+chown --reference="$TARGET" "$staged"
+chmod --reference="$TARGET" "$staged"
+caddy validate --adapter caddyfile --config "$staged"
+cmp -s "$backup/Caddyfile" "$TARGET"
+mv -- "$staged" "$TARGET"
+target_changed=true
 systemctl reload caddy.service
-[[ "$(systemctl is-active caddy.service)" == 'active' ]]
-
-printf '%s\n' 'collector_caddy_applied=true'
-printf 'collector_caddy_backup=%s\n' "${BACKUP}"
+systemctl is-active --quiet caddy.service
+trap - ERR
+printf 'COLLECTOR_ENTRY_INSTALLED backup=%s\n' "$backup"

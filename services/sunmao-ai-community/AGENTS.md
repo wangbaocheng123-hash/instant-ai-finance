@@ -6,7 +6,7 @@
 
 - 所有者于2026-11-09明确选择已备案的`阿木爷爷.com`为社区正式入口；电脑端与新加坡云端均以`https://xn--4pv19va7008a.com/health/version`返回的完整`repository_revision`验收目标提交。发布脚本先核对中文公网服务就绪，失败时在推进生产分支前停止，不能只凭Git推送或定向访问成功宣称上线。
 - 中文原记录`@ A 47.93.214.76`已于2026-11-09 17:14从暂停恢复为启用，普通公网完整版本/资料/图片/后台保护及右侧浏览器验收通过。以后先核对真实记录状态，不新增重复项；个别设备缓存未过期不能误判服务已丢失。英文`amuyeye.com`仍在备案申请中，本轮不改其DNS、不接入北京、不把其恢复作为中文任务依赖。永久不得影响`mcp.amuyeye.com`或添加通配符。
-- 新加坡英文站点由`/etc/caddy/Caddyfile.instant-ai`独立import `/etc/caddy/sunmao-community.caddy`，不要写回会被时变罗盘更新的共享Caddyfile。关闭admin端口时，现场Caddy 2.11+用SIGUSR1平滑加载；操作手册见`deploy/singapore/README.md`。
+- 旧英文根站点由`/etc/caddy/Caddyfile.instant-ai`独立 import `/etc/caddy/sunmao-community.caddy`。新英文候选 `sunmao.grandpaamu.com`使用另一个精确 import，仍经原隧道访问北京社区。关闭 admin 端口时，现场 Caddy 2.11+ 用 SIGUSR1 平滑加载，详见`deploy/singapore/README.md`。
 - 沿用既有新加坡`/home/compassdev/bin/beijing-admin`，在北京执行一次`sudo -n systemctl start --no-block sunmao-community-git-deploy.service`。不得新建定时轮询，不得调用采集套件发布器。普通修改仍停在`main`，不触发生产发布。
 
 ## 接到所有者从手机或新加坡云端 Codex 提供的新资料时

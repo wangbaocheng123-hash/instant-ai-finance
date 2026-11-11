@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
 readonly EXPECTED_REPOSITORY="wangbaocheng123-hash/instant-ai-finance.git"
-readonly VERSION_URL="https://collector.amuyeye.com/health/version"
+readonly VERSION_URL="https://collector.grandpaamu.com/health/version"
 
 fail() {
   printf 'BEIJING_CHANNEL_NOT_READY: %s\n' "$*" >&2

@@ -34,7 +34,8 @@ WEB_DIR = ROOT_DIR / "web"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 18808
 MAX_REQUEST_BODY_BYTES = 8 * 1024
-PUBLIC_HOSTS = frozenset({"amuyeye.com", "xn--4pv19va7008a.com"})
+# Keep the exact legacy root for rollback until its gateway is retired.
+PUBLIC_HOSTS = frozenset({"sunmao.grandpaamu.com", "amuyeye.com", "xn--4pv19va7008a.com"})
 VISITOR_COOKIE = "sunmao_visitor"
 VISIT_SESSION_COOKIE = "sunmao_visit_session"
 ADMIN_COOKIE = "sunmao_admin_session"

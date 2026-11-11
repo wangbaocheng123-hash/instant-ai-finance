@@ -97,6 +97,19 @@ class IndependentDeploymentContractTests(unittest.TestCase):
         self.assertNotIn("refs/heads/beijing-production", script)
         self.assertNotIn("blogger-collector-git-deploy.service", script)
 
+    def test_new_english_entry_uses_an_independent_import_and_original_tunnel(self) -> None:
+        gateway = PROJECT_ROOT / "deploy" / "singapore"
+        caddy = (gateway / "sunmao-community-grandpaamu.Caddyfile.example").read_text(encoding="utf-8")
+        installer = (gateway / "restore-root-entry.sh").read_text(encoding="utf-8")
+        self.assertIn("sunmao.grandpaamu.com {", caddy)
+        self.assertIn("reverse_proxy 127.0.0.1:18818", caddy)
+        self.assertNotIn("*.grandpaamu.com", caddy)
+        self.assertNotIn("mcp.grandpaamu.com", caddy)
+        self.assertIn("import /etc/caddy/sunmao-community-grandpaamu.caddy", installer)
+        self.assertIn('cmp -s "$BACKUP/Caddyfile.instant-ai" "$WRAPPER"', installer)
+        self.assertLess(installer.index('trap rollback ERR'), installer.index('install -o root -g root -m 0644 "$SOURCE" "$SITE"'))
+        self.assertNotIn("--resolve", installer)
+
     def test_installer_keeps_collector_running_and_adds_no_timer(self) -> None:
         installer = self.read("install-independent-service.sh")
         self.assertIn("blogger-collector.service", installer)
