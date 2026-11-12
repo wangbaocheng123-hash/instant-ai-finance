@@ -647,6 +647,35 @@ class ModelMrClient:
         mime_type = mimetypes.guess_type(target.name)[0] or "video/mp4"
         return target, mime_type
 
+    def audio_queue(self, start_id: int) -> list[dict[str, Any]]:
+        """Private internal media references, oldest-to-newest from a selected work.
+
+        Read index metadata only; no transcripts/comments, ASR or source fetch.
+        The returned paths must never be serialized in an application response.
+        """
+        safe_id = self._safe_work_id(start_id)
+        snapshot = self._require_snapshot()
+        works = [item for item in snapshot["works"] if isinstance(item, dict)]
+        numbers = self._snapshot_work_numbers(snapshot)
+        position = next((index for index, item in enumerate(works) if int(item.get("id") or 0) == safe_id), None)
+        if position is None:
+            raise ModelMrWorkNotFound("这条作品不在当前资料库中。")
+        root = self.media_root.resolve()
+        result = []
+        for item in reversed(works[:position + 1]):
+            work = self._clean_snapshot_work(item)
+            filename = str(work.get("media_file") or "")
+            if not work["video_available"] or not filename:
+                continue
+            source = (root / filename).resolve()
+            if not source.is_relative_to(root) or not source.is_file():
+                continue
+            result.append({"id": work["id"], "title": work["title"], "published_at": work["published_at"],
+                           "sequence_number": numbers[work["id"]], "source": source})
+        if not result:
+            raise ModelMrUnavailable("所选作品及后续作品暂没有可播放的本地音轨。")
+        return result
+
     def image_path(self, work_id: int, ordinal: int) -> tuple[Path, str] | None:
         safe_id = self._safe_work_id(work_id)
         try:

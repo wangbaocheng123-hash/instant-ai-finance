@@ -45,6 +45,8 @@ from .watch_events import list_watch_events, refresh_watch_events, sync_watch_ev
 from .future_events import supply_future_events
 from .model_mr import MODEL_MR, ModelMrUnavailable, ModelMrWorkNotFound
 from .model_mr_audio import ModelMrAudioUnavailable, prepare_model_mr_audio
+from .model_mr_audio_queue import MODEL_MR_AUDIO_QUEUES
+from .model_mr_speech import ModelMrSpeechUnavailable
 from .model_mr_learning import ModelMrLearningConflict
 from .model_mr_transfer import MODEL_MR_TRANSFER_PROJECTOR
 from .model_mr_processing import MODEL_MR_PROCESSOR
@@ -205,7 +207,7 @@ class InstantAIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'")
         for name, value in (headers or {}).items():
             self.send_header(name, value)
         self.end_headers()
@@ -653,7 +655,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-cache")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; frame-ancestors 'none'")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(content)
@@ -817,7 +819,50 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             self._serve_blogger_image(image_match.group(1), int(image_match.group(2)))
         return True
 
+    def _serve_model_mr_queue_path(self, path: str) -> bool:
+        playlist = re.fullmatch(r"/media/model-mr/audio-queues/([0-9a-f]{32})/index\.m3u8", path)
+        segment = re.fullmatch(r"/media/model-mr/audio-queues/([0-9a-f]{32})/segments/(\d+)\.ts", path)
+        if playlist is None and segment is None:
+            return False
+        if not self._require_auth():
+            return True
+        try:
+            if playlist is not None:
+                query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                if any(len(values) != 1 for values in query.values()):
+                    raise ValueError("顺序播放参数重复。")
+                content = MODEL_MR_AUDIO_QUEUES.playlist(
+                    MODEL_MR, playlist.group(1), int(query.get("start", ["0"])[0]),
+                    int(query.get("minutes", ["0"])[0]), float(query.get("offset", ["0"])[0]),
+                    query.get("codec", ["aac"])[0],
+                ).encode()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Cache-Control", "private, no-store")
+                self.send_header("Vary", "Cookie")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(content)
+            else:
+                assert segment is not None
+                local = MODEL_MR_AUDIO_QUEUES.segment(segment.group(1), int(segment.group(2)))
+                self._serve_private_file(local, "video/mp2t", max_open_ended_range_bytes=MEDIA_OPEN_ENDED_RANGE_BYTES)
+        except (ModelMrAudioUnavailable, ModelMrUnavailable, ModelMrSpeechUnavailable):
+            self._json({"error": "顺序音频或中文报读准备失败，请稍后重试；仍可选择单曲收听。"}, HTTPStatus.SERVICE_UNAVAILABLE)
+        except ValueError:
+            self._json({"error": "顺序播放参数或音频分段无效。"}, HTTPStatus.BAD_REQUEST)
+        except (BrokenPipeError, ConnectionResetError):
+            return True
+        except OSError:
+            self._json({"error": "顺序音频暂不可用，请稍后重试。"}, HTTPStatus.SERVICE_UNAVAILABLE)
+        return True
+
     def _serve_model_mr_media_path(self, path: str) -> bool:
+        if self._serve_model_mr_queue_path(path):
+            return True
         video_match = re.fullmatch(r"/media/model-mr/works/(\d+)/video", path)
         audio_match = re.fullmatch(r"/media/model-mr/works/(\d+)/audio", path)
         image_match = re.fullmatch(r"/media/model-mr/works/(\d+)/images/(\d+)", path)
@@ -931,6 +976,14 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                 self._json(MODEL_MR.learning())
             except ModelMrUnavailable as error:
                 self._json({"error": str(error)}, HTTPStatus.BAD_GATEWAY)
+        elif re.fullmatch(r"/api/model-mr/audio-queues/[0-9a-f]{32}/state", path):
+            try:
+                position = float(query.get("position", ["0"])[0])
+                if not 0 <= position <= 1e9:
+                    raise ValueError("position")
+                self._json(MODEL_MR_AUDIO_QUEUES.state(path.split("/")[4], position))
+            except (ValueError, ModelMrAudioUnavailable):
+                self._json({"error": "顺序播放状态暂不可用，请重新开始收听。"}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/model-mr/works":
             try:
                 around_id = int(query["around_id"][0]) if "around_id" in query else None

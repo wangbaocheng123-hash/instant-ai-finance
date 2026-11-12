@@ -1,7 +1,7 @@
 {
   "name": "instant-ai-world-monitor",
   "private": true,
-  "version": "0.30.1",
+  "version": "0.31.0",
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
@@ -12,5 +12,8 @@
   "devDependencies": {
     "typescript": "^5.7.2",
     "vite": "^6.4.5"
+  },
+  "dependencies": {
+    "hls.js": "1.7.4"
   }
 }

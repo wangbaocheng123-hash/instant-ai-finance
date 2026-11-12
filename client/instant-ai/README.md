@@ -7,4 +7,4 @@ npm ci
 npm run build
 ```
 
-构建输出在 `dist/`。正式发布时将 `app.js`、`styles.css`、`index.html`、`manifest.webmanifest`、`sw.js`、`app-icon-192.png`、`app-icon-512.png` 和 `apple-touch-icon.png` 同步到 `product/instant_ai/static/`。不要在 `dist/` 或 `product/instant_ai/static/` 直接修改压缩后的代码。
+构建输出在 `dist/`。正式发布时将 `app.js`、`audio-hls.light.js`、`hls-js-license.txt`、`styles.css`、`index.html`、`manifest.webmanifest`、`sw.js`、`app-icon-192.png`、`app-icon-512.png` 和 `apple-touch-icon.png` 同步到 `product/instant_ai/static/`。顺序音频的HLS后备脚本与完整许可证必须一起同步；原生支持HLS的手机不需加载该后备脚本。不要在 `dist/` 或 `product/instant_ai/static/` 直接修改压缩后的代码。

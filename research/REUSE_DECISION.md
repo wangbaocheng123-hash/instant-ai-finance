@@ -91,3 +91,5 @@ P2 后置决定：World Monitor 不改变上述六仓 R0 角色，也不成为 `
 用户已批准方案 B 分阶段实施。第一版薄型核心已在不启用 sidecar 的条件下完成可用闭环；RSSHub、changedetection、OpenBB、TrendRadar 和 n8n 继续作为可选隔离能力，不是默认启动依赖。
 
 2026-08-24，用户进一步批准全球财经文字终端改造。World Monitor 展示分叉保持独立 Git 历史与 AGPL 许可证，只部署窄化的本地 API 前端；源码证据和删除清单见 `research/WORLDMONITOR_FINANCE_FORK.md`。
+
+2026-11-13，模型先生顺序音频复用既有ffmpeg，并按需使用hls.js 1.7.4与小型离线eSpeak NG普通话引擎。精确提交、源码路径、运行验证、Apache/GPL许可证和Git外缓存边界见 `research/MODEL_MR_AUDIO_SEQUENCE_REUSE.md` 与ADR-0087；六个正式研究上游的锁定版本保持。

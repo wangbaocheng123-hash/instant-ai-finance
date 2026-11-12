@@ -22,6 +22,7 @@ export default defineConfig({
     sourcemap: true,
     rollupOptions: {
       output: {
+        chunkFileNames: 'audio-[name].js',
         entryFileNames: 'app.js',
         assetFileNames: (assetInfo) => assetInfo.names?.some((name) => name.endsWith('.css')) ? 'styles.css' : 'assets/[name][extname]',
       },
