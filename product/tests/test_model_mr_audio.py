@@ -53,7 +53,7 @@ class ModelMrAudioTests(unittest.TestCase):
         self.assertEqual(self.video.read_bytes(), before)
 
     def test_finite_repeats_have_stop_point_in_media_without_script(self):
-        for minutes in [15, 30, 60, 90]:
+        for minutes in [1, 5, 7, 30, 60]:
             with self.subTest(minutes=minutes):
                 audio = prepare_model_mr_audio(self.video, self.root, minutes)
                 self.assertAlmostEqual(_probe(audio)['duration'], minutes * 60, delta=.1)
@@ -118,7 +118,7 @@ class ModelMrAudioTests(unittest.TestCase):
         self.assertEqual(self.video.read_bytes(), before)
 
     def test_unsupported_timer_and_symlink_cache_are_rejected(self):
-        for minutes in [-1, 1, 120, True, '15']:
+        for minutes in [-1, 31, 61, 90, 120, True, '15']:
             with self.assertRaises(ValueError):
                 prepare_model_mr_audio(self.video, self.root, minutes)
         elsewhere = self.root / 'elsewhere'
@@ -163,7 +163,7 @@ class ModelMrAudioHTTPTests(unittest.TestCase):
                             self.assertEqual(response.getheader('Cache-Control'), 'private, max-age=3600')
                             self.assertEqual(response.getheader('Vary'), 'Cookie')
                             self.assertEqual(response.read(), b'123' if method == 'GET' else b'')
-                        for suffix in ['minutes=-1', 'minutes=1', 'minutes=', 'minutes=15&minutes=30']:
+                        for suffix in ['minutes=-1', 'minutes=31', 'minutes=90', 'minutes=', 'minutes=15&minutes=30']:
                             connection.request('GET', '/media/model-mr/works/1/audio?' + suffix, headers={'Cookie': cookie})
                             response = connection.getresponse()
                             self.assertEqual(response.status, 400)

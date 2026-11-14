@@ -18,11 +18,11 @@ import time
 from pathlib import Path
 
 
-AUDIO_MINUTES = {0, 15, 30, 60, 90}
+AUDIO_MINUTES = {0, *range(1, 31), 60}
 AUDIO_CACHE_BYTES = 512 * 1024 * 1024
 AUDIO_FILE_BYTES = 128 * 1024 * 1024
 AUDIO_CACHE_AGE = 30 * 24 * 3600
-_CACHE_FILE = re.compile(r"[a-f0-9]{64}(?:-(?:15|30|60|90))?\.m4a")
+_CACHE_FILE = re.compile(r"[a-f0-9]{64}(?:-(?:[1-9]|[12][0-9]|30|60|90))?\.m4a")
 _PREPARE_LOCK = threading.Lock()
 
 
@@ -113,7 +113,7 @@ def prepare_model_mr_audio(source: Path, library_root: Path, minutes: int = 0) -
     before calling. Cache identity changes with the source, including HD repairs.
     """
     if type(minutes) is not int or minutes not in AUDIO_MINUTES:
-        raise ValueError("定时仅支持15、30、60、90分钟。")
+        raise ValueError("定时支持1至30分钟或1小时。")
     if not _PREPARE_LOCK.acquire(timeout=55):
         raise ModelMrAudioUnavailable("正在准备另一段音频，请稍后重试。")
     try:

@@ -38,7 +38,7 @@ const work = (id, image = false) => ({
     for (const width of [390, 1280]) {
       const page = await browser.newPage({ viewport: { width, height: 844 }, isMobile: width === 390, hasTouch: width === 390 });
       const requests = [], errors = [];
-      let failMedia = false, available = true;
+      let failMedia = false, available = true, prepareDelay = 0;
       page.on('pageerror', error => errors.push(error.message));
       await page.addInitScript(() => {
         window.IntersectionObserver = class { observe() {} unobserve() {} disconnect() {} };
@@ -48,6 +48,10 @@ const work = (id, image = false) => ({
           if (this instanceof HTMLAudioElement) window.playGestures.push(navigator.userActivation.isActive);
           return originalPlay.call(this);
         };
+        const canPlay = HTMLMediaElement.prototype.canPlayType;
+        HTMLMediaElement.prototype.canPlayType = function(type) {
+          return type === 'application/vnd.apple.mpegurl' ? 'probably' : canPlay.call(this, type);
+        };
       });
       await page.route(`${origin}/**`, async route => {
         const url = new URL(route.request().url()), p = url.pathname;
@@ -56,7 +60,8 @@ const work = (id, image = false) => ({
         if (p === '/styles.css') return route.fulfill({ contentType: 'text/css', body: fs.readFileSync(path.join(compiled, 'styles.css')) });
         if (['/ModelMrPanel', '/ModelMrAudioPlayer', '/ModelMrComments', '/api'].some(module => p === module || p === `${module}.js`))
           return route.fulfill({ contentType: 'text/javascript', body: fs.readFileSync(path.join(compiled, `${p.slice(1)}${p.endsWith('.js') ? '' : '.js'}`)) });
-        if (/^\/media\/model-mr\/works\/\d+\/audio$/.test(p)) {
+        if (/^\/media\/model-mr\/works\/\d+\/audio$/.test(p) || p.endsWith('/index.m3u8')) {
+          if (p.endsWith('/index.m3u8') && prepareDelay) { const delay=prepareDelay;prepareDelay=0;await new Promise(resolve=>setTimeout(resolve,delay)); }
           requests.push(p + url.search);
           if (failMedia) return route.fulfill({ status: 503, body: 'synthetic unavailable' });
           const data = url.searchParams.has('minutes') ? timed : original;
@@ -66,6 +71,7 @@ const work = (id, image = false) => ({
           return route.fulfill({ status: range ? 206 : 200, contentType: 'audio/wav', body: data.subarray(start, end + 1),
             headers: { 'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${data.length}` } : {}) } });
         }
+        if (p.includes('/audio-queues/') && p.endsWith('/state')) return json({ current: null });
         if (p === '/api/model-mr/status') return json({ available, counts: { works: 3, media: 3 }, message: '合成离线' });
         if (p === '/api/model-mr/works') return json({ items: [work(1), work(2), work(3, true)], count: 3, total: 3, offset: 0, has_more: false });
         if (p === '/api/model-mr/learning') return json({ revision: 0, learned_work_ids: [], last_work_id: null });
@@ -109,13 +115,13 @@ const work = (id, image = false) => ({
       await page.waitForFunction(() => { const a = document.querySelector('audio'); return a.src.includes('/2/audio') && a.currentTime > .1 && !a.paused; });
       check(await page.locator('audio').count(), 1);
       check(await page.locator('.model-audio-heading strong').textContent(), '正在收听 · 合成作品 2');
-      for (const minutes of ['15', '30', '60', '90']) {
+      for (const minutes of ['1', '5', '6', '7', '8', '30', '60']) {
         await page.locator('.model-audio-settings select').selectOption(minutes);
-        await page.waitForFunction(() => { const a = document.querySelector('audio'); return a.currentTime > .05 && !a.paused; });
+        await page.waitForFunction(() => { const a = document.querySelector('audio'); return !document.querySelector('[data-audio-pending]') && a.currentTime > .05 && !a.paused; });
         check(await audio.evaluate(a => a.loop), false);
         check(requests.at(-1).includes(`minutes=${minutes}`), true);
-        check(await page.locator('.model-audio-settings select').evaluate(select => select.options[select.selectedIndex].textContent), `${minutes}分钟后停止`);
-        if (minutes === '90') {
+        check(await page.locator('.model-audio-settings select').evaluate(select => select.options[select.selectedIndex].textContent), minutes === '60' ? '1小时后停止' : `${minutes}分钟后停止`);
+        if (minutes === '60') {
           const session = await page.context().newCDPSession(page);
           await session.send('Emulation.setScriptExecutionDisabled', { value: true });
           await new Promise(resolve => setTimeout(resolve, 1400));
@@ -125,6 +131,8 @@ const work = (id, image = false) => ({
         }
       }
       await page.locator('.model-audio-settings select').selectOption('0');
+      await page.waitForFunction(() => !document.querySelector('[data-audio-pending]'));
+      await button(2).click();
       await page.waitForFunction(() => !document.querySelector('audio').paused);
       await page.evaluate(() => {
         const video = document.createElement('video');
@@ -136,6 +144,14 @@ const work = (id, image = false) => ({
       check(await page.evaluate(() => navigator.mediaSession.metadata), null);
       await button(1).click();
       await page.waitForFunction(() => !document.querySelector('audio').paused);
+      prepareDelay=700;
+      await page.getByRole('checkbox',{name:'播完自动下一条'}).check();
+      await page.evaluate(()=>{
+        const video=document.createElement('video');document.body.append(video);video.dispatchEvent(new Event('play'));video.remove();
+      });
+      check(await audio.evaluate(a=>a.paused),true);
+      check(await page.locator('[data-audio-pending]').count(),0);
+      check(await page.getByRole('checkbox',{name:'播完自动下一条'}).isChecked(),false);
       await page.screenshot({ path: path.join(artifacts, `audio-${width}.png`), fullPage: true });
       check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
       await page.getByRole('button', { name: '停止收听' }).click();
@@ -155,6 +171,6 @@ const work = (id, image = false) => ({
       check(errors, []);
       await page.close();
     }
-    process.stdout.write(`PASS ${assertions} audio assertions (390/1280px); native finite end checked with page JS disabled.\n`);
+    process.stdout.write(`PASS ${assertions} audio assertions (390/1280px); finite synthetic WAV end checked with page JS disabled (native branch substituted; real HLS covered separately).\n`);
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

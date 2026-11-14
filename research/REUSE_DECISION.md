@@ -93,3 +93,5 @@ P2 后置决定：World Monitor 不改变上述六仓 R0 角色，也不成为 `
 2026-08-24，用户进一步批准全球财经文字终端改造。World Monitor 展示分叉保持独立 Git 历史与 AGPL 许可证，只部署窄化的本地 API 前端；源码证据和删除清单见 `research/WORLDMONITOR_FINANCE_FORK.md`。
 
 2026-11-13，模型先生顺序音频复用既有ffmpeg，并按需使用hls.js 1.7.4与小型离线eSpeak NG普通话引擎。精确提交、源码路径、运行验证、Apache/GPL许可证和Git外缓存边界见 `research/MODEL_MR_AUDIO_SEQUENCE_REUSE.md` 与ADR-0087；六个正式研究上游的锁定版本保持。
+
+2026-11-15，按所有者对日期播报颤音的反馈，0.32.0候选对正常日期优先复用`rts-cn/zh`固定录音，按完整提交和53个SHA-256锁定，附MPL-2.0与README。日期/序号仅离线拼接，约1MiB运行词库在Git外；源码、许可、真实下载/离线复用和试听边界见 `research/MODEL_MR_RECORDED_PROMPTS_REUSE.md`、ADR-0088。旧语音组件仅保留未知日期后备，六仓正式锁定版本保持。

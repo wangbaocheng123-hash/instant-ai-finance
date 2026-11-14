@@ -297,6 +297,7 @@ img { display: block; }
 .model-audio-heading button, .model-audio-settings select { min-height: 44px; padding: 8px 10px; border: 1px solid #bfb2df; border-radius: 7px; background: #fff; color: #493582; font: inherit; font-size: 14px; }
 .model-audio-heading button { flex-shrink: 0; cursor: pointer; }
 .model-audio-player audio { display: block; width: 100%; height: 44px; margin-bottom: 10px; }
+.model-audio-player audio[data-audio-pending] { display: none; }
 .model-audio-settings { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; font-size: 13px; color: #493582; }
 .model-audio-settings output { font-variant-numeric: tabular-nums; }
 .model-audio-continuous { display: flex; align-items: center; gap: 9px; min-height: 44px; margin-top: 6px; color: #493582; font-size: 13px; cursor: pointer; }

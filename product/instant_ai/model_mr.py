@@ -661,6 +661,10 @@ class ModelMrClient:
         if position is None:
             raise ModelMrWorkNotFound("这条作品不在当前资料库中。")
         root = self.media_root.resolve()
+        selected = self._clean_snapshot_work(works[position])
+        selected_source = (root / str(selected.get("media_file") or "")).resolve()
+        if not selected["video_available"] or not selected_source.is_relative_to(root) or not selected_source.is_file():
+            raise ModelMrUnavailable("所选作品暂没有可播放的本地音轨。")
         result = []
         for item in reversed(works[:position + 1]):
             work = self._clean_snapshot_work(item)

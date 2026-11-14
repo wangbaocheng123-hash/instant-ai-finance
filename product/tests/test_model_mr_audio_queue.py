@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from instant_ai.auth import OwnerAuth, configure_owner
-from instant_ai.model_mr import ModelMrClient
+from instant_ai.model_mr import ModelMrClient, ModelMrUnavailable
 from instant_ai.model_mr_audio import ModelMrAudioUnavailable
 from instant_ai.model_mr_audio_queue import ModelMrAudioQueues
 from instant_ai.model_mr_speech import (
@@ -217,3 +217,56 @@ class AudioQueueTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=5)
+
+    def test_selected_work_is_never_replaced_by_a_later_work(self):
+        with self.assertRaises(ModelMrUnavailable):
+            self.client.audio_queue(200)
+        (self.root / 'media' / '10.mp4').write_bytes(b'synthetic damaged audio')
+        with self.assertRaises(ModelMrAudioUnavailable):
+            self.queues.playlist(self.client, self.token, 10, 0, 0, 'aac', first_intro=False)
+        self.assertEqual(self.queues._sessions[self.token].cursor, 0)
+        self.speech.assert_not_called()
+
+    def test_continuation_starts_with_current_original_and_announces_only_next(self):
+        self.queues.playlist(self.client, self.token, 10, 0, .25, 'aac', first_intro=False)
+        session = self.queues._sessions[self.token]
+        self.assertEqual(session.tracks[0]['id'], 10)
+        self.assertEqual(session.tracks[0]['intro_seconds'], 0)
+        self.assertEqual(session.tracks[0]['body_offset'], .25)
+        self.speech.assert_not_called()
+        self.queues.segment(self.token, len(session.segments) - 1)
+        self.queues.playlist(self.client, self.token, 10, 0, .25, 'aac', first_intro=False)
+        self.assertEqual(session.tracks[1]['id'], 30)
+        self.assertGreater(session.tracks[1]['intro_seconds'], 0)
+        self.assertEqual(self.speech.call_count, 1)
+        self.assertIn('第' + chinese_number(3) + '条', self.speech.call_args.args[0])
+
+    def test_single_work_repeats_until_remaining_budget_without_reannouncing(self):
+        args = (self.client, self.token, 30, 1, .25, 'mp3')
+        settings = dict(continuous=False, first_intro=False, seconds=4.5)
+        self.queues.playlist(*args, **settings)
+        session = self.queues._sessions[self.token]
+        while not session.done:
+            self.queues.segment(self.token, len(session.segments) - 1)
+            playlist = self.queues.playlist(*args, **settings)
+        self.assertIn('#EXT-X-ENDLIST', playlist)
+        self.assertAlmostEqual(session.elapsed, 4.5, delta=.15)
+        self.assertTrue(all(track['id'] == 30 for track in session.tracks))
+        self.assertTrue(all(track['intro_seconds'] == 0 for track in session.tracks))
+        self.assertEqual(self.queues.state(self.token, 1)['remaining_works'], 0)
+        self.speech.assert_not_called()
+        with self.assertRaises(ValueError):
+            self.queues.playlist(*args, continuous=False, first_intro=False, seconds=61)
+
+    def test_remaining_timer_budget_is_shared_across_successive_works(self):
+        args = (self.client, self.token, 10, 1, 0, 'aac')
+        settings = dict(first_intro=False, seconds=2.2)
+        self.queues.playlist(*args, **settings)
+        session = self.queues._sessions[self.token]
+        while not session.done:
+            self.queues.segment(self.token, len(session.segments)-1)
+            playlist = self.queues.playlist(*args, **settings)
+        self.assertEqual([track['id'] for track in session.tracks], [10,30])
+        self.assertAlmostEqual(session.elapsed, 2.2, delta=.1)
+        self.assertIn('#EXT-X-ENDLIST', playlist)
+        self.assertEqual(self.speech.call_count,1)

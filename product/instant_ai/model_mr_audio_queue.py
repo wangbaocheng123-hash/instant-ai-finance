@@ -20,7 +20,7 @@ from typing import Any
 
 from .model_mr import ModelMrClient
 from .model_mr_audio import AUDIO_MINUTES, ModelMrAudioUnavailable, _probe, _run, prepare_model_mr_audio
-from .model_mr_speech import announcement_text, synthesize_announcement
+from .model_mr_speech import ANNOUNCEMENT_VERSION, announcement_text, synthesize_announcement
 
 
 QUEUE_CACHE_BYTES = 512 * 1024**2
@@ -76,9 +76,9 @@ def _segments(source: Path, directory: Path, prefix: str, codec: str, *, offset:
     if limit:
         command += ["-t", str(limit)]
     if codec == "mp3":
-        command += ["-c:a", "libmp3lame", "-b:a", "64k", "-ar", "48000", "-ac", "1"]
+        command += ["-c:a", "libmp3lame", "-b:a", "96k" if prefix == "intro" else "64k", "-ar", "48000", "-ac", "1"]
     elif prefix == "intro":
-        command += ["-c:a", "aac", "-b:a", "64k", "-ar", "48000", "-ac", "1"]
+        command += ["-c:a", "aac", "-b:a", "96k", "-ar", "48000", "-ac", "1"]
     else:
         command += ["-c:a", "copy"]
     command += ["-f", "hls", "-hls_time", "6", "-hls_playlist_type", "vod", "-hls_segment_filename",
@@ -102,14 +102,14 @@ def _segments(source: Path, directory: Path, prefix: str, codec: str, *, offset:
     return parsed
 
 
-def prepare_queue_work(work: dict[str, Any], library_root: Path, codec: str, offset: float, budget: float) -> tuple[Path, dict[str, Any]]:
+def prepare_queue_work(work: dict[str, Any], library_root: Path, codec: str, offset: float, budget: float, announce: bool = True) -> tuple[Path, dict[str, Any]]:
     with _ARTIFACT_LOCK:
         original = prepare_model_mr_audio(work["source"], library_root)
         audio = _probe(original)
         offset = offset % audio["duration"]
         text = announcement_text(work["published_at"], work["sequence_number"])
         info = original.stat()
-        identity = f"v1:{original}:{info.st_size}:{text}:{codec}:{offset:.3f}:{budget:.3f}"
+        identity = f"v2:{ANNOUNCEMENT_VERSION}:{original}:{info.st_size}:{text}:{codec}:{offset:.3f}:{budget:.3f}:{announce}"
         key = hashlib.sha256(identity.encode()).hexdigest()
         cache = _queue_cache(library_root)
         target = cache / key
@@ -136,10 +136,12 @@ def prepare_queue_work(work: dict[str, Any], library_root: Path, codec: str, off
             raise ModelMrAudioUnavailable("磁盘空间不足，暂不能准备顺序音频。")
         temporary = Path(tempfile.mkdtemp(prefix=".sequence-", dir=cache))
         try:
-            speech = temporary / "announcement.wav"
-            synthesize_announcement(text, speech, library_root)
-            intro = _segments(speech, temporary, "intro", codec, limit=budget)
-            speech.unlink()
+            intro = []
+            if announce:
+                speech = temporary / "announcement.wav"
+                synthesize_announcement(text, speech, library_root)
+                intro = _segments(speech, temporary, "intro", codec, limit=budget)
+                speech.unlink()
             intro_seconds = sum(item["duration"] for item in intro)
             remaining = max(0.0, budget - intro_seconds) if budget else 0.0
             body = _segments(original, temporary, "body", codec, offset=offset, limit=remaining) if not budget or remaining > 0.05 else []
@@ -167,6 +169,9 @@ class _Queue:
     minutes: int
     offset: float
     codec: str
+    continuous: bool = True
+    first_intro: bool = True
+    seconds: float = 0
     touched: float = field(default_factory=time.monotonic)
     cursor: int = 0
     requested: int = -1
@@ -191,9 +196,13 @@ class ModelMrAudioQueues:
             session.touched = time.monotonic()
             return session
 
-    def playlist(self, client: ModelMrClient, token: str, start_id: int, minutes: int, offset: float, codec: str) -> str:
-        if not re.fullmatch(r"[0-9a-f]{32}", token) or minutes not in AUDIO_MINUTES or codec not in {"aac", "mp3"} or not math.isfinite(offset) or not 0 <= offset <= 21600:
+    def playlist(self, client: ModelMrClient, token: str, start_id: int, minutes: int, offset: float, codec: str,
+                 continuous: bool = True, first_intro: bool = True, seconds: float = 0) -> str:
+        if not re.fullmatch(r"[0-9a-f]{32}", token) or type(minutes) is not int or minutes not in AUDIO_MINUTES or codec not in {"aac", "mp3"} or not math.isfinite(offset) or not 0 <= offset <= 21600:
             raise ValueError("顺序播放参数无效。")
+        if type(continuous) is not bool or type(first_intro) is not bool or not math.isfinite(seconds) or seconds < 0 or seconds > minutes * 60:
+            raise ValueError("定时剩余时长无效。")
+        budget = seconds or minutes * 60
         with self._lock:
             now = time.monotonic()
             for old in [key for key, item in self._sessions.items() if now - item.touched > QUEUE_IDLE_SECONDS]:
@@ -203,9 +212,11 @@ class ModelMrAudioQueues:
                 if len(self._sessions) >= 8:
                     oldest = min(self._sessions, key=lambda key: self._sessions[key].touched)
                     del self._sessions[oldest]
-                session = _Queue(client.snapshot_path.parent, client.audio_queue(start_id), start_id, minutes, offset, codec)
+                works = client.audio_queue(start_id)
+                session = _Queue(client.snapshot_path.parent, works if continuous else works[:1], start_id, minutes, offset, codec,
+                                 continuous=continuous, first_intro=first_intro, seconds=budget)
                 self._sessions[token] = session
-            elif (session.start_id, session.minutes, session.offset, session.codec) != (start_id, minutes, offset, codec):
+            elif (session.start_id, session.minutes, session.offset, session.codec, session.continuous, session.first_intro, session.seconds) != (start_id, minutes, offset, codec, continuous, first_intro, budget):
                 raise ValueError("本次顺序播放设置已改变，请重新开始。")
             session.touched = now
         with session.lock:
@@ -224,10 +235,10 @@ class ModelMrAudioQueues:
             return "\n".join(lines) + "\n"
 
     def _extend(self, session: _Queue) -> None:
-        while session.cursor < len(session.works):
-            work = session.works[session.cursor]
+        while session.cursor < len(session.works) or not session.continuous and session.minutes:
+            work = session.works[session.cursor if session.continuous else 0]
             offset = session.offset if session.cursor == 0 else 0
-            remaining = max(0.0, session.minutes * 60 - session.elapsed) if session.minutes else 0.0
+            remaining = max(0.0, session.seconds - session.elapsed) if session.minutes else 0.0
             if session.minutes and remaining <= 0.1:
                 session.done = True
                 return
@@ -236,12 +247,15 @@ class ModelMrAudioQueues:
             try:
                 _probe(work["source"])
             except ModelMrAudioUnavailable:
+                if session.cursor == 0 or not session.continuous:
+                    raise
                 session.cursor += 1
                 session.skipped += 1
                 continue
-            directory, manifest = prepare_queue_work(work, session.root, session.codec, offset, remaining)
+            announce = (session.cursor > 0 and session.continuous) or (session.cursor == 0 and session.first_intro)
+            directory, manifest = prepare_queue_work(work, session.root, session.codec, offset, remaining, announce)
             start = session.elapsed
-            recipe = {"work": work, "offset": offset, "budget": remaining}
+            recipe = {"work": work, "offset": offset, "budget": remaining, "announce": announce}
             for item in manifest["segments"]:
                 session.segments.append({**item, "directory": directory, "recipe": recipe})
             session.elapsed += manifest["duration"]
@@ -250,7 +264,7 @@ class ModelMrAudioQueues:
                 "body_offset": manifest["body_offset"],
             })
             session.cursor += 1
-            session.done = session.cursor >= len(session.works) or bool(session.minutes and session.elapsed >= session.minutes * 60 - 0.1)
+            session.done = bool((session.continuous or not session.minutes) and session.cursor >= len(session.works)) or bool(session.minutes and session.elapsed >= session.seconds - 0.1)
             return
         session.done = True
         if not session.segments:
@@ -268,7 +282,7 @@ class ModelMrAudioQueues:
                 raise ModelMrAudioUnavailable("音频分段不可用。")
             if not target.is_file():
                 recipe = item["recipe"]
-                directory, _ = prepare_queue_work(recipe["work"], session.root, session.codec, recipe["offset"], recipe["budget"])
+                directory, _ = prepare_queue_work(recipe["work"], session.root, session.codec, recipe["offset"], recipe["budget"], recipe["announce"])
                 target = directory / item["filename"]
             item["directory"].touch()
             return target
@@ -279,7 +293,7 @@ class ModelMrAudioQueues:
             current = next((track for track in session.tracks if track["start"] <= position < track["end"]),
                            session.tracks[-1] if session.tracks else None)
             return {"current": current, "done": session.done, "skipped": session.skipped,
-                    "prepared_seconds": session.elapsed, "remaining_works": len(session.works) - session.cursor}
+                    "prepared_seconds": session.elapsed, "remaining_works": max(0, len(session.works) - session.cursor)}
 
 
 MODEL_MR_AUDIO_QUEUES = ModelMrAudioQueues()

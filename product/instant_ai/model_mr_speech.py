@@ -1,7 +1,7 @@
-"""Short, offline Chinese announcements; no video text leaves the application.
+"""Fixed Chinese recordings for dates and numbers; no video text leaves the app.
 
-The small, pinned eSpeak NG runtime is installed into owner-private application
-data on first use. It is not installed globally and never enters the repository.
+The pinned offline eSpeak NG fallback remains for explicit unknown-date text.
+Recordings and the fallback runtime stay in owner-private data, outside Git.
 """
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from urllib.request import urlopen
 
 
 ENGINE_VERSION = "0.2.4"
+ANNOUNCEMENT_VERSION = "recorded-cnlink-bd238bcc-v1"
 ENGINE_SHA256 = "08721baf27d13d461f6be6eed9a65277e70d68234ff484fd8b9897b222cdcb6d"
 ENGINE_URL = "https://files.pythonhosted.org/packages/de/1e/25ec5ab07528c0fbb215a61800a38eca05c8a99445515a02d7fa5debcb32/espeakng_loader-0.2.4-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
 _ENGINE_LOCK = threading.Lock()
@@ -140,6 +141,12 @@ def ensure_speech_engine(library_root: Path) -> Path:
 
 
 def synthesize_announcement(text: str, output: Path, library_root: Path) -> None:
+    from .model_mr_prompts import render_recorded_announcement
+    try:
+        if render_recorded_announcement(text, output, library_root):
+            return
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, wave.Error) as error:
+        raise ModelMrSpeechUnavailable("固定日期报读准备失败，请稍后重试。") from error
     engine = ensure_speech_engine(library_root)
     try:
         subprocess.run([sys.executable, str(Path(__file__).resolve()), str(engine), text, str(output)],

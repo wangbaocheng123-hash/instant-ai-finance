@@ -831,10 +831,14 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                 query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
                 if any(len(values) != 1 for values in query.values()):
                     raise ValueError("顺序播放参数重复。")
+                if query.get("next", ["1"])[0] not in {"0", "1"} or query.get("intro", ["1"])[0] not in {"0", "1"}:
+                    raise ValueError("播放设置无效。")
                 content = MODEL_MR_AUDIO_QUEUES.playlist(
                     MODEL_MR, playlist.group(1), int(query.get("start", ["0"])[0]),
                     int(query.get("minutes", ["0"])[0]), float(query.get("offset", ["0"])[0]),
                     query.get("codec", ["aac"])[0],
+                    query.get("next", ["1"])[0] == "1", query.get("intro", ["1"])[0] == "1",
+                    float(query.get("seconds", ["0"])[0]),
                 ).encode()
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "application/vnd.apple.mpegurl")
@@ -876,8 +880,8 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             try:
                 query = parse_qs(urlparse(self.path).query, keep_blank_values=True)
                 values = query.get("minutes", ["0"])
-                if len(values) != 1 or not re.fullmatch(r"0|15|30|60|90", values[0]):
-                    raise ValueError("定时仅支持15、30、60、90分钟。")
+                if len(values) != 1 or not re.fullmatch(r"0|[1-9]|[12][0-9]|30|60", values[0]):
+                    raise ValueError("定时支持1至30分钟或1小时。")
                 local = MODEL_MR.video_path(int(audio_match.group(1)))
                 if local is None:
                     self._json({"error": "这条作品暂没有本地视频音轨。"}, HTTPStatus.NOT_FOUND)
