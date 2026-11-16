@@ -470,7 +470,7 @@ export class InstantFinanceApp {
       originalTitle.classList.toggle('hidden', !originalTitle.textContent);
       const meta = document.createElement('p');
       meta.className = 'detail-meta';
-      meta.textContent = `${formatFullTime(item.published_at || item.first_seen_at)} · 来源：${(item.sources || []).join('、') || '原站待识别'}`;
+      meta.textContent = `${item.event_type.startsWith('官方日程') ? '发现于 ' : ''}${formatFullTime(item.published_at || item.first_seen_at)} · 来源：${(item.sources || []).join('、') || '原站待识别'}`;
       const detailHeader = document.createElement('div');
       detailHeader.className = 'detail-header';
       const detailThumbnail = document.createElement('img');

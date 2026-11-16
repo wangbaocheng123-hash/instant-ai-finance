@@ -43,6 +43,7 @@ from .translation import translate_items, translation_status
 from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 from .watch_events import list_watch_events, refresh_watch_events, sync_watch_events
 from .future_events import supply_future_events
+from .calendar_notices import calendar_snapshot
 from .model_mr import MODEL_MR, ModelMrUnavailable, ModelMrWorkNotFound
 from .model_mr_audio import ModelMrAudioUnavailable, prepare_model_mr_audio
 from .model_mr_audio_queue import MODEL_MR_AUDIO_QUEUES
@@ -89,6 +90,7 @@ COLLECTION_STATE: dict[str, object] = {
 BLOGGER_MCP_OAUTH = BloggerMcpOAuth(AUTH)
 LOCAL_OAUTH_DIAGNOSTICS_PATH = "/api/internal/oauth-diagnostics"
 LOCAL_MCP_EVENT_DIAGNOSTICS_PATH = "/api/internal/mcp-event-diagnostics"
+LOCAL_CALENDAR_DIAGNOSTICS_PATH = "/api/internal/calendar-diagnostics"
 
 
 class BoundedThreadingHTTPServer(ThreadingHTTPServer):
@@ -181,6 +183,10 @@ def _calendar_scheduler_loop(*, stop_event: threading.Event | None = None,
         try:
             result = supply_future_events()
             COLLECTION_STATE["future_calendar"] = result
+            try:
+                result["mobile_notifications"] = dispatch_web_push_notifications()
+            except Exception as error:
+                result["notification_error"] = type(error).__name__
             if result.get("delivered", 0):
                 sync_watch_events()
         except Exception as error:
@@ -949,6 +955,22 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                 self._not_found()
                 return
             self._json(MODEL_MR_MCP_EVENTS.diagnostic_snapshot())
+        elif path == LOCAL_CALENDAR_DIAGNOSTICS_PATH:
+            if not self._strictly_local_request():
+                self._not_found()
+                return
+            snapshot = calendar_snapshot()
+            self._json({
+                "enabled": snapshot["enabled"],
+                "confirmed_events": sum(bool(event["time"]) for event in snapshot["events"]),
+                "date_only_events": sum(not event["time"] for event in snapshot["events"]),
+                "pending_delivery": snapshot["pendingDelivery"],
+                "failed_delivery": snapshot["failedDelivery"],
+                "sources": [{key: source[key] for key in ("key", "state", "lastSuccessAt", "lastError")} for source in snapshot["sources"]],
+                "last_tick": COLLECTION_STATE.get("future_calendar", {}).get("checkedAt"),
+                "state": COLLECTION_STATE.get("future_calendar", {}).get("state", "not_started"),
+                "notification_error": COLLECTION_STATE.get("future_calendar", {}).get("notification_error", ""),
+            })
         elif path == "/api/health":
             self._json({"ok": True, "version": __version__, "auth_required": AUTH.required})
         elif path == "/api/auth/status":
@@ -1045,7 +1067,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         elif path == "/api/hot":
             self._json(query_hot_items(limit=int(query.get("limit", ["40"])[0])))
         elif path == "/api/watch-events":
-            self._json(list_watch_events())
+            self._json({**list_watch_events(), "discovery": calendar_snapshot()})
         elif path.startswith("/api/items/") and path.endswith("/thumbnail"):
             parts = path.strip("/").split("/")
             if len(parts) != 4:

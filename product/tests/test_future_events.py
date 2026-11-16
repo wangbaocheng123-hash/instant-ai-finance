@@ -80,8 +80,15 @@ class FutureEventTests(unittest.TestCase):
     def test_source_outage_keeps_nodes_and_old_receiver_compatibility(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'events.db';initialize(path)
-            waiting=supply_future_events(path=path,now=NOW,assignment_fetcher=lambda _: {},fetcher=lambda _:self.fail('Old receiver must not fetch sources'))
+            fetched=[]
+            def read_while_receiver_offline(url):
+                fetched.append(url)
+                return {'status':200,'body':TSMC}
+            with patch('instant_ai.future_events._sources',return_value=[SOURCES[0]]):
+                waiting=supply_future_events(path=path,now=NOW,assignment_fetcher=lambda _: {},fetcher=read_while_receiver_offline)
             self.assertEqual(waiting['state'],'waiting_receiver')
+            self.assertEqual(fetched,[SOURCES[0]['url']])
+            self.assertEqual(waiting['discovered'],1,'Local discovery must continue while the receiver is unavailable')
             with patch('instant_ai.future_events._sources',return_value=[SOURCES[0]]):
                 args=dict(path=path,now=NOW,assignment_fetcher=lambda _:{'calendarIngestion':{'contractVersion':1,'tokens':dict(home='h',zijin='z',status='s')}},sender=lambda u,p:{'ok':True,'version':p.get('event',{}).get('version')})
                 supply_future_events(**args,fetcher=lambda _:{'status':200,'body':TSMC})

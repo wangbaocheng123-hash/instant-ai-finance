@@ -68,9 +68,74 @@ export class WatchEventsPanel {
 
     const list = document.createElement('div');
     list.className = 'watch-event-list';
-    response.events.forEach((event) => list.append(this.eventCard(event)));
+    const discoveredKeys = new Set(response.discovery?.events.map((event) => event.key) || []);
+    response.events.filter((event) => !Array.from(discoveredKeys).some((key) => event.event_key.endsWith(`instant-ai-future:${key}`)))
+      .forEach((event) => list.append(this.eventCard(event)));
     if (response.events.length === 0) list.append(this.message('罗盘尚未同步重点事件，连接后会自动出现。'));
-    this.body.replaceChildren(summary, sync, list);
+    const discovery = this.discoveryPanel(response.discovery);
+    this.body.replaceChildren(...(discovery ? [discovery, summary, sync, list] : [summary, sync, list]));
+  }
+
+  private discoveryPanel(discovery: WatchEventsResponse['discovery']): HTMLElement | null {
+    if (!discovery) return null;
+    const section = document.createElement('section');
+    section.className = 'official-calendar-discovery';
+    const heading = document.createElement('h3');
+    heading.textContent = `官方会议预告 · ${discovery.events.length} 条`;
+    const unhealthy = discovery.sources.filter((source) => source.state !== 'ok' && source.state !== 'disabled');
+    const status = this.message(!discovery.enabled ? '已暂停官方会议日程采集。'
+      : unhealthy.length ? `有 ${unhealthy.length} 个官方日程来源暂未完成更新，以下保留上次核实记录；请留意官方最新安排。`
+        : '官方日程持续核对；已确认时点按北京时间显示，待定时间单独标注。', unhealthy.length ? 'error' : '');
+    const coverage = document.createElement('p');
+    coverage.className = 'watch-sync';
+    coverage.textContent = discovery.coverage;
+    section.append(heading, status, coverage);
+    for (const source of unhealthy) {
+      const warning = document.createElement('p');
+      warning.className = 'watch-sync has-error';
+      warning.textContent = `${source.name}：暂未完成更新${source.lastSuccessAt ? `，上次成功 ${this.formatClock(source.lastSuccessAt)}` : '，正在核验官方来源'}`;
+      section.append(warning);
+    }
+    const list = document.createElement('div');
+    list.className = 'watch-event-list';
+    for (const event of discovery.events) {
+      const card = document.createElement('article');
+      card.className = 'watch-event-card official-agenda';
+      const date = formatEventDate(event.date, event.time);
+      const dateBlock = document.createElement('div');
+      dateBlock.className = 'watch-event-date';
+      const month = document.createElement('span');
+      month.textContent = date.month;
+      const day = document.createElement('b');
+      day.textContent = date.day;
+      dateBlock.append(month, day);
+      const content = document.createElement('div');
+      content.className = 'watch-event-content';
+      const title = document.createElement('h3');
+      title.textContent = event.title;
+      const time = document.createElement('p');
+      time.textContent = event.time ? `${date.full}（北京时间）` : `官方当地日期 ${event.date}；具体时间及北京时间待确认`;
+      const verified = document.createElement('p');
+      verified.className = 'watch-sync';
+      verified.textContent = `最近核实 ${this.formatClock(event.checkedAt)}`;
+      content.append(title, time, verified);
+      try {
+        const url = new URL(event.source.url);
+        if (url.protocol === 'https:' && ['www.federalreserve.gov', 'federalreserve.gov', 'www.frbsf.org', 'frbsf.org'].includes(url.hostname)) {
+          const link = document.createElement('a');
+          link.href = url.href;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          link.textContent = `查看${event.source.name}`;
+          content.append(link);
+        }
+      } catch { /* Keep the confirmed text visible if a source URL is unavailable. */ }
+      card.append(dateBlock, content);
+      list.append(card);
+    }
+    if (!discovery.events.length) list.append(this.message(discovery.enabled ? '暂无已核实时间的近期会议，继续关注官方日程更新。' : '重新启用后会继续核对官方会议。'));
+    section.append(list);
+    return section;
   }
 
   private metric(label: string, value: number): HTMLElement {

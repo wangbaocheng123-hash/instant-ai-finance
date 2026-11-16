@@ -591,6 +591,15 @@ export interface WatchEvent {
 }
 
 export interface WatchEventsResponse {
+  discovery?: {
+    enabled: boolean;
+    coverage: string;
+    pendingDelivery: number;
+    failedDelivery: number;
+    sources: Array<{ key: string; name: string; url: string; state: string; lastSuccessAt: string; lastError: string }>;
+    events: Array<{ key: string; title: string; date: string; time: string; importance: number; checkedAt: string;
+      source: { name: string; url: string; verifiedAt: string } }>;
+  };
   events: WatchEvent[];
   counts: {
     total: number;

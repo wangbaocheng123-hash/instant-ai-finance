@@ -122,7 +122,7 @@ class SourceSchedulingTests(unittest.TestCase):
                 columns = {
                     row[1] for row in connection.execute("PRAGMA table_info(sources)").fetchall()
                 }
-            self.assertEqual(version, "14")
+            self.assertEqual(version, "15")
             self.assertEqual(scheduled, 3)
             self.assertTrue({"last_attempt_at", "next_fetch_at", "failure_count"} <= columns)
 

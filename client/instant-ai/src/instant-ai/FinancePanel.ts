@@ -95,7 +95,7 @@ export class FinancePanel {
     source.className = 'news-source';
     source.textContent = `来源：${item.sources?.[0] || '原站待识别'}`;
     const time = document.createElement('time');
-    time.textContent = formatTime(item.published_at || item.first_seen_at);
+    time.textContent = `${item.event_type.startsWith('官方日程') ? '发现于 ' : ''}${formatTime(item.published_at || item.first_seen_at)}`;
     const score = document.createElement('b');
     score.className = `score score-${item.importance_score >= 85 ? 'critical' : item.importance_score >= 70 ? 'high' : 'normal'}`;
     score.textContent = String(item.importance_score);

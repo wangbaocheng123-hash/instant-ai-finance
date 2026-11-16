@@ -65,7 +65,8 @@ def _expired_where() -> str:
 def _apply_missing_embedded_dates(connection: sqlite3.Connection, now: datetime | None = None) -> int:
     updated = 0
     rows = connection.execute(
-        "SELECT id, title, summary FROM items WHERE published_at IS NULL"
+        """SELECT id, title, summary FROM items WHERE published_at IS NULL
+           AND id NOT IN (SELECT item_id FROM future_calendar_notices WHERE item_id IS NOT NULL)"""
     ).fetchall()
     for row in rows:
         inferred = infer_embedded_published_at(row[1] or "", row[2] or "", now=now)

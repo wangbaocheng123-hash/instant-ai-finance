@@ -10,9 +10,11 @@ import html
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future
 from datetime import UTC, datetime, timedelta
 from html.parser import HTMLParser
 from typing import Any, Callable
+from threading import Lock
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
@@ -20,6 +22,7 @@ from zoneinfo import ZoneInfo
 from .collectors import parse_feed
 from .database import connect, transaction
 from .official_monitor import _fetch_official_channel, validate_official_url
+from .fed_calendar import MONTH_NAMES, SF_EVENTS_URL, parse_fed_month, parse_sf_event, sf_upcoming_links
 
 SHANGHAI = ZoneInfo('Asia/Shanghai')
 MONTHS = {name.lower(): i for i, name in enumerate(['January','February','March','April','May','June','July','August','September','October','November','December'], 1)}
@@ -158,14 +161,43 @@ def _sources(now: datetime) -> list[dict[str,Any]]:
     for offset in range(3):
         y=year+(month-1+offset)//12;m=(month-1+offset)%12+1
         sources.append({'key':f'bls-{y}-{m:02d}','url':f'https://www.bls.gov/schedule/{y}/{m:02d}_sched.htm','parser':'bls','year':y,'month':m})
+    # Beijing may already be in the next month while the Board still has an
+    # important afternoon speech on its last local day.
+    fed_now = now.astimezone(ZoneInfo('America/New_York'))
+    year, month = fed_now.year, fed_now.month
+    for offset in range(2):
+        y=year+(month-1+offset)//12;m=(month-1+offset)%12+1
+        sources.append({'key':f'fed-{y}-{m:02d}', 'name':f'美联储{y}年{m}月官方日程',
+                        'url':f'https://www.federalreserve.gov/newsevents/{y}-{MONTH_NAMES[m-1]}.htm',
+                        'parser':'fed-month','year':y,'month':m,'poll_seconds':900 if offset==0 else 3600})
+    sources.append({'key':'sf-fed-events','name':'旧金山联储近期会议','url':SF_EVENTS_URL,'parser':'sf-index','poll_seconds':1800})
     return sources
 
 
 def _store(scope: str, event: dict[str,Any], *, path: object, now: datetime) -> bool:
-    normalized={**event,'version':0,'source':{**event['source'],'verifiedAt':''}}
-    checksum=hashlib.sha256(json.dumps(normalized,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     with transaction(path) as db:
         previous=db.execute('SELECT * FROM future_calendar_events WHERE scope=? AND event_key=?',(scope,event['key'])).fetchone()
+        if previous is None and event['key'].startswith('fed:') and event['originalScheduledAt'] and datetime.fromisoformat(event['originalScheduledAt']) <= now:
+            return False  # New calendar sources announce upcoming events; actual past speeches use the speech feed.
+        if (previous is None and event['key'].startswith('fed:') and not event['originalScheduledAt']
+                and event['date'] < now.astimezone(ZoneInfo(event['originalTimeZone'])).date().isoformat()):
+            return False
+        if previous is not None and event['originalScheduledAt']:
+            older = json.loads(previous['payload_json'])
+            if (older.get('originalScheduledAt') and datetime.fromisoformat(older['originalScheduledAt']) == datetime.fromisoformat(event['originalScheduledAt'])
+                    and urlparse(older['source']['url']).hostname == 'www.federalreserve.gov'
+                    and urlparse(event['source']['url']).hostname == 'www.frbsf.org'):
+                event = {**event, 'source': older['source'], 'note': older['note']}
+        if previous is not None and not event['originalScheduledAt']:
+            older = json.loads(previous['payload_json'])
+            if older.get('originalScheduledAt') and event['date'] < now.astimezone(ZoneInfo(event['originalTimeZone'])).date().isoformat():
+                return False  # A historical index entry is not a cancellation of its known time.
+            if older.get('originalScheduledAt') and older['source']['url'] != event['source']['url']:
+                known_day = datetime.fromisoformat(older['originalScheduledAt']).astimezone(ZoneInfo(event['originalTimeZone'])).date().isoformat()
+                if known_day == event['date']:
+                    return False  # A less precise host listing cannot erase a Board-confirmed time.
+        normalized={**event,'version':0,'source':{**event['source'],'verifiedAt':''}}
+        checksum=hashlib.sha256(json.dumps(normalized,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
         changed=previous is None or previous['facts_hash']!=checksum
         version=1 if previous is None else previous['version']+int(changed);event={**event,'version':version}
         db.execute('''INSERT INTO future_calendar_events(scope,event_key,version,facts_hash,payload_json,checked_at) VALUES(?,?,?,?,?,?)
@@ -192,74 +224,215 @@ def _post_calendar(url: str,payload: dict[str,Any]) -> dict[str,Any]:
     return result
 
 
-def supply_future_events(*,path: object=None,now: datetime|None=None,fetcher: Callable=_fetch_official_channel,
-                         assignment_fetcher: Callable|None=None,sender: Callable=_post_calendar,force: bool=False,target_url: str=DEFAULT_TARGET) -> dict[str,Any]:
-    from .watch_events import _fetch_payload,DEFAULT_COMPASS_EVENTS_URL
-    import os
-    now=now or datetime.now(UTC);at=_iso(now);report={'checkedAt':at,'sources':0,'discovered':0,'queued':0,'delivered':0,'failed':0,'errors':[]}
-    try:payload=(assignment_fetcher or _fetch_payload)(os.environ.get('INSTANT_AI_COMPASS_EVENTS_URL',DEFAULT_COMPASS_EVENTS_URL))
-    except Exception as e:return {**report,'state':'waiting_receiver','errors':[type(e).__name__+': '+str(e)[:180]]}
-    assignment=payload.get('calendarIngestion',{})
-    if assignment.get('contractVersion')!=1 or not all(s in assignment.get('tokens',{}) for s in ['home','zijin','status']):return {**report,'state':'waiting_receiver'}
-    # Receiver restore/loss must be repairable even after this outbox got a receipt.
-    # Only lower acknowledgements, never invent or regress a source version.
-    if isinstance(assignment.get('acceptedVersions'),dict):
-        with transaction(path) as db:
-            for row in db.execute('SELECT scope,event_key,version,delivered_version FROM future_calendar_events').fetchall():
-                accepted=assignment['acceptedVersions'].get(row['scope'],{}).get(row['event_key'],0)
-                if isinstance(accepted,int) and accepted<row['delivered_version']:
-                    db.execute("UPDATE future_calendar_events SET delivered_version=?,next_attempt_at='' WHERE scope=? AND event_key=?",(accepted,row['scope'],row['event_key']))
-    due=[]
-    with connect(path) as db:
-        for source in _sources(now):
-            old=db.execute('SELECT * FROM future_calendar_sources WHERE source_key=?',(source['key'],)).fetchone()
-            interval=timedelta(minutes=30) if old and old['last_error'] else timedelta(hours=6)
-            if force or not old or now-datetime.fromisoformat(old['last_attempt_at'])>=interval:due.append(source)
-    def read(source):
-        try:
-            response=fetcher(source['url'])
-            if int(response.get('status',0))!=200:raise ValueError('官方日历未返回200')
-            if source['parser']=='tsmc':
-                if b'Upcoming Events' not in response['body']:raise ValueError('TSMC官方日历结构待核对')
-                events=parse_tsmc_calendar(response['body'],now=now);scope='home'
-                if not events:raise ValueError('TSMC官方日历未解析到事件，保留旧节点并等待复核')
-            elif source['parser']=='earnings':events=parse_earnings_announcements(response['body'],issuer=source['issuer'],name=source['name'],now=now);scope='home'
+class _FetchCache:
+    """Share host detail fetches across concurrent calendar and index adapters."""
+    def __init__(self, fetcher):
+        self.fetcher = fetcher
+        self.lock = Lock()
+        self.pending: dict[str, Future] = {}
+
+    def __call__(self, url):
+        with self.lock:
+            owner = url not in self.pending
+            if owner:
+                self.pending[url] = Future()
+            future = self.pending[url]
+        if owner:
+            try:
+                result = self.fetcher(url)
+                if int(result.get('status', 0)) != 200:
+                    raise ValueError(f'官方日历未返回200（{result.get("status", 0)}）')
+                if len(result['body']) > 1024 * 1024:
+                    raise ValueError('官方日历响应超过限制')
+                future.set_result(result)
+            except Exception as error:
+                future.set_exception(error)
+        return future.result()
+
+
+def _read_source(source: dict[str, Any], *, fetcher: Callable, now: datetime):
+    events = []
+    warnings = []
+    try:
+        body = fetcher(source['url'])['body']
+        kind = source['parser']
+        if kind == 'tsmc':
+            if b'Upcoming Events' not in body:
+                raise ValueError('TSMC官方日历结构待核对')
+            parsed = parse_tsmc_calendar(body, now=now)
+            if not parsed:
+                raise ValueError('TSMC官方日历未解析到事件，保留旧节点并等待复核')
+            events = [('home', event) for event in parsed]
+        elif kind == 'earnings':
+            events = [('home', event) for event in parse_earnings_announcements(body, issuer=source['issuer'], name=source['name'], now=now)]
+        elif kind == 'bls':
+            parsed = parse_bls_calendar(body, year=source['year'], month=source['month'], url=source['url'], now=now)
+            if not parsed:
+                raise ValueError('BLS日历未解析到核心发布时间，保留旧节点并等待复核')
+            events = [('zijin', event) for event in parsed]
+        elif kind in {'fed-month', 'sf-index'}:
+            if kind == 'fed-month':
+                parsed = parse_fed_month(body, year=source['year'], month=source['month'], url=source['url'])
+                warnings.extend(getattr(parsed, 'warnings', []))
             else:
-                events=parse_bls_calendar(response['body'],year=source['year'],month=source['month'],url=source['url'],now=now);scope='zijin'
-                if not events:raise ValueError('BLS日历未解析到核心发布时间，保留旧节点并等待复核')
-            return source,scope,events,''
-        except Exception as e:return source,'',[],type(e).__name__+': '+str(e)[:160]
+                parsed = []
+                def read_host(url):
+                    try:
+                        return parse_sf_event(fetcher(url)['body'], url=url, now=now), ''
+                    except Exception as error:
+                        return None, '主办方议程待核验：' + type(error).__name__ + ': ' + str(error)[:120]
+                with ThreadPoolExecutor(max_workers=3) as hosts:
+                    for candidate, error in hosts.map(read_host, sf_upcoming_links(body, now=now)):
+                        if candidate is not None:
+                            parsed.append(candidate)
+                        if error:
+                            warnings.append(error)
+            for candidate in parsed:
+                board_reference = None
+                if candidate.detail_url:
+                    try:
+                        detail = parse_sf_event(fetcher(candidate.detail_url)['body'], url=candidate.detail_url)
+                        if detail.scheduled_at is not None and candidate.scheduled_at is not None and abs(detail.scheduled_at - candidate.scheduled_at) > timedelta(hours=12):
+                            warnings.append(f'conflict[{candidate.key}] 美联储与主办方日程时间不一致，暂停确认该会议')
+                            continue
+                        if detail.scheduled_at is not None:
+                            if candidate.scheduled_at == detail.scheduled_at:
+                                board_reference = candidate
+                            candidate = detail
+                    except Exception as error:
+                        warnings.append('主办方详情暂未核验，保留美联储日程：' + type(error).__name__)
+                if candidate.scheduled_at is None:
+                    event = {'key': candidate.key, 'version': 1, 'title': candidate.title, 'date': candidate.local_date,
+                             'time': '', 'status': 'tentative', 'category': 'market', 'originalTimeZone': candidate.local_timezone,
+                             'originalScheduledAt': '', 'note': '官方仅公布当地举办日期；具体时点及北京时间待确认。',
+                             'source': {'name': candidate.source_name, 'url': candidate.url, 'publishedAt': '',
+                                        'verifiedAt': _iso(now), 'evidenceExcerpt': candidate.evidence}}
+                else:
+                    event = _event(candidate.key, candidate.title, candidate.scheduled_at, candidate.source_name,
+                                   candidate.url, candidate.evidence, now, category='market')
+                event['importance'] = candidate.importance
+                event['note'] += ' 这是会前日程，不代表讲话原文已经发布。'
+                if board_reference is not None:
+                    # The existing receiver supports Board evidence. Keep that
+                    # genuine corroborating source, rather than inventing a URL
+                    # or expanding another application's allowlist.
+                    event['source']['name'] = '美联储官方日程（主办方复核）'
+                    event['source']['url'] = board_reference.url
+                    event['source']['evidenceExcerpt'] = (board_reference.evidence + '; 主办方复核：' + candidate.evidence + '; ' + candidate.url)[:2000]
+                    event['note'] += ' 主办方议程：' + candidate.url
+                scopes = ['home', 'zijin'] if candidate.importance >= 4 else ['zijin']
+                events.extend((scope, event) for scope in scopes)
+        else:
+            raise ValueError('未配置官方日历适配器')
+    except Exception as error:
+        warnings.append(type(error).__name__ + ': ' + str(error)[:160])
+    return source, events, '; '.join(warnings)[:500]
+
+
+def supply_future_events(*, path: object = None, now: datetime | None = None, fetcher: Callable = _fetch_official_channel,
+                         assignment_fetcher: Callable | None = None, sender: Callable = _post_calendar,
+                         force: bool = False, target_url: str = DEFAULT_TARGET) -> dict[str, Any]:
+    from .watch_events import _fetch_payload, DEFAULT_COMPASS_EVENTS_URL
+    from .calendar_notices import queue_calendar_notices
+    import os
+
+    now = now or datetime.now(UTC)
+    at = _iso(now)
+    report = {'checkedAt': at, 'sources': 0, 'discovered': 0, 'queued': 0, 'delivered': 0, 'failed': 0, 'errors': []}
+    assignment = {}
+    try:
+        payload = (assignment_fetcher or _fetch_payload)(os.environ.get('INSTANT_AI_COMPASS_EVENTS_URL', DEFAULT_COMPASS_EVENTS_URL))
+        assignment = payload.get('calendarIngestion', {})
+    except Exception as error:
+        report['errors'].append('接收端暂未连通：' + type(error).__name__)
+    receiver_ready = assignment.get('contractVersion') == 1 and all(scope in assignment.get('tokens', {}) for scope in ['home', 'zijin', 'status'])
+    # Discovery and local notifications continue during a receiver outage.
+    if receiver_ready and isinstance(assignment.get('acceptedVersions'), dict):
+        with transaction(path) as db:
+            for row in db.execute('SELECT scope,event_key,delivered_version FROM future_calendar_events').fetchall():
+                accepted = assignment['acceptedVersions'].get(row['scope'], {}).get(row['event_key'], 0)
+                if isinstance(accepted, int) and accepted < row['delivered_version']:
+                    db.execute("UPDATE future_calendar_events SET delivered_version=?,next_attempt_at='' WHERE scope=? AND event_key=?", (accepted, row['scope'], row['event_key']))
+    due = []
+    configured = _sources(now)
+    with connect(path) as db:
+        fed = db.execute("SELECT enabled FROM sources WHERE key='federal-reserve-calendar'").fetchone()
+        if fed is not None and not fed[0]:
+            configured = [source for source in configured if source['parser'] not in {'fed-month', 'sf-index'}]
+        for source in configured:
+            old = db.execute('SELECT * FROM future_calendar_sources WHERE source_key=?', (source['key'],)).fetchone()
+            seconds = source.get('poll_seconds', 21600)
+            if old and old['last_error']:
+                seconds = min(seconds, 300 if source['parser'] in {'fed-month', 'sf-index'} else 1800)
+            if force or not old or now - datetime.fromisoformat(old['last_attempt_at']) >= timedelta(seconds=seconds):
+                due.append(source)
+    cached_fetch = _FetchCache(fetcher)
     with ThreadPoolExecutor(max_workers=3) as pool:
-        for source,scope,events,error in pool.map(read,due):
-            report['sources']+=1
-            with transaction(path) as db:
-                db.execute('''INSERT INTO future_calendar_sources VALUES(?,?,?,?) ON CONFLICT(source_key) DO UPDATE SET last_attempt_at=excluded.last_attempt_at,
+        results = list(pool.map(lambda source: _read_source(source, fetcher=cached_fetch, now=now), due))
+    conflicts = {key for _source, _events, error in results for key in re.findall(r'conflict\[(fed:[a-z0-9:-]+)\]', error)}
+    observations = {}
+    for source, events, error in results:
+        report['sources'] += 1
+        with transaction(path) as db:
+            db.execute('''INSERT INTO future_calendar_sources VALUES(?,?,?,?) ON CONFLICT(source_key) DO UPDATE SET last_attempt_at=excluded.last_attempt_at,
                     last_success_at=CASE WHEN excluded.last_error='' THEN excluded.last_success_at ELSE last_success_at END,last_error=excluded.last_error''',
-                    (source['key'],at,'' if error else at,error))
-            for event in events:
-                scheduled=datetime.fromisoformat(event['originalScheduledAt'])
-                if now-timedelta(days=7)<=scheduled<=now+timedelta(days=100):
-                    report['discovered']+=int(_store(scope,event,path=path,now=now))
+                       (source['key'], at, '' if error else at, error))
+        for scope, event in events:
+            if event['key'] in conflicts:
+                continue
+            identity = (scope, event['key'])
+            old = observations.get(identity)
+            if old and old['originalScheduledAt'] and not event['originalScheduledAt']:
+                continue
+            if (old and old['originalScheduledAt'] == event['originalScheduledAt']
+                    and urlparse(old['source']['url']).hostname == 'www.federalreserve.gov'):
+                continue
+            observations[identity] = event
+    for (scope, _key), event in observations.items():
+        scheduled_date = datetime.fromisoformat(event['date']).date()
+        if now.date() - timedelta(days=7) <= scheduled_date <= now.date() + timedelta(days=100):
+            report['discovered'] += int(_store(scope, event, path=path, now=now))
+    report['localNotices'] = queue_calendar_notices(path=path, now=now)
     with connect(path) as db:
-        rows=db.execute("SELECT * FROM future_calendar_events WHERE version>delivered_version AND (next_attempt_at='' OR next_attempt_at<=?) ORDER BY checked_at LIMIT 80",(at,)).fetchall()
-        report['errors']=[row[0] for row in db.execute("SELECT source_key||': '||last_error FROM future_calendar_sources WHERE last_error<>'' LIMIT 8")]
+        states = {row['source_key']: dict(row) for row in db.execute('SELECT * FROM future_calendar_sources')}
+        for source in configured:
+            if states.get(source['key'], {}).get('last_error'):
+                report['errors'].append(source['key'] + ': ' + states[source['key']]['last_error'])
+        rows = db.execute("SELECT * FROM future_calendar_events WHERE version>delivered_version AND json_extract(payload_json,'$.originalScheduledAt')<>'' AND (next_attempt_at='' OR next_attempt_at<=?) ORDER BY checked_at LIMIT 80", (at,)).fetchall() if receiver_ready else []
+    fed_states = [states.get(source['key'], {}) for source in configured if source['parser'] in {'fed-month', 'sf-index'}]
+    if fed_states:
+        latest_attempt = max((state.get('last_attempt_at', '') for state in fed_states), default='')
+        successes = [state.get('last_success_at', '') for state in fed_states]
+        success = min(successes) if all(successes) else ''
+        errors = '; '.join(state['last_error'] for state in fed_states if state.get('last_error'))[:500]
+        with transaction(path) as db:
+            db.execute("""UPDATE sources SET last_attempt_at=?,last_success_at=CASE WHEN ?<>'' THEN ? ELSE last_success_at END,
+                last_error=?,last_item_count=(SELECT COUNT(DISTINCT event_key) FROM future_calendar_events WHERE event_key LIKE 'fed:%'),
+                updated_at=? WHERE key='federal-reserve-calendar'""", (latest_attempt, success, success, errors or None, at))
     for row in rows:
-        report['queued']+=1
         try:
-            event=json.loads(row['payload_json'])
-            receipt=sender(target_url,{'contractVersion':1,'sourceSystem':'instant-ai','scope':row['scope'],'deliveryToken':assignment['tokens'][row['scope']],'event':event})
-            if receipt.get('version')!=row['version']:raise ValueError('罗盘回执版本不匹配')
-            with transaction(path) as db:db.execute("UPDATE future_calendar_events SET delivered_version=?,attempts=0,next_attempt_at='',last_error='',received_at=? WHERE scope=? AND event_key=? AND version=?",(row['version'],receipt.get('receivedAt') or at,row['scope'],row['event_key'],row['version']))
-            report['delivered']+=1
-        except Exception as e:
-            report['failed']+=1;attempts=row['attempts']+1;next_at=_iso(now+timedelta(seconds=min(1800,30*2**min(attempts,6))))
-            with transaction(path) as db:db.execute('UPDATE future_calendar_events SET attempts=?,next_attempt_at=?,last_error=? WHERE scope=? AND event_key=? AND version=?',(attempts,next_at,type(e).__name__+': '+str(e)[:180],row['scope'],row['event_key'],row['version']))
-    with connect(path) as db:
-        report['queued']=db.execute('SELECT COUNT(*) FROM future_calendar_events WHERE version>delivered_version').fetchone()[0]
-        report['failed']=db.execute("SELECT COUNT(*) FROM future_calendar_events WHERE version>delivered_version AND last_error<>''").fetchone()[0]
-    try:sender(target_url+'/status',{'contractVersion':1,'sourceSystem':'instant-ai','deliveryToken':assignment['tokens']['status'],**report})
-    except Exception as e:report['errors'].append('日历状态回执失败：'+type(e).__name__)
+            event = json.loads(row['payload_json'])
+            receipt = sender(target_url, {'contractVersion': 1, 'sourceSystem': 'instant-ai', 'scope': row['scope'], 'deliveryToken': assignment['tokens'][row['scope']], 'event': event})
+            if receipt.get('version') != row['version']:
+                raise ValueError('罗盘回执版本不匹配')
+            with transaction(path) as db:
+                db.execute("UPDATE future_calendar_events SET delivered_version=?,attempts=0,next_attempt_at='',last_error='',received_at=? WHERE scope=? AND event_key=? AND version=?", (row['version'], receipt.get('receivedAt') or at, row['scope'], row['event_key'], row['version']))
+            report['delivered'] += 1
+        except Exception as error:
+            attempts = row['attempts'] + 1
+            next_at = _iso(now + timedelta(seconds=min(1800, 30 * 2 ** min(attempts, 6))))
+            with transaction(path) as db:
+                db.execute('UPDATE future_calendar_events SET attempts=?,next_attempt_at=?,last_error=? WHERE scope=? AND event_key=? AND version=?', (attempts, next_at, type(error).__name__ + ': ' + str(error)[:180], row['scope'], row['event_key'], row['version']))
     with transaction(path) as db:
-        cutoff=(now.astimezone(SHANGHAI).date()-timedelta(days=7)).isoformat()
-        db.execute("DELETE FROM future_calendar_events WHERE json_extract(payload_json,'$.date')<>'' AND json_extract(payload_json,'$.date')<?",(cutoff,))
-    return {**report,'state':'partial' if report['errors'] or report['failed'] else 'connected'}
+        cutoff = (now.astimezone(SHANGHAI).date() - timedelta(days=7)).isoformat()
+        db.execute("DELETE FROM future_calendar_events WHERE json_extract(payload_json,'$.date')<>'' AND json_extract(payload_json,'$.date')<?", (cutoff,))
+        report['queued'] = db.execute("SELECT COUNT(*) FROM future_calendar_events WHERE version>delivered_version AND json_extract(payload_json,'$.originalScheduledAt')<>''").fetchone()[0]
+        report['failed'] = db.execute("SELECT COUNT(*) FROM future_calendar_events WHERE version>delivered_version AND json_extract(payload_json,'$.originalScheduledAt')<>'' AND last_error<>''").fetchone()[0]
+    if receiver_ready:
+        try:
+            public_report = {key: report[key] for key in ('checkedAt', 'sources', 'discovered', 'queued', 'delivered', 'failed', 'errors')}
+            sender(target_url + '/status', {'contractVersion': 1, 'sourceSystem': 'instant-ai', 'deliveryToken': assignment['tokens']['status'], **public_report})
+        except Exception as error:
+            report['errors'].append('日历状态回执失败：' + type(error).__name__)
+    state = 'waiting_receiver' if not receiver_ready else 'partial' if report['errors'] or report['failed'] else 'connected'
+    return {**report, 'state': state}

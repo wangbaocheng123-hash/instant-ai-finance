@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import sqlite3
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from .web_push import WebPushSender, validate_endpoint, validate_subscription
 
 
 WEB_PUSH_SENDER = WebPushSender(LIBRARY_ROOT / "notifications" / "vapid-private.pem")
+WEB_PUSH_DISPATCH_LOCK = threading.Lock()
 DEFAULT_SOURCE_POLL_SECONDS = 5 * 60
 GOOGLE_NEWS_POLL_SECONDS = 60 * 60
 GOOGLE_NEWS_BATCH_PER_RUN = 1
@@ -92,6 +94,11 @@ def _select_due_source_rows(
     grouped: dict[str, tuple[int, list[sqlite3.Row | dict[str, Any]]]] = {}
     deferred = 0
     for row in rows:
+        # Official calendars run on the independent event loop, even if a news
+        # source is slow. Their source row remains visible and owner-switchable.
+        if row["kind"] == "official_calendar":
+            deferred += 1
+            continue
         next_fetch = _parse_timestamp(row["next_fetch_at"])
         if next_fetch is not None and next_fetch > now:
             deferred += 1
@@ -172,10 +179,20 @@ def _queue_notifications(
     source: Source,
     analysis: Any,
     created_at: str,
+    published_at: str | None = None,
 ) -> None:
     reason = _notification_reason(source, analysis)
     if reason is None:
         return
+    if "notification_backfill_hours" in source.config:
+        baseline = connection.execute("SELECT created_at FROM sources WHERE id=?", (source.id,)).fetchone()
+        published = _parse_timestamp(published_at)
+        first_connected = _parse_timestamp(baseline[0]) if baseline else None
+        hours = max(0, min(168, int(source.config["notification_backfill_hours"])))
+        # This is a stable first-connection cutoff, not a moving freshness
+        # window: later outage recovery can still notify genuinely new releases.
+        if published is None or (first_connected and published < first_connected - timedelta(hours=hours)):
+            return
     reason_json = json.dumps(reason, ensure_ascii=False)
     connection.execute(
         """
@@ -207,10 +224,14 @@ def _upsert_entry(
     raw_path: str,
     mime_type: str,
     http_status: int,
+    *,
+    canonical_identity: str = "",
+    observed_at: str = "",
+    analysis_override: Any = None,
 ) -> tuple[bool, bool]:
-    now = utc_now()
-    analysis = analyze(entry.title, entry.summary, source.trust_level, source.topic_hints)
-    key = canonical_key(entry.url, entry.title)
+    now = observed_at or utc_now()
+    analysis = analysis_override or analyze(entry.title, entry.summary, source.trust_level, source.topic_hints)
+    key = hashlib.sha256(canonical_identity.encode()).hexdigest() if canonical_identity else canonical_key(entry.url, entry.title)
     existing = connection.execute("SELECT id, summary FROM items WHERE canonical_key = ?", (key,)).fetchone()
     is_new = existing is None
     is_updated = False
@@ -273,6 +294,7 @@ def _upsert_entry(
         source=source,
         analysis=analysis,
         created_at=now,
+        published_at=entry.published_at,
     )
 
     if entry.image_url:
@@ -574,7 +596,9 @@ def reclassify_items() -> int:
 
     with transaction() as connection:
         rows = connection.execute(
-            "SELECT id, title, summary, trust_level FROM items ORDER BY id"
+            """SELECT id, title, summary, trust_level FROM items
+               WHERE id NOT IN (SELECT item_id FROM future_calendar_notices WHERE item_id IS NOT NULL)
+               ORDER BY id"""
         ).fetchall()
         for row in rows:
             source_rows = connection.execute(
@@ -859,11 +883,31 @@ def dispatch_web_push_notifications(
     sender: WebPushSender = WEB_PUSH_SENDER,
     limit: int = 20,
 ) -> dict[str, int]:
+    # News and calendar loops share the existing outbox. One dispatcher owns
+    # delivery at a time, so simultaneous ticks cannot send the same task twice.
+    if not WEB_PUSH_DISPATCH_LOCK.acquire(blocking=False):
+        return {"attempted": 0, "delivered": 0, "failed": 0, "expired": 0}
+    try:
+        return _dispatch_web_push_notifications(path, sender=sender, limit=limit)
+    finally:
+        WEB_PUSH_DISPATCH_LOCK.release()
+
+
+def _dispatch_web_push_notifications(
+    path: Path | str | None = None,
+    *,
+    sender: WebPushSender = WEB_PUSH_SENDER,
+    limit: int = 20,
+) -> dict[str, int]:
     summary = {"attempted": 0, "delivered": 0, "failed": 0, "expired": 0}
     if not sender.available:
         return summary
     now = utc_now()
     with transaction(path) as connection:
+        connection.execute("""UPDATE notification_outbox SET status='dismissed',dismissed_at=?
+            WHERE status='pending' AND item_id IN (
+                SELECT item_id FROM future_calendar_notices WHERE expires_at<=?
+            )""", (now, now))
         notifications = connection.execute(
             """
             SELECT n.id
@@ -925,7 +969,7 @@ def dispatch_web_push_notifications(
                 "title": f"即时 AI · {heading}",
                 "body": row["title"],
                 "url": f"/?item={row['item_id']}",
-                "tag": f"instant-ai-item-{row['item_id']}",
+                "tag": f"instant-ai-calendar-{reason['calendar_event_key']}" if reason.get("calendar_event_key") else f"instant-ai-item-{row['item_id']}",
                 "item_id": row["item_id"],
             },
         )

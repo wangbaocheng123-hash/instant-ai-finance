@@ -45,3 +45,13 @@ class FutureEventSchedulerTests(unittest.TestCase):
             self.assertEqual(supply.call_count,2)
             self.assertEqual(server.COLLECTION_STATE['future_calendar']['state'],'connected')
             sync.assert_not_called()
+
+    def test_push_failure_preserves_discovery_state_and_is_reported_separately(self):
+        stop=threading.Event()
+        def tick():
+            stop.set()
+            return {'state':'connected','delivered':0}
+        with patch.object(server,'supply_future_events',side_effect=tick),patch.object(server,'dispatch_web_push_notifications',side_effect=OSError('synthetic push outage')):
+            server._calendar_scheduler_loop(stop_event=stop)
+        self.assertEqual(server.COLLECTION_STATE['future_calendar']['state'],'connected')
+        self.assertEqual(server.COLLECTION_STATE['future_calendar']['notification_error'],'OSError')

@@ -27,6 +27,7 @@ OFFICIAL_HOST_SUFFIXES = frozenset({
     "census.gov",
     "customs.gov.cn",
     "federalreserve.gov",
+    "frbsf.org",
     "adpemploymentreport.com",
     "ustr.gov",
     "semi.org",

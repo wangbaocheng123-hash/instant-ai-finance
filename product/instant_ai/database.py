@@ -13,7 +13,7 @@ from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensur
 from .publishers import resolve_publisher_identity
 
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -66,6 +66,37 @@ DEFAULT_SOURCES = (
         "trust_level": 5,
         "topic_hints": ["宏观政策"],
         "config": {"max_entries": 40},
+    },
+    {
+        "key": "federal-reserve-calendar",
+        "name": "美联储官方会议与讲话日程",
+        "kind": "official_calendar",
+        "url": "https://www.federalreserve.gov/newsevents/calendar.htm",
+        "trust_level": 5,
+        "topic_hints": ["全球财经", "华尔街", "宏观政策"],
+        "config": {
+            "managed_by": "future_calendar",
+            "notification_reason": "官方日程核实的重要会议预告、改期或临近提醒",
+            "rights_scope": "calendar_dates_titles_links_only",
+        },
+    },
+    {
+        "key": "federal-reserve-speeches",
+        "name": "美联储官方讲话原文更新",
+        "kind": "rss",
+        "url": "https://www.federalreserve.gov/feeds/speeches.xml",
+        "trust_level": 5,
+        "topic_hints": ["全球财经", "华尔街", "宏观政策"],
+        "config": {"max_entries": 40, "notification_min_score": 75, "notification_backfill_hours": 24, "notification_reason": "美联储官方新讲话原文已发布"},
+    },
+    {
+        "key": "federal-reserve-testimony",
+        "name": "美联储官方国会证词更新",
+        "kind": "rss",
+        "url": "https://www.federalreserve.gov/feeds/testimony.xml",
+        "trust_level": 5,
+        "topic_hints": ["全球财经", "华尔街", "宏观政策"],
+        "config": {"max_entries": 40, "notification_min_score": 75, "notification_backfill_hours": 24, "notification_reason": "美联储官方新证词原文已发布"},
     },
     {
         "key": "eia-today-in-energy",
@@ -564,6 +595,19 @@ def initialize(path: Path | str | None = None) -> None:
                 dismissed_at TEXT,
                 UNIQUE(item_id, channel)
             );
+
+            CREATE TABLE IF NOT EXISTS future_calendar_notices (
+                notice_key TEXT PRIMARY KEY,
+                event_key TEXT NOT NULL,
+                schedule_hash TEXT NOT NULL,
+                notice_kind TEXT NOT NULL,
+                item_id INTEGER REFERENCES items(id) ON DELETE SET NULL,
+                created_at TEXT NOT NULL,
+                scheduled_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_calendar_notices_event
+                ON future_calendar_notices(event_key, created_at);
 
             CREATE TABLE IF NOT EXISTS web_push_subscriptions (
                 id TEXT PRIMARY KEY,
