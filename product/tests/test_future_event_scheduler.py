@@ -40,7 +40,7 @@ class FutureEventSchedulerTests(unittest.TestCase):
             count+=1
             if count==1:raise OSError('synthetic outage')
             stop.set();return {'state':'connected','delivered':0}
-        with patch.object(server,'supply_future_events',side_effect=tick) as supply,patch.object(server,'sync_watch_events') as sync:
+        with patch.object(server,'supply_future_events',side_effect=tick) as supply,patch.object(server,'sync_watch_events') as sync,patch.object(server,'dispatch_web_push_notifications',return_value={}):
             server._calendar_scheduler_loop(stop_event=stop,interval_seconds=.001)
             self.assertEqual(supply.call_count,2)
             self.assertEqual(server.COLLECTION_STATE['future_calendar']['state'],'connected')
