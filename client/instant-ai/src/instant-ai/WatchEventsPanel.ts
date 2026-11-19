@@ -51,12 +51,13 @@ export class WatchEventsPanel {
   }
 
   render(response: WatchEventsResponse): void {
-    this.count.textContent = String(response.counts.total);
+    const policyCount = response.monetaryPolicy?.signals.length || 0;
+    this.count.textContent = String(response.counts.total + policyCount);
     const summary = document.createElement('div');
     summary.className = 'watch-summary';
     summary.append(
-      this.metric('全部', response.counts.total),
-      this.metric('首页', response.counts.home),
+      this.metric('全部', response.counts.total + policyCount),
+      this.metric('首页', response.counts.home + policyCount),
       this.metric('紫金', response.counts.zijin),
       this.metric('官方正常', response.counts.official_reachable),
     );
@@ -73,7 +74,47 @@ export class WatchEventsPanel {
       .forEach((event) => list.append(this.eventCard(event)));
     if (response.events.length === 0) list.append(this.message('罗盘尚未同步重点事件，连接后会自动出现。'));
     const discovery = this.discoveryPanel(response.discovery);
-    this.body.replaceChildren(...(discovery ? [discovery, summary, sync, list] : [summary, sync, list]));
+    const policy = this.policyPanel(response.monetaryPolicy);
+    this.body.replaceChildren(...[policy, discovery, summary, sync, list].filter((node): node is HTMLElement => node !== null));
+  }
+
+  private policyPanel(policy: WatchEventsResponse['monetaryPolicy']): HTMLElement | null {
+    if (!policy) return null;
+    const section = document.createElement('section');
+    section.className = 'official-calendar-discovery monetary-policy-signals';
+    const heading = document.createElement('h3');
+    heading.textContent = `加息 / 降息重点跟踪 · ${policy.signals.length} 条`;
+    section.append(heading, this.message('正式决议、官员表态、机构预测和市场预期分别核验；输送成功不等于政策已确认。'));
+    for (const signal of policy.signals) {
+      const card = document.createElement('article');
+      card.className = 'watch-event-content watch-official';
+      const title = document.createElement('h3');
+      title.textContent = signal.title;
+      const kind = document.createElement('p');
+      kind.textContent = `${signal.bankName} · ${signal.kindLabel}${signal.speaker ? ` · ${signal.speaker}` : ''}`;
+      const origin = document.createElement('p');
+      origin.textContent = `${signal.firstObservedSource.sourceRole === 'official-original' ? '官方原始渠道' : '已读报道渠道（首发待核验）'}：${signal.firstObservedSource.publisher}`;
+      const time = document.createElement('p');
+      const format = (value: string): string => value && !Number.isNaN(Date.parse(value))
+        ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) : '待核实';
+      time.textContent = `来源标注时间：${format(signal.publishedAt)}；系统发现：${format(signal.detectedAt)}（北京时间，原始首发时间另行核验）`;
+      const pipeline = document.createElement('p');
+      pipeline.className = signal.status === 'failed' ? 'watch-sync has-error' : 'watch-sync';
+      pipeline.textContent = signal.pipelineStatus;
+      card.append(title, kind, origin, time, pipeline);
+      try {
+        const url = new URL(signal.firstObservedSource.url);
+        if (url.protocol === 'https:' && !url.username && !url.password) {
+          const link = document.createElement('a');
+          link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
+          link.textContent = '查看来源原链接'; card.append(link);
+        }
+      } catch { /* Keep the clue visible while its source is being reviewed. */ }
+      section.append(card);
+    }
+    if (!policy.signals.length) section.append(this.message('尚无新锁定的利率政策线索，已接入来源持续监测。'));
+    section.append(this.message(policy.coverage));
+    return section;
   }
 
   private discoveryPanel(discovery: WatchEventsResponse['discovery']): HTMLElement | null {

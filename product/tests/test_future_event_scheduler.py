@@ -9,8 +9,11 @@ from instant_ai import server
 class FutureEventSchedulerTests(unittest.TestCase):
     def setUp(self):
         self.state = dict(server.COLLECTION_STATE)
+        self.policy_patch = patch.object(server, 'dispatch_policy_signals', return_value={'state': 'idle', 'delivered': 0})
+        self.policy_patch.start()
 
     def tearDown(self):
+        self.policy_patch.stop()
         server.COLLECTION_STATE.clear()
         server.COLLECTION_STATE.update(self.state)
 
@@ -55,3 +58,15 @@ class FutureEventSchedulerTests(unittest.TestCase):
             server._calendar_scheduler_loop(stop_event=stop)
         self.assertEqual(server.COLLECTION_STATE['future_calendar']['state'],'connected')
         self.assertEqual(server.COLLECTION_STATE['future_calendar']['notification_error'],'OSError')
+
+    def test_policy_delivery_failure_does_not_disrupt_calendar_sync_or_notifications(self):
+        stop=threading.Event()
+        def tick():
+            stop.set()
+            return {'state':'connected','delivered':1}
+        with patch.object(server,'supply_future_events',side_effect=tick),patch.object(server,'dispatch_policy_signals',side_effect=OSError('synthetic policy receiver outage')),patch.object(server,'sync_watch_events') as sync,patch.object(server,'dispatch_web_push_notifications',return_value={}) as push:
+            server._calendar_scheduler_loop(stop_event=stop)
+        self.assertEqual(server.COLLECTION_STATE['future_calendar']['state'],'connected')
+        self.assertEqual(server.COLLECTION_STATE['future_calendar']['monetary_policy']['state'],'failed')
+        sync.assert_called_once()
+        push.assert_called_once()

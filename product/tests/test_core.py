@@ -528,7 +528,7 @@ class DatabaseTests(unittest.TestCase):
                 source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
                 version = connection.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()[0]
             self.assertEqual(source_count, len(DEFAULT_SOURCES))
-            self.assertEqual(version, "15")
+            self.assertEqual(version, "16")
             with connect(path) as connection:
                 tables = {
                     row[0]

@@ -457,6 +457,7 @@ def scan_watch_events(*, path: object = None) -> dict[str, Any]:
 
 
 def refresh_watch_events(*, path: object = None) -> dict[str, Any]:
+    from .monetary_policy import dispatch_policy_signals
     sync = sync_watch_events(path=path)
     official = monitor_official_channels(path=path)
     delivery = deliver_event_signals(
@@ -464,7 +465,8 @@ def refresh_watch_events(*, path: object = None) -> dict[str, Any]:
         target_url=os.environ.get("INSTANT_AI_COMPASS_SIGNAL_URL", DEFAULT_COMPASS_SIGNAL_URL),
     )
     scan = scan_watch_events(path=path)
-    return {"sync": sync, "official": official, "delivery": delivery, "scan": scan}
+    policy = dispatch_policy_signals(path=path)
+    return {"sync": sync, "official": official, "delivery": delivery, "scan": scan, "monetary_policy": policy}
 
 
 def _recent_change(value: object, *, now: datetime) -> bool:

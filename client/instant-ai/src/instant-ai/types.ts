@@ -591,6 +591,12 @@ export interface WatchEvent {
 }
 
 export interface WatchEventsResponse {
+  monetaryPolicy?: {
+    coverage: string;
+    signals: Array<{ key: string; title: string; bankName: string; kindLabel: string; speaker: string;
+      itemId: number | null; publishedAt: string; detectedAt: string; status: string; pipelineStatus: string;
+      firstObservedSource: { publisher: string; url: string; publishedAt: string; sourceRole: string; originality: string } }>;
+  };
   discovery?: {
     enabled: boolean;
     coverage: string;

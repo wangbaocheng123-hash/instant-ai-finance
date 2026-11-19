@@ -16,6 +16,7 @@ from .paths import BACKUPS_ROOT, DATABASE_PATH, EVIDENCE_ROOT, EXPORTS_ROOT, LIB
 from .publishers import UNKNOWN_PUBLISHER
 from .rules import analyze, canonical_key
 from .retention import published_within_hard_limit, run_retention_cleanup
+from .monetary_policy import lock_policy_entry
 from .thumbnails import (
     THUMBNAIL_BROWSER_CACHE_VERSION,
     invalidate_google_news_image_index,
@@ -110,7 +111,10 @@ def _select_due_source_rows(
         else:
             grouped.setdefault(group, (limit, []))[1].append(row)
 
-    selected = list(normal)
+    # Policy sources must not sit behind unrelated, slow news endpoints.
+    priority_keys = {"federal-reserve-monetary-policy", "federal-reserve-press",
+                     "federal-reserve-speeches", "federal-reserve-testimony", "cnbc-top-news", "cnbc-finance"}
+    selected = sorted(normal, key=lambda row: str(row["key"]) not in priority_keys)
     for limit, candidates in grouped.values():
         candidates.sort(key=lambda row: (str(row["next_fetch_at"] or ""), int(row["id"])))
         selected.extend(candidates[:limit])
@@ -358,6 +362,7 @@ def _upsert_entry(
         (item_id,),
     ).fetchone()[0]
     connection.execute("UPDATE items SET source_count=? WHERE id=?", (source_count, item_id))
+    lock_policy_entry(connection, source, entry, item_id=item_id, observed_at=now)
     return is_new, is_updated
 
 
@@ -598,6 +603,7 @@ def reclassify_items() -> int:
         rows = connection.execute(
             """SELECT id, title, summary, trust_level FROM items
                WHERE id NOT IN (SELECT item_id FROM future_calendar_notices WHERE item_id IS NOT NULL)
+                 AND id NOT IN (SELECT item_id FROM monetary_policy_signals WHERE item_id IS NOT NULL)
                ORDER BY id"""
         ).fetchall()
         for row in rows:

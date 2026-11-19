@@ -42,6 +42,7 @@ from .reader_translation import translate_reader_item
 from .translation import translate_items, translation_status
 from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 from .watch_events import list_watch_events, refresh_watch_events, sync_watch_events
+from .monetary_policy import dispatch_policy_signals, policy_snapshot
 from .future_events import supply_future_events
 from .calendar_notices import calendar_snapshot
 from .model_mr import MODEL_MR, ModelMrUnavailable, ModelMrWorkNotFound
@@ -183,6 +184,10 @@ def _calendar_scheduler_loop(*, stop_event: threading.Event | None = None,
         try:
             result = supply_future_events()
             COLLECTION_STATE["future_calendar"] = result
+            try:
+                result["monetary_policy"] = dispatch_policy_signals()
+            except Exception as error:
+                result["monetary_policy"] = {"state": "failed", "error": type(error).__name__}
             try:
                 result["mobile_notifications"] = dispatch_web_push_notifications()
             except Exception as error:
@@ -1067,7 +1072,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         elif path == "/api/hot":
             self._json(query_hot_items(limit=int(query.get("limit", ["40"])[0])))
         elif path == "/api/watch-events":
-            self._json({**list_watch_events(), "discovery": calendar_snapshot()})
+            self._json({**list_watch_events(), "discovery": calendar_snapshot(), "monetaryPolicy": policy_snapshot()})
         elif path.startswith("/api/items/") and path.endswith("/thumbnail"):
             parts = path.strip("/").split("/")
             if len(parts) != 4:

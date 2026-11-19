@@ -13,7 +13,7 @@ from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensur
 from .publishers import resolve_publisher_identity
 
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -66,6 +66,15 @@ DEFAULT_SOURCES = (
         "trust_level": 5,
         "topic_hints": ["宏观政策"],
         "config": {"max_entries": 40},
+    },
+    {
+        "key": "federal-reserve-monetary-policy",
+        "name": "美联储货币政策原始发布",
+        "kind": "rss",
+        "url": "https://www.federalreserve.gov/feeds/press_monetary.xml",
+        "trust_level": 5,
+        "topic_hints": ["全球财经", "华尔街", "宏观政策"],
+        "config": {"max_entries": 40, "notification_backfill_hours": 24},
     },
     {
         "key": "federal-reserve-calendar",
@@ -493,6 +502,18 @@ def initialize(path: Path | str | None = None) -> None:
                 source_key TEXT PRIMARY KEY,last_attempt_at TEXT NOT NULL,
                 last_success_at TEXT NOT NULL DEFAULT '',last_error TEXT NOT NULL DEFAULT ''
             );
+
+            CREATE TABLE IF NOT EXISTS monetary_policy_signals (
+                signal_key TEXT PRIMARY KEY,story_key TEXT NOT NULL UNIQUE,source_url TEXT NOT NULL,
+                item_id INTEGER REFERENCES items(id) ON DELETE SET NULL,evidence_hash TEXT NOT NULL,
+                payload_json TEXT NOT NULL,first_seen_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending'
+                    CHECK(status IN ('pending','delivered','failed','date_review')),
+                attempts INTEGER NOT NULL DEFAULT 0,next_attempt_at TEXT NOT NULL DEFAULT '',
+                last_error TEXT NOT NULL DEFAULT '',compass_signal_id TEXT NOT NULL DEFAULT '',
+                feedback TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_monetary_policy_pending ON monetary_policy_signals(status,next_attempt_at);
 
             CREATE TABLE IF NOT EXISTS sources (
                 id INTEGER PRIMARY KEY,
