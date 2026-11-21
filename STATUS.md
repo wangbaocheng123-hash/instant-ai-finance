@@ -7,6 +7,7 @@
 
 ## 本轮已完成
 
+- 新加坡账号已连接目标主机`iZt4nikvwazxwfaghfb7ezZ`，开发检出`/home/compassdev/Documents/Codex/2026-08-26/instant-ai-finance`从`dbc1a56`安全快进到`83bcaf3`，main干净且与origin/main一致。现有受控SSH可读北京1.2.0版本及模型302，18817/18819空闲。运行Caddy使用`Caddyfile.instant-ai`并保留三项独立import，罗盘发布器仅替换自身Caddyfile并验证组合。新增可复现的一次性网关安装脚本，含完整组合预检、来源SHA、备份和异常回退，待Linux检查与实际安装。
 - 所有者确认北京套件统一使用`collector.grandpaamu.com`，授权本次通过右侧已登录的阿里云页面操作，按北京账号、新加坡账号顺序完成。迁移工作树从`ca44335`安全快进到`dbc1a56`，origin身份一致，快进后干净且相对origin/main领先/落后均0，其他工作树保留。
 - 当前北京Workbench只读核对四项服务active、采集器版本1.2.0/10fdb3a、模型回环302登录保护、独立中文社区路由及既有SSH回环转发许可。阿里云为grandpaamu.com新增collector记录。9项北京部署契约及Caddy合成网关路由通过。完整Windows回归未通过，其中出现Linux fcntl依赖和SQLite临时文件占用，Linux正式发布门禁仍需执行。
 - 较早故障定位确认截图中的读取失败来自公网域名解析失效，当时北京服务和回环dashboard正常，旧域名SNI定向检查可返回版本/登录，两普通域名均解析失败。后续已完成新域DNS恢复，网关仍待验收。

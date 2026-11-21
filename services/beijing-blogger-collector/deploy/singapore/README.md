@@ -11,6 +11,8 @@
 
 ## 上线前检查与顺序
 
+一次性基础设施安装使用本目录 `apply-collector-gateway.sh`。先从干净且与 `origin/main` 一致的 Git 检出执行 `sudo bash .../apply-collector-gateway.sh --check`，通过后省略 `--check` 安装。脚本拒绝覆盖已有采集网关，保留三项既有 import，校验完整组合，核实两个真实北京回环后加载 Caddy。当前共享配置为 `admin off`，因此使用短暂 restart。异常时恢复共享包装文件、撤回新单元和站点，备份及来源 SHA 保存在 `/etc/caddy/backups/collector-gateway.*`。应用源码与生产分支不随这次基础设施安装更新。
+
 1. 在新加坡核对 18817 和 18819 空闲，确认既有 SSH 身份可转发到北京回环 18797、8787。运行 `systemd-analyze verify` 检查候选单元。得到生产维护授权后，独立安装并启动该单元。在新加坡读取 18817 的 `/health/version`，校对北京采集器身份和修订号，确认 18819 未登录返回原登录入口。
 2. 运行 `python3 services/beijing-blogger-collector/deploy/singapore/render-collector-gateway.py` 生成 `collector-grandpaamu.caddy`。备份当前 `/etc/caddy/Caddyfile.instant-ai`，在候选包装配置末尾追加一次 `import /etc/caddy/collector-grandpaamu.caddy`。校验完整配置并核对罗盘、即时 AI 与社区的已有 import。现场 Caddy 共享配置关闭管理接口，按已有受控维护流程加载配置并核验各站点。
 3. 为精确主机 `collector` 启用 A 记录 `47.236.175.118`，完成证书签发。用普通公网访问核对 `/health/version`、登录前的访问限制和主人登录后的 `/`、`/collector/`、`/model`，然后依次执行北京和即时 AI 的既定发布流程。
