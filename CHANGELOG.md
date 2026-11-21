@@ -1,5 +1,11 @@
 # 变更记录
 
+## 2026-11-21 — 采集新域主人登录与完整文件下载验收通过
+
+- 按所有者明确指令，在北京既有Git外认证文件重设采集/模型共用的主人凭据并刷新登录会话，只重启模型Web服务。凭据、Cookie和签名密钥未进入Git或验收截图。
+- 新域实际登录后，统一首页、博主API和模型库正常，模型五页分页均通过。通过原下载链接完整获取已有作品7700060192449336313，5163224字节，MP4 ftyp，文件摘要留存在STATUS；未触发新采集、重下或收费AI。
+- 入口任务验收完成。历史媒体未就绪两条、92/88统计差额及博主传输待重试2条另列P3-BLOGGER-LEGACY-01，保留原状态；没有把新域下载通过等同于历史失败全部修复或原GPT报告通知恢复。
+
 ## 2026-11-21 — 北京采集统一新域服务器入口上线
 
 - 新加坡main干净同步到8b17a686d28fa2fe31e7cc1aa165ba622de4d0c6，9项Linux部署契约、bash语法、systemd和完整Caddy组合校验通过。执行同提交apply-collector-gateway.sh，返回COLLECTOR_GATEWAY_INSTALLED；备份/etc/caddy/backups/collector-gateway.XKrauM，源SHA留存在服务器。

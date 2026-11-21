@@ -20,4 +20,4 @@
 
 ## 2026-11-21 现场回执
 
-`8b17a686d28fa2fe31e7cc1aa165ba622de4d0c6`在新加坡安装成功，备份为`/etc/caddy/backups/collector-gateway.XKrauM`。网关enabled/active，18817与18819只监听回环。普通公网版本为北京原应用1.2.0/10fdb3a，TLS与匿名登录保护通过，原站点及两套OAuth元数据正常。主人登录后页面及实际下载仍待验收；应用正式分支未推进。
+`8b17a686d28fa2fe31e7cc1aa165ba622de4d0c6`在新加坡安装成功，备份为`/etc/caddy/backups/collector-gateway.XKrauM`。网关enabled/active，18817与18819只监听回环。普通公网版本为北京原应用1.2.0/10fdb3a，TLS与匿名登录保护通过，原站点及两套OAuth元数据正常。后续经主人明确要求在原Git外认证配置重设凭据，实际登录、统一首页、博主页、模型页、分页及一条5163224字节已有MP4下载均已通过；新作品采集未在本次触发，应用正式分支未推进。
