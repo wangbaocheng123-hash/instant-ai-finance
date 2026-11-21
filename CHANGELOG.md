@@ -1,5 +1,11 @@
 # 变更记录
 
+## 2026-11-21 — 北京采集新域DNS生效，网关待接通
+
+- 所有者确认统一使用collector.grandpaamu.com，并授权本次在右侧已登录阿里云页面按账号顺序处理。迁移工作树从ca44335安全快进到dbc1a56，保留其他检出现场。
+- 已在grandpaamu.com区域新增精确collector A记录，默认线路、TTL600秒、47.236.175.118，原四条记录保留。系统默认DNS和公共解析已返回该地址。北京采集器仍1.2.0/10fdb3a，采集器、模型下载器、模型Web及Caddy均active，模型回环302登录保护、既有SSH回环转发许可通过只读核对。
+- 9项部署契约和独立Caddy合成路由通过。完整Windows回归未通过，其中出现Linux fcntl依赖和SQLite临时文件占用，须在Linux发布门禁复核。新加坡网关、HTTPS、主人登录和真实下载仍待验收，生产应用分支本轮尚未推进。
+
 ## 2026-11-21 — 北京采集器大杂烩1.3.0候选与入口故障定位
 
 - 现场只读检查确认北京采集服务、Caddy、回环健康/dashboard和北京→新加坡传输配置正常，生产仍为1.2.0/10fdb3a，发布timer保持disabled/inactive。手机`Load failed`来自公网入口：旧collector.amuyeye.com和候选collector.grandpaamu.com均无可用DNS记录；旧PWA壳可从缓存显示但API无法连接。旧域SNI直达北京仍返回正确版本/登录，当前无AliDNS权限，未改DNS、Caddy或证书。
