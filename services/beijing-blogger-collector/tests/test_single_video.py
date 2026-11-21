@@ -4,6 +4,7 @@ import tempfile
 import threading
 import unittest
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -80,11 +81,12 @@ class SingleVideoLinkTests(unittest.TestCase):
 
 class SingleVideoCollectionTests(unittest.TestCase):
     @contextmanager
-    def service(self, *, mode="count"):
+    def service(self, *, mode="count", link_only=False):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             settings = SimpleNamespace(
-                source_account_name="指定博主", creator_profile_url="https://www.douyin.com/user/fixture",
+                source_account_name="大杂烩" if link_only else "指定博主",
+                creator_profile_url="" if link_only else "https://www.douyin.com/user/fixture",
                 creator_sync_enabled=False, creator_sync_mode=mode, creator_sync_history_limit=50,
                 creator_sync_interval_minutes=10, creator_comments_enabled=True,
                 creator_comment_limit=20, creator_comment_refresh_minutes=60, creator_comment_tracking_hours=1,
@@ -95,7 +97,8 @@ class SingleVideoCollectionTests(unittest.TestCase):
                 callback = MagicMock(return_value=True)
                 service = CreatorSyncService(
                     settings, Storage(root / "fixture.sqlite3"), content_root=root / "creators",
-                    execution_lock=threading.Lock(), managed_schedule=True, on_content_ready=callback,
+                    execution_lock=threading.Lock(), managed_schedule=True,
+                    link_only=link_only, on_content_ready=callback,
                 )
                 yield service, callback
 
@@ -138,6 +141,112 @@ class SingleVideoCollectionTests(unittest.TestCase):
                     self.assertEqual(row["title"], "指定作品")
                     self.assertEqual(row["author"], "指定博主")
                     self.assertFalse(service._execution_lock.locked())
+
+    def test_miscellaneous_accepts_only_one_link_without_a_profile(self):
+        with self.service(link_only=True) as (service, _callback):
+            queued = service.run_now(video_url=URL, videos_only=True)
+            self.assertTrue(queued["queued"])
+            self.assertTrue(queued["link_only"])
+            self.assertIn("只处理这一条", queued["message"])
+            with self.assertRaisesRegex(ValueError, "不扫描博主主页"):
+                service.run_now()
+
+    def test_miscellaneous_download_uses_an_isolated_source_and_fixed_author(self):
+        with self.service(link_only=True) as (service, callback):
+            with patch.object(creator_sync, "ProfileScanner") as scanner, \
+                 patch.object(creator_sync, "DouyinResolver") as resolver, \
+                 patch.object(creator_sync, "download_video", side_effect=self.fake_download), \
+                 patch.object(creator_sync, "inspect_mp4", return_value={"has_mdat": True, "has_video": True}):
+                resolver.return_value.resolve.return_value = SimpleNamespace(
+                    video_id=VIDEO_ID,
+                    title="任意博主的一条作品",
+                )
+
+                service._perform_cycle(
+                    manual=True,
+                    force_comments=False,
+                    videos_only=True,
+                    video_url=URL,
+                )
+
+            scanner.assert_not_called()
+            callback.assert_called_once()
+            row = service.storage.get_video(callback.call_args.args[0])
+            self.assertEqual(row["author"], "大杂烩")
+            self.assertEqual(row["source"], "douyin-link-bucket")
+            self.assertEqual(row["source_video_id"], VIDEO_ID)
+
+    def test_same_work_in_profile_and_miscellaneous_does_not_move_existing_record(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            storage = Storage(root / "fixture.sqlite3")
+            common = {
+                "creator_sync_enabled": False,
+                "creator_sync_mode": "count",
+                "creator_sync_history_limit": 1,
+                "creator_sync_interval_minutes": 10,
+                "creator_comments_enabled": False,
+                "creator_comment_limit": 20,
+                "creator_comment_refresh_minutes": 60,
+                "creator_comment_tracking_hours": 1,
+            }
+            normal_settings = SimpleNamespace(
+                **common,
+                source_account_name="真实博主",
+                creator_profile_url="https://www.douyin.com/user/fixture",
+            )
+            miscellaneous_settings = SimpleNamespace(
+                **common,
+                source_account_name="大杂烩",
+                creator_profile_url="",
+            )
+            work = SimpleNamespace(
+                video_id=VIDEO_ID,
+                url=URL,
+                title="同一条作品",
+                created_at=datetime(2026, 9, 1, 8, 0, 0),
+            )
+            profile_file = root / "profile.mp4"
+            miscellaneous_file = root / "miscellaneous.mp4"
+            profile_file.write_bytes(b"profile-copy")
+            miscellaneous_file.write_bytes(b"miscellaneous-copy")
+            with patch.object(creator_sync, "RUNTIME_DIR", root / "runtime"), \
+                 patch.object(creator_sync, "PROFILE_DIR", root / "profile"), \
+                 patch.object(creator_sync, "STATE_PATH", root / "state.json"):
+                profile_service = CreatorSyncService(
+                    normal_settings,
+                    storage,
+                    runtime_key="profile-creator",
+                    content_root=root / "creators",
+                )
+                miscellaneous_service = CreatorSyncService(
+                    miscellaneous_settings,
+                    storage,
+                    runtime_key="miscellaneous",
+                    content_root=root / "creators",
+                    link_only=True,
+                )
+                profile_id = profile_service._register_video(
+                    work,
+                    output=profile_file,
+                    creator="真实博主",
+                    title="同一条作品",
+                )
+                miscellaneous_id = miscellaneous_service._register_video(
+                    work,
+                    output=miscellaneous_file,
+                    creator="大杂烩",
+                    title="同一条作品",
+                )
+
+            self.assertNotEqual(profile_id, miscellaneous_id)
+            self.assertEqual(storage.get_video(profile_id)["author"], "真实博主")
+            self.assertEqual(storage.get_video(profile_id)["source"], "douyin-auto")
+            self.assertEqual(storage.get_video(miscellaneous_id)["author"], "大杂烩")
+            self.assertEqual(
+                storage.get_video(miscellaneous_id)["source"],
+                "douyin-link-bucket",
+            )
 
     def test_wrong_resolved_video_never_downloads_and_releases_lock(self):
         with self.service() as (service, callback):

@@ -84,6 +84,9 @@ class BeijingDeploymentContractTests(unittest.TestCase):
         collector_css = (PROJECT_ROOT / "collector_web" / "styles.css").read_text(
             encoding="utf-8"
         )
+        collector_js = (PROJECT_ROOT / "collector_web" / "app.js").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('name="viewport"', collector_html)
         self.assertIn("width=device-width", collector_html)
         self.assertIn("仅手动采集", collector_html)
@@ -97,6 +100,9 @@ class BeijingDeploymentContractTests(unittest.TestCase):
         self.assertIn('aria-live="polite"', collector_html)
         self.assertIn('href="/model"', collector_html)
         self.assertIn("@media (max-width: 620px)", collector_css)
+        self.assertIn("固定链接作品库", collector_js)
+        self.assertIn("抓取并归入大杂烩", collector_js)
+        self.assertIn("无法连接北京采集服务", collector_js)
 
         manifest = (
             PROJECT_ROOT / "collector_web" / "manifest.webmanifest"
@@ -108,6 +114,7 @@ class BeijingDeploymentContractTests(unittest.TestCase):
         self.assertIn('"short_name": "北极采集"', manifest)
         self.assertIn('url.pathname.includes("/api/collector/")', service_worker)
         self.assertIn("SCOPE_PATH", service_worker)
+        self.assertIn("north-pole-collector-shell-v6", service_worker)
 
     def test_unified_domain_reuses_model_login_and_keeps_both_backends_loopback(self) -> None:
         caddy = self.read("collector.Caddyfile.example")

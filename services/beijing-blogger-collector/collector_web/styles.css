@@ -140,6 +140,7 @@ main {
 }
 .creator-tab.active { border-color: #dde2e8; color: #2e343c; background: #fff; box-shadow: 0 3px 12px rgba(41, 49, 58, 0.08); }
 .tab-indicator { margin-left: 7px; color: var(--orange); font-size: 10px; }
+.tab-kind { margin-left: 7px; padding: 2px 5px; border-radius: 999px; color: #85510f; background: #fff0cf; font-size: 10px; }
 .add-creator { flex: none; width: 46px; padding: 0; color: var(--blue); border-color: transparent; background: #edf3ff; font-size: 24px; }
 
 .creator-headline {

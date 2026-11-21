@@ -25,12 +25,24 @@ class FakeRegistry:
                 "id": "creator-one",
                 "name": "贵族\u200b之路",
                 "platform": "douyin",
+                "collection_kind": "profile",
                 "profile_url": "https://must-not-be-returned.invalid/private-profile",
                 "creator_sync_history_limit": 7,
                 "creator_comments_enabled": True,
                 "creator_comment_limit": 5000,
                 "creator_comment_tracking_hours": 24,
-            }
+            },
+            {
+                "id": "miscellaneous",
+                "name": "大杂烩",
+                "platform": "douyin",
+                "collection_kind": "link_only",
+                "profile_url": "",
+                "creator_sync_history_limit": 1,
+                "creator_comments_enabled": True,
+                "creator_comment_limit": 5000,
+                "creator_comment_tracking_hours": 24,
+            },
         ]
 
     def list(self):
@@ -489,12 +501,26 @@ print(json.dumps(sorted(set(loaded))))
             self.assertTrue(result["accepted"])
             self.assertEqual(manager.run_requests, ["creator-one"])
             self.assertEqual(manager.run_options, [{"video_url": url, "force_comments": True, "videos_only": False}])
+            status, error = post(
+                "/api/collector/run-once",
+                {"creator_id": "miscellaneous"},
+            )
+            self.assertEqual(status, 400)
+            self.assertIn("不扫描博主主页", error["error"])
+            status, result = post(
+                "/api/collector/run-once",
+                {"creator_id": "miscellaneous", "video_url": url},
+            )
+            self.assertEqual(status, 202)
+            self.assertEqual(result["creator_id"], "miscellaneous")
+            self.assertEqual(manager.run_requests[-1], "miscellaneous")
+            self.assertEqual(manager.run_options[-1]["video_url"], url)
             for bad in ("", "https://www.douyin.com/user/test", 12, "https://localhost/private"):
                 status, _ = post("/api/collector/run-once", {"creator_id": "creator-one", "video_url": bad})
                 self.assertEqual(status, 400)
             status, _ = post("/api/collector/resolve-video", {"creator_id": "missing", "video_url": url})
             self.assertEqual(status, 400)
-            self.assertEqual(manager.run_requests, ["creator-one"])
+            self.assertEqual(manager.run_requests, ["creator-one", "miscellaneous"])
         finally:
             server.shutdown()
             server.server_close()

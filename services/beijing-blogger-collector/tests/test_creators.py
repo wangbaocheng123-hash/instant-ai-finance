@@ -8,7 +8,15 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 
-from mx_agent.creators import CreatorRegistry, CreatorSyncManager
+from mx_agent.creators import (
+    LINK_ONLY_COLLECTION_KIND,
+    MISC_CREATOR_ID,
+    MISC_CREATOR_NAME,
+    MISC_CREATOR_UUID,
+    MISC_PLATFORM_USER_ID,
+    CreatorRegistry,
+    CreatorSyncManager,
+)
 from mx_agent.investment_thoughts import InvestmentThoughtService
 from mx_agent.settings import load_settings
 from mx_agent.storage import Storage
@@ -27,10 +35,17 @@ class CreatorRegistryTests(unittest.TestCase):
     def test_migrates_existing_single_creator_as_primary(self) -> None:
         registry = CreatorRegistry(self.settings, path=self.registry_path)
         creators = registry.list()
-        self.assertEqual(len(creators), 1)
+        self.assertEqual(len(creators), 2)
         self.assertEqual(creators[0]["id"], "primary")
         self.assertEqual(creators[0]["name"], self.settings.source_account_name)
         self.assertEqual(creators[0]["profile_url"], self.settings.creator_profile_url)
+        miscellaneous = registry.get(MISC_CREATOR_ID)
+        self.assertEqual(miscellaneous["name"], MISC_CREATOR_NAME)
+        self.assertEqual(miscellaneous["creator_uuid"], MISC_CREATOR_UUID)
+        self.assertEqual(miscellaneous["platform_user_id"], MISC_PLATFORM_USER_ID)
+        self.assertEqual(miscellaneous["collection_kind"], LINK_ONLY_COLLECTION_KIND)
+        self.assertEqual(miscellaneous["profile_url"], "")
+        self.assertFalse(miscellaneous["creator_sync_enabled"])
 
     def test_new_creator_has_independent_sync_settings(self) -> None:
         registry = CreatorRegistry(self.settings, path=self.registry_path)
@@ -89,7 +104,69 @@ class CreatorRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "请填写抖音博主主页链接"):
             registry.create({"name": "没有主页的博主"})
 
-        self.assertEqual(len(registry.list()), 1)
+        self.assertEqual(len(registry.list()), 2)
+
+    def test_existing_named_miscellaneous_creator_is_upgraded_without_identity_change(self) -> None:
+        existing_uuid = "e20f3957-28ad-4faa-a210-b43493c3f31d"
+        self.registry_path.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "creators": [
+                        {
+                            **CreatorRegistry(self.settings, path=self.root / "seed.json").get("primary"),
+                        },
+                        {
+                            "id": "creator-old-misc",
+                            "creator_uuid": existing_uuid,
+                            "name": "大杂烩",
+                            "profile_url": "https://www.douyin.com/user/old-placeholder",
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        registry = CreatorRegistry(self.settings, path=self.registry_path)
+        miscellaneous = registry.get(MISC_CREATOR_ID)
+
+        self.assertEqual(miscellaneous["creator_uuid"], existing_uuid)
+        self.assertEqual(miscellaneous["profile_url"], "")
+        self.assertEqual(miscellaneous["platform_user_id"], MISC_PLATFORM_USER_ID)
+        self.assertEqual(len([item for item in registry.list() if item["name"] == "大杂烩"]), 1)
+
+    def test_miscellaneous_identity_is_fixed_but_comment_settings_remain_editable(self) -> None:
+        registry = CreatorRegistry(self.settings, path=self.registry_path)
+
+        updated, old_name = registry.update(
+            MISC_CREATOR_ID,
+            {
+                "name": MISC_CREATOR_NAME,
+                "profile_url": "",
+                "creator_comments_enabled": False,
+                "creator_comment_limit": 321,
+            },
+        )
+
+        self.assertEqual(old_name, MISC_CREATOR_NAME)
+        self.assertFalse(updated["creator_comments_enabled"])
+        self.assertEqual(updated["creator_comment_limit"], 321)
+        with self.assertRaisesRegex(ValueError, "名称不能修改"):
+            registry.update(MISC_CREATOR_ID, {"name": "另一个名称"})
+        with self.assertRaisesRegex(ValueError, "不绑定博主主页"):
+            registry.update(
+                MISC_CREATOR_ID,
+                {"profile_url": "https://www.douyin.com/user/forbidden"},
+            )
+        with self.assertRaisesRegex(ValueError, "内置"):
+            registry.create(
+                {
+                    "name": MISC_CREATOR_NAME,
+                    "profile_url": "https://www.douyin.com/user/duplicate",
+                }
+            )
 
     def test_manager_shares_one_lock_and_callback_across_creator_services(self) -> None:
         registry = CreatorRegistry(self.settings, path=self.registry_path)
@@ -126,8 +203,9 @@ class CreatorRegistryTests(unittest.TestCase):
             )
             manager.ensure("primary")
             manager.ensure(second["id"])
+            manager.ensure(MISC_CREATOR_ID)
 
-        self.assertEqual(len(created_services), 2)
+        self.assertEqual(len(created_services), 3)
         self.assertTrue(
             all(
                 service.kwargs["execution_lock"] is execution_lock
@@ -145,8 +223,14 @@ class CreatorRegistryTests(unittest.TestCase):
         )
         self.assertEqual(
             {service.kwargs["runtime_key"] for service in created_services},
-            {"primary", second["id"]},
+            {"primary", second["id"], MISC_CREATOR_ID},
         )
+        link_only_by_runtime = {
+            service.kwargs["runtime_key"]: service.kwargs["link_only"]
+            for service in created_services
+        }
+        self.assertTrue(link_only_by_runtime[MISC_CREATOR_ID])
+        self.assertFalse(link_only_by_runtime["primary"])
 
     def test_collector_manager_can_stay_available_without_automatic_rotation(self) -> None:
         registry = CreatorRegistry(self.settings, path=self.registry_path)

@@ -11,7 +11,13 @@ from mx_agent.collector_export import (
     CollectorContentReadyAdapter,
     CollectorExportError,
 )
-from mx_agent.creators import CreatorRegistry
+from mx_agent.creators import (
+    MISC_CREATOR_ID,
+    MISC_CREATOR_NAME,
+    MISC_CREATOR_UUID,
+    MISC_PLATFORM_USER_ID,
+    CreatorRegistry,
+)
 from mx_agent.storage import Storage
 from mx_agent.transfer_contract import MAX_COMMENT_ITEMS
 from mx_agent.transfer_outbox import TransferOutbox
@@ -240,6 +246,37 @@ class CollectorExportTests(unittest.TestCase):
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, encoded_comments)
+
+    def test_miscellaneous_work_uses_one_fixed_singapore_creator_identity(self) -> None:
+        source_work_id = "7000000000000000777"
+        video_id, _created = self.storage.upsert_video(
+            {
+                "source": "douyin-link-bucket",
+                "source_video_id": source_work_id,
+                "author": MISC_CREATOR_NAME,
+                "title": "来自任意博主的一条作品",
+                "description": "统一归档到大杂烩。",
+                "url": f"https://www.douyin.com/video/{source_work_id}",
+                "published_at": "2026-11-21T08:00:00+08:00",
+                "discovered_at": "2026-11-21T08:10:00+08:00",
+                "raw_json": {"douyin_aweme_id": source_work_id},
+            }
+        )
+
+        exported = self.adapter().export(video_id, MISC_CREATOR_ID)
+        queued = self.adapter()(video_id, MISC_CREATOR_ID)
+
+        self.assertEqual(
+            exported.creator,
+            {
+                "creator_id": MISC_CREATOR_UUID,
+                "display_name": MISC_CREATOR_NAME,
+                "platform": "douyin",
+                "platform_user_id": MISC_PLATFORM_USER_ID,
+            },
+        )
+        self.assertEqual(queued["manifest"]["creator"], exported.creator)
+        self.assertEqual(queued["manifest"]["work"]["source_work_id"], source_work_id)
 
     def test_comment_limit_and_missing_media_produce_incomplete_but_valid_manifest(self) -> None:
         video_id = self.add_video("7000000000000000002")

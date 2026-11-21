@@ -29,6 +29,12 @@ INT_FIELDS = {
     "creator_comment_refresh_minutes": (30, 1440),
     "creator_comment_tracking_hours": (1, 720),
 }
+PROFILE_COLLECTION_KIND = "profile"
+LINK_ONLY_COLLECTION_KIND = "link_only"
+MISC_CREATOR_ID = "miscellaneous"
+MISC_CREATOR_NAME = "大杂烩"
+MISC_CREATOR_UUID = "6fe1c729-3b3d-5a0f-b628-5e898f9d2a41"
+MISC_PLATFORM_USER_ID = "instant-ai-miscellaneous"
 
 
 def _clean(value: Any, limit: int = 240) -> str:
@@ -132,16 +138,46 @@ class CreatorRegistry:
             seen_uuids.add(creator["creator_uuid"])
             creators.append(creator)
         if not creators:
-            creators = [self._legacy_creator()]
-        if creators[0]["id"] != "primary" and "primary" not in seen_ids:
-            creators[0]["id"] = "primary"
+            creators = [self._normalize(self._legacy_creator(), fallback_id="primary")]
+        if not any(item["id"] == "primary" for item in creators):
+            creators.insert(
+                0,
+                self._normalize(self._legacy_creator(), fallback_id="primary"),
+            )
+        if not any(item["id"] == MISC_CREATOR_ID for item in creators):
+            creators.append(self._normalize(self._misc_creator()))
         self._write(creators)
         return creators
+
+    def _misc_creator(self, existing: dict[str, Any] | None = None) -> dict[str, Any]:
+        raw = {**self._legacy_creator(), **(existing or {})}
+        raw.update(
+            {
+                "id": MISC_CREATOR_ID,
+                "creator_uuid": raw.get("creator_uuid") or MISC_CREATOR_UUID,
+                "name": MISC_CREATOR_NAME,
+                "collection_kind": LINK_ONLY_COLLECTION_KIND,
+                "profile_url": "",
+                "platform_user_id": MISC_PLATFORM_USER_ID,
+                "sec_uid": "",
+                "creator_sync_mode": "count",
+                "creator_sync_enabled": False,
+                "creator_sync_history_limit": 1,
+            }
+        )
+        return raw
 
     def _normalize(self, raw: dict[str, Any], fallback_id: str = "") -> dict[str, Any]:
         creator_id = _clean(raw.get("id"), 80) or fallback_id or f"creator-{uuid.uuid4().hex[:12]}"
         creator_id = re.sub(r"[^A-Za-z0-9_-]+", "-", creator_id).strip("-")
         name = _clean(raw.get("name") or raw.get("source_account_name"), 60) or "新博主"
+        if creator_id == MISC_CREATOR_ID or name.casefold() == MISC_CREATOR_NAME.casefold():
+            raw = self._misc_creator(raw)
+            creator_id = MISC_CREATOR_ID
+            name = MISC_CREATOR_NAME
+        collection_kind = _clean(raw.get("collection_kind"), 30).lower()
+        if collection_kind != LINK_ONLY_COLLECTION_KIND:
+            collection_kind = PROFILE_COLLECTION_KIND
         mode = _clean(raw.get("creator_sync_mode"), 20).lower()
         if mode not in {"count", "realtime"}:
             mode = "realtime" if bool(raw.get("creator_sync_enabled")) else "count"
@@ -154,6 +190,7 @@ class CreatorRegistry:
             "creator_uuid": _creator_uuid(raw.get("creator_uuid")),
             "name": name,
             "platform": "douyin",
+            "collection_kind": collection_kind,
             "profile_url": profile_url,
             "platform_user_id": (
                 derived_platform_user_id
@@ -198,6 +235,8 @@ class CreatorRegistry:
         name = _clean(payload.get("name") or payload.get("source_account_name"), 60)
         if not name:
             raise ValueError("请填写博主名称。")
+        if name.casefold() == MISC_CREATOR_NAME.casefold():
+            raise ValueError("“大杂烩”是内置的指定链接作品库，请直接选择它。")
         with self._lock:
             if any(item["name"].casefold() == name.casefold() for item in self._creators):
                 raise ValueError("已经存在同名博主。")
@@ -226,6 +265,20 @@ class CreatorRegistry:
                 raise ValueError("博主不存在，请刷新页面后重试。")
             current = self._creators[index]
             raw = dict(current)
+            if current.get("collection_kind") == LINK_ONLY_COLLECTION_KIND:
+                requested_name = _clean(
+                    payload.get("name", payload.get("source_account_name", MISC_CREATOR_NAME)),
+                    60,
+                )
+                requested_profile = _clean(
+                    payload.get("profile_url", payload.get("creator_profile_url", "")),
+                    1000,
+                )
+                if requested_name and requested_name != MISC_CREATOR_NAME:
+                    raise ValueError("内置“大杂烩”名称不能修改。")
+                if requested_profile:
+                    raise ValueError("“大杂烩”不绑定博主主页，只接受单条作品链接。")
+                raw = self._misc_creator(raw)
             if "source_account_name" in payload or "name" in payload:
                 raw["name"] = _clean(payload.get("name") or payload.get("source_account_name"), 60)
                 if not raw["name"]:
@@ -329,12 +382,15 @@ class CreatorSyncManager:
     def ensure(self, creator_id: str) -> CreatorSyncService:
         with self._lock:
             service = self._services.get(creator_id)
+            creator = self.registry.get(creator_id)
             settings = self.registry.settings_for(creator_id)
+            link_only = creator.get("collection_kind") == LINK_ONLY_COLLECTION_KIND
             if service is None:
                 service = CreatorSyncService(
                     settings,
                     self.storage,
                     runtime_key=creator_id,
+                    link_only=link_only,
                     execution_lock=self._execution_lock,
                     managed_schedule=True,
                     on_content_ready=self._on_content_ready,
@@ -343,6 +399,7 @@ class CreatorSyncManager:
                 service.start()
             else:
                 service.settings = settings
+                service.link_only = link_only
                 service.wake()
             return service
 

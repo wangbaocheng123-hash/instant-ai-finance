@@ -87,13 +87,13 @@
       <form id="settingsForm" class="dialog-shell">
         <div class="dialog-heading">
           <div>
-            <p class="eyebrow">当前博主独立配置</p>
-            <h2>采集设置</h2>
+            <p id="settingsEyebrow" class="eyebrow">当前博主独立配置</p>
+            <h2 id="settingsTitle">采集设置</h2>
           </div>
           <button class="icon-button" type="button" data-close-dialog="settingsDialog" aria-label="关闭">×</button>
         </div>
 
-        <div class="form-grid">
+        <div id="profileSettingsFields" class="form-grid">
           <label>
             <span>博主名称</span>
             <input id="settingsName" name="name" maxlength="60" required>
@@ -105,7 +105,7 @@
           </label>
         </div>
 
-        <section class="setting-card">
+        <section id="bulkSettingsCard" class="setting-card">
           <div class="manual-mode-row">
             <div>
               <strong>按数量手动抓取</strong>
@@ -121,11 +121,11 @@
 
         <section class="setting-card single-video-card">
           <div>
-            <strong>指定一条视频</strong>
-            <p class="single-video-help">粘贴抖音视频链接或完整分享文案，自动识别后只抓取这一条。</p>
+            <strong id="singleVideoTitle">指定一条视频</strong>
+            <p id="singleVideoHelp" class="single-video-help">粘贴抖音视频链接或完整分享文案，自动识别后只抓取这一条。</p>
           </div>
           <label for="settingsVideoUrl">
-            <span>这位博主的视频链接</span>
+            <span id="singleVideoLabel">这位博主的视频链接</span>
             <textarea id="settingsVideoUrl" rows="3" maxlength="4096" placeholder="例如：https://v.douyin.com/… 或包含链接的整段分享文案"></textarea>
           </label>
           <p id="singleVideoPreview" class="single-video-preview" role="status" aria-live="polite">请确认链接属于当前博主。识别链接不会启动采集。</p>
@@ -135,7 +135,7 @@
         <section class="setting-card">
           <label class="check-row">
             <input id="settingsCommentsEnabled" name="comments_enabled" type="checkbox">
-            <span>同时抓取作品评论、作者点赞和作者回复</span>
+            <span id="commentsOptionLabel">同时抓取作品评论、作者点赞和作者回复</span>
           </label>
           <div class="form-grid comment-options">
             <label>
@@ -149,12 +149,12 @@
           </div>
         </section>
 
-        <div class="settings-note">指定视频沿用下方评论设置。保存设置不会开始采集；抓取前会再次确认。</div>
+        <div id="settingsNote" class="settings-note">指定视频沿用下方评论设置。保存设置不会开始采集；抓取前会再次确认。</div>
         <div class="dialog-actions split-actions">
           <button id="forceCommentsButton" type="button">补抓当前可见评论</button>
           <span class="action-spacer"></span>
           <button type="button" data-close-dialog="settingsDialog">取消</button>
-          <button class="primary" type="submit">保存设置</button>
+          <button id="saveSettingsButton" class="primary" type="submit">保存设置</button>
           <button id="saveAndRunButton" class="brown" type="button">保存并抓取</button>
         </div>
       </form>
@@ -177,7 +177,7 @@
           <span>抖音博主主页</span>
           <textarea id="newCreatorProfileUrl" name="profile_url" rows="3" placeholder="粘贴主页链接或分享文案" required></textarea>
         </label>
-        <p class="dialog-help">新增只保存博主资料，不会立即采集。</p>
+        <p class="dialog-help">新增只保存博主资料，不会立即采集。“大杂烩”已固定内置，不需要重复新增。</p>
         <div class="dialog-actions">
           <button type="button" data-close-dialog="addCreatorDialog">取消</button>
           <button class="primary" type="submit">新增博主</button>

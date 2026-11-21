@@ -431,6 +431,9 @@ class CollectorRuntime:
             raise ValueError("creator_id 无效。")
         creator = self.registry.get(runtime_key)
         safe_runtime_key = str(creator.get("id") or "").strip()
+        link_only = str(creator.get("collection_kind") or "") == "link_only"
+        if link_only and not str(video_url or "").strip():
+            raise VideoLinkError("大杂烩不扫描博主主页，请先粘贴一条抖音视频链接。")
         options = {"force_comments": bool(force_comments), "videos_only": bool(videos_only)}
         if video_url:
             options["video_url"] = normalize_video_link(video_url)
@@ -447,6 +450,12 @@ class CollectorRuntime:
             "id": _safe_text(creator.get("id"), 80),
             "name": _safe_text(creator.get("name"), 120),
             "platform": _safe_text(creator.get("platform"), 40),
+            "collection_kind": (
+                "link_only"
+                if str(creator.get("collection_kind") or "") == "link_only"
+                else "profile"
+            ),
+            "link_only": str(creator.get("collection_kind") or "") == "link_only",
             "profile_url": _safe_text(creator.get("profile_url"), 1000),
             "collection_mode": "manual_only",
             "history_limit": max(
@@ -560,6 +569,12 @@ class CollectorRuntime:
                     "id": creator_id,
                     "name": _safe_text(creator.get("name"), 120),
                     "platform": _safe_text(creator.get("platform"), 40),
+                    "collection_kind": (
+                        "link_only"
+                        if str(creator.get("collection_kind") or "") == "link_only"
+                        else "profile"
+                    ),
+                    "link_only": str(creator.get("collection_kind") or "") == "link_only",
                     "profile_configured": bool(creator.get("profile_url")),
                     "history_limit": max(
                         1, int(creator.get("creator_sync_history_limit") or 1)

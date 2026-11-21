@@ -78,6 +78,7 @@ class CreatorSyncService:
         content_root: Path | None = None,
         execution_lock: Any | None = None,
         managed_schedule: bool = False,
+        link_only: bool = False,
         on_content_ready: Callable[[int, str], Any] | None = None,
     ) -> None:
         self.settings = settings
@@ -85,6 +86,7 @@ class CreatorSyncService:
         self.content_root = (content_root or CREATOR_DATA_ROOT).resolve()
         self._execution_lock = execution_lock
         self._managed_schedule = bool(managed_schedule)
+        self.link_only = bool(link_only)
         self._on_content_ready = on_content_ready
         safe_runtime_key = re.sub(r"[^A-Za-z0-9_-]+", "-", runtime_key).strip("-") or "creator"
         self.runtime_key = safe_runtime_key
@@ -123,7 +125,11 @@ class CreatorSyncService:
             "running": False,
             "busy": False,
             "phase": "waiting",
-            "message": "请先在设置中填写抖音博主主页链接。",
+            "message": (
+                "等待粘贴一条抖音视频链接。"
+                if self.link_only
+                else "请先在设置中填写抖音博主主页链接。"
+            ),
             "current_aweme_id": "",
             "last_started_at": "",
             "last_finished_at": "",
@@ -298,10 +304,12 @@ class CreatorSyncService:
         videos_only: bool = False,
         video_url: str = "",
     ) -> dict[str, Any]:
-        if not self.settings.creator_profile_url:
-            raise ValueError("请先在设置中填写抖音博主主页链接。")
         parsed_start_date: date | None = None
         target_url = normalize_video_link(video_url) if video_url else ""
+        if self.link_only and not target_url:
+            raise ValueError("大杂烩不扫描博主主页，请先粘贴一条抖音视频链接。")
+        if not self.settings.creator_profile_url and not (self.link_only and target_url):
+            raise ValueError("请先在设置中填写抖音博主主页链接。")
         if target_url and start_date:
             raise ValueError("指定视频不能同时设置日期范围。")
         if str(start_date or "").strip():
@@ -332,6 +340,8 @@ class CreatorSyncService:
         return self.status()
 
     def open_login_browser(self) -> dict[str, Any]:
+        if self.link_only:
+            raise ValueError("大杂烩共用现有抖音登录，不需要绑定或打开博主主页。")
         url = str(self.settings.creator_profile_url or "").strip()
         if not url:
             raise ValueError("请先填写并保存抖音博主主页链接。")
@@ -353,6 +363,7 @@ class CreatorSyncService:
                 "sync_mode": self._sync_mode(),
                 "enabled": self._sync_mode() == "realtime",
                 "profile_configured": bool(self.settings.creator_profile_url),
+                "link_only": self.link_only,
                 "profile_url": self.settings.creator_profile_url,
                 "comments_enabled": bool(self.settings.creator_comments_enabled),
                 "interval_minutes": int(self.settings.creator_sync_interval_minutes),
@@ -1048,6 +1059,13 @@ class CreatorSyncService:
             and str((existing_video or {}).get("title") or "").strip()
         ):
             resolved_title = str(existing_video["title"])
+        source = str(
+            (existing_video or {}).get("source")
+            or ("douyin-link-bucket-image" if self.link_only else "douyin-image-auto")
+        )
+        import_method = (
+            "creator-link-bucket-image" if self.link_only else "creator-image-auto"
+        )
         raw.update(
             {
                 "source_path": str(outputs[0]),
@@ -1057,7 +1075,7 @@ class CreatorSyncService:
                 "douyin_work_type": "image",
                 "image_count": len(outputs),
                 "imported_at": now_iso(),
-                "import_method": "creator-image-auto",
+                "import_method": import_method,
                 "account_author": author,
                 "published_at_source": (
                     previous_date_source
@@ -1068,7 +1086,7 @@ class CreatorSyncService:
         )
         local_video_id, _created = self.storage.upsert_video(
             {
-                "source": str((existing_video or {}).get("source") or "douyin-image-auto"),
+                "source": source,
                 "source_video_id": str(
                     (existing_video or {}).get("source_video_id") or work.video_id
                 ),
@@ -1103,7 +1121,7 @@ class CreatorSyncService:
                     "mime_type": mime_type,
                     "size_bytes": output.stat().st_size,
                     "sha256": digest,
-                    "source": "creator-image-auto",
+                    "source": import_method,
                     "status": "stored",
                     "raw_json": {
                         "source_path": str(output),
@@ -1119,7 +1137,7 @@ class CreatorSyncService:
             local_video_id,
             url=work.url,
             aweme_id=work.video_id,
-            match_source="creator-image-auto",
+            match_source=import_method,
             match_confidence=1.0,
             metadata={"file_paths": [str(path) for path in outputs]},
         )
@@ -1141,7 +1159,13 @@ class CreatorSyncService:
             if existing_asset
             else self._find_video_by_aweme(video.video_id)
         )
-        source = str((existing_video or {}).get("source") or "douyin-auto")
+        source = str(
+            (existing_video or {}).get("source")
+            or ("douyin-link-bucket" if self.link_only else "douyin-auto")
+        )
+        import_method = (
+            "creator-link-bucket" if self.link_only else "creator-downloader-auto"
+        )
         source_video_id = str(
             (existing_video or {}).get("source_video_id") or video.video_id
         )
@@ -1177,7 +1201,7 @@ class CreatorSyncService:
                 "douyin_aweme_id": video.video_id,
                 "douyin_url": video.url,
                 "imported_at": now_iso(),
-                "import_method": "creator-downloader-auto",
+                "import_method": import_method,
                 "account_author": author,
                 "published_at_source": (
                     previous_date_source
@@ -1211,7 +1235,7 @@ class CreatorSyncService:
                     "mime_type": "video/mp4",
                     "size_bytes": output.stat().st_size,
                     "sha256": digest,
-                    "source": "creator-downloader-auto",
+                    "source": import_method,
                     "status": "stored",
                     "raw_json": {
                         "source_path": str(output),
@@ -1225,24 +1249,33 @@ class CreatorSyncService:
             local_video_id,
             url=video.url,
             aweme_id=video.video_id,
-            match_source="creator-downloader-auto",
+            match_source=import_method,
             match_confidence=1.0,
             metadata={"file_path": str(output)},
         )
         return local_video_id
 
     def _find_video_by_aweme(self, aweme_id: str) -> dict[str, Any] | None:
+        author = str(self.settings.source_account_name or "新博主")
         with self.storage.connect() as connection:
             row = connection.execute(
                 """
                 SELECT * FROM videos
-                WHERE (source = 'douyin-auto' AND source_video_id = ?)
-                   OR url LIKE ?
-                   OR raw_json LIKE ?
+                WHERE author = ?
+                  AND (
+                       source_video_id = ?
+                    OR url LIKE ?
+                    OR raw_json LIKE ?
+                  )
                 ORDER BY id DESC
                 LIMIT 1
                 """,
-                (aweme_id, f"%/{aweme_id}%", f'%"douyin_aweme_id": "{aweme_id}"%'),
+                (
+                    author,
+                    aweme_id,
+                    f"%/{aweme_id}%",
+                    f'%"douyin_aweme_id": "{aweme_id}"%',
+                ),
             ).fetchone()
         return dict(row) if row else None
 

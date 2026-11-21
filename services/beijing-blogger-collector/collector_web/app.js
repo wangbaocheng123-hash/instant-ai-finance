@@ -22,11 +22,21 @@ function appUrl(path) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(appUrl(path), {
-    cache: "no-store",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(appUrl(path), {
+      cache: "no-store",
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      ...options,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    throw new Error(
+      navigator.onLine
+        ? "无法连接北京采集服务。当前页面可能来自离线缓存，请检查采集器域名或 DNS 后重新打开。"
+        : "手机当前没有网络；页面来自离线缓存，联网后请重新打开。",
+    );
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `请求失败（${response.status}）`);
   return payload;
@@ -74,6 +84,10 @@ function currentCreator() {
     || null;
 }
 
+function isLinkOnly(creator = currentCreator()) {
+  return Boolean(creator?.link_only || creator?.collection_kind === "link_only");
+}
+
 function pendingTransfers(counts) {
   return ["pending", "manifest_accepted", "media_uploading", "finalizing", "retry_wait"]
     .reduce((total, name) => total + Number(counts?.[name] || 0), 0);
@@ -106,6 +120,7 @@ function renderCreators() {
       const indicator = element("span", "tab-indicator", "运行中");
       tab.append(indicator);
     }
+    if (isLinkOnly(creator)) tab.append(element("span", "tab-kind", "单条链接"));
     tabs.append(tab);
   }
   renderCreatorHeadline();
@@ -114,13 +129,16 @@ function renderCreators() {
 
 function renderCreatorHeadline() {
   const creator = currentCreator();
+  const linkOnly = isLinkOnly(creator);
   $("#libraryTitle").textContent = creator ? `${creator.name}作品库` : "尚未新增博主";
   $("#creatorDescription").textContent = creator
-    ? `${creator.name}已采集作品展示；查看不会打开抖音浏览器。`
+    ? (linkOnly
+      ? "不绑定任何博主主页；每次粘贴一条抖音视频链接，作品统一归入大杂烩。"
+      : `${creator.name}已采集作品展示；查看不会打开抖音浏览器。`)
     : "点击加号新增第一个博主。";
   $("#settingsButton").disabled = !creator;
   const count = Number(creator?.history_limit || 1);
-  $("#runButton").textContent = `抓取最近 ${count} 条`;
+  $("#runButton").textContent = linkOnly ? "粘贴链接抓取" : `抓取最近 ${count} 条`;
 }
 
 function renderSyncStatus() {
@@ -135,9 +153,10 @@ function renderSyncStatus() {
   }
   const sync = creator.sync || {};
   const busy = Boolean(sync.busy || sync.queued);
-  button.disabled = busy || !creator.profile_configured;
+  const linkOnly = isLinkOnly(creator);
+  button.disabled = busy || (!linkOnly && !creator.profile_configured);
   line.className = `status-line${busy ? " busy" : (sync.has_error ? " error" : "")}`;
-  if (!creator.profile_configured) {
+  if (!creator.profile_configured && !linkOnly) {
     line.textContent = `${creator.name} 尚未配置抖音主页，请先打开“设置”。`;
   } else if (busy) {
     line.textContent = `正在处理：${sync.message || "采集任务运行中"}`;
@@ -145,6 +164,8 @@ function renderSyncStatus() {
     line.textContent = sync.message || "上次采集未正常完成，请查看脱敏诊断状态。";
   } else if (sync.last_finished_at) {
     line.textContent = `上次完成 ${formatDate(sync.last_finished_at)}；当前等待手动操作。`;
+  } else if (linkOnly) {
+    line.textContent = "当前等待指定链接；不会扫描任何博主主页，也不会定时采集。";
   } else {
     line.textContent = "当前没有采集任务。只有点击抓取按钮并确认后才会运行。";
   }
@@ -180,7 +201,13 @@ function renderWorks() {
   list.replaceChildren();
   $("#visibleWorksCount").textContent = `${state.works.length} 条`;
   if (!state.works.length) {
-    list.append(element("div", "empty", "当前博主还没有已采集作品。可在上方设置抓取条数后手动启动。"));
+    list.append(element(
+      "div",
+      "empty",
+      isLinkOnly()
+        ? "大杂烩还没有作品。点击上方“粘贴链接抓取”，每次输入一条抖音视频链接。"
+        : "当前博主还没有已采集作品。可在上方设置抓取条数后手动启动。",
+    ));
     return;
   }
   for (const work of state.works) {
@@ -288,10 +315,11 @@ async function selectCreator(creatorId) {
 }
 
 function settingsPayload() {
+  const linkOnly = isLinkOnly();
   return {
-    name: $("#settingsName").value.trim(),
-    profile_url: $("#settingsProfileUrl").value.trim(),
-    history_limit: Number($("#settingsHistoryLimit").value),
+    name: linkOnly ? "大杂烩" : $("#settingsName").value.trim(),
+    profile_url: linkOnly ? "" : $("#settingsProfileUrl").value.trim(),
+    history_limit: linkOnly ? 1 : Number($("#settingsHistoryLimit").value),
     comments_enabled: $("#settingsCommentsEnabled").checked,
     comment_limit: Number($("#settingsCommentLimit").value),
     comment_tracking_hours: Number($("#settingsTrackingHours").value),
@@ -303,18 +331,40 @@ async function openSettings() {
   if (!creator) return;
   const settings = await api(`/api/collector/creators/${encodeURIComponent(creator.id)}/settings`);
   state.selectedSettings = settings;
+  const linkOnly = isLinkOnly(creator) || settings.link_only;
   $("#settingsName").value = settings.name || "";
   $("#settingsProfileUrl").value = settings.profile_url || "";
   $("#settingsHistoryLimit").value = String(settings.history_limit || 1);
   $("#settingsCommentsEnabled").checked = Boolean(settings.comments_enabled);
   $("#settingsCommentLimit").value = String(settings.comment_limit || 5000);
   $("#settingsTrackingHours").value = String(settings.comment_tracking_hours || 24);
+  $("#profileSettingsFields").hidden = linkOnly;
+  $("#bulkSettingsCard").hidden = linkOnly;
+  $("#settingsName").disabled = linkOnly;
+  $("#settingsProfileUrl").disabled = linkOnly;
+  $("#settingsHistoryLimit").disabled = linkOnly;
+  $("#settingsEyebrow").textContent = linkOnly ? "固定链接作品库" : "当前博主独立配置";
+  $("#settingsTitle").textContent = linkOnly ? "大杂烩·指定链接" : "采集设置";
+  $("#singleVideoTitle").textContent = linkOnly ? "输入一条抖音视频" : "指定一条视频";
+  $("#singleVideoHelp").textContent = linkOnly
+    ? "链接可以来自任何博主；每次只处理这一条，下载后统一传到新加坡即时 AI 的“大杂烩”。"
+    : "粘贴抖音视频链接或完整分享文案，自动识别后只抓取这一条。";
+  $("#singleVideoLabel").textContent = linkOnly ? "任意博主的一条视频链接" : "这位博主的视频链接";
+  $("#commentsOptionLabel").textContent = linkOnly
+    ? "同时抓取公开评论（不绑定主页，不把评论者误判为固定博主）"
+    : "同时抓取作品评论、作者点赞和作者回复";
+  $("#settingsNote").textContent = linkOnly
+    ? "链接识别不会开始采集；确认后只下载这一条，并沿用评论设置。不会扫描主页或抓取最近多条。"
+    : "指定视频沿用下方评论设置。保存设置不会开始采集；抓取前会再次确认。";
+  $("#saveSettingsButton").textContent = linkOnly ? "保存评论设置" : "保存设置";
   state.videoLookupVersion += 1;
   window.clearTimeout(state.videoLookupTimer);
   state.videoLookupController?.abort();
   state.singleVideo = null;
   $("#settingsVideoUrl").value = "";
-  $("#singleVideoPreview").textContent = `链接将保存到“${creator.name}”。识别链接不会启动采集。`;
+  $("#singleVideoPreview").textContent = linkOnly
+    ? "粘贴任意博主的一条抖音视频链接；识别链接不会启动采集。"
+    : `链接将保存到“${creator.name}”。识别链接不会启动采集。`;
   $("#singleVideoPreview").dataset.error = "false";
   toggleCommentOptions();
   $("#settingsDialog").showModal();
@@ -338,6 +388,10 @@ async function saveSettings({ close = true } = {}) {
 async function runSelected({ forceComments = false } = {}) {
   const creator = currentCreator();
   if (!creator) return;
+  if (isLinkOnly(creator)) {
+    await openSettings();
+    return;
+  }
   const count = Number(creator.history_limit || state.selectedSettings?.history_limit || 1);
   const action = forceComments
     ? `补抓“${creator.name}”最近 ${count} 条作品的当前可见评论`
@@ -368,11 +422,14 @@ function updateSingleVideoControls() {
   const hasInput = Boolean($("#settingsVideoUrl").value.trim());
   const ready = Boolean(state.singleVideo) && hasInput;
   const pending = state.singleVideoSubmitting || (hasInput && !ready);
+  const linkOnly = isLinkOnly();
   $("#settingsVideoUrl").disabled = state.singleVideoSubmitting;
   $("#runSingleVideoButton").disabled = !ready || state.singleVideoSubmitting;
-  $("#saveAndRunButton").disabled = pending;
-  $("#saveAndRunButton").textContent = hasInput ? "保存并抓取这条视频" : "保存并抓取";
-  $("#forceCommentsButton").disabled = pending || !$("#settingsCommentsEnabled").checked;
+  $("#saveAndRunButton").disabled = linkOnly ? !ready || state.singleVideoSubmitting : pending;
+  $("#saveAndRunButton").textContent = linkOnly
+    ? "抓取并归入大杂烩"
+    : (hasInput ? "保存并抓取这条视频" : "保存并抓取");
+  $("#forceCommentsButton").disabled = (linkOnly && !ready) || pending || !$("#settingsCommentsEnabled").checked;
   $("#forceCommentsButton").textContent = hasInput ? "补抓这条视频评论" : "补抓当前可见评论";
 }
 
@@ -384,7 +441,11 @@ function scheduleVideoLookup() {
   state.videoLookupController?.abort();
   state.singleVideo = null;
   $("#singleVideoPreview").dataset.error = "false";
-  $("#singleVideoPreview").textContent = input ? "正在识别这条视频…" : "请确认链接属于当前博主。识别链接不会启动采集。";
+  $("#singleVideoPreview").textContent = input
+    ? "正在识别这条视频…"
+    : (isLinkOnly(creator)
+      ? "粘贴任意博主的一条抖音视频链接；识别链接不会启动采集。"
+      : "请确认链接属于当前博主。识别链接不会启动采集。");
   updateSingleVideoControls();
   if (!input || !creator) return;
   state.videoLookupTimer = window.setTimeout(async () => {
@@ -397,7 +458,9 @@ function scheduleVideoLookup() {
       });
       if (version !== state.videoLookupVersion || currentCreator()?.id !== creator.id) return;
       state.singleVideo = { ...target, input };
-      $("#singleVideoPreview").textContent = `已识别视频 ${target.video_id}，将归入“${creator.name}”。点击抓取后自动下载并按设置采集评论。`;
+      $("#singleVideoPreview").textContent = isLinkOnly(creator)
+        ? `已识别视频 ${target.video_id}。确认后只下载这一条，并统一归入“大杂烩”。`
+        : `已识别视频 ${target.video_id}，将归入“${creator.name}”。点击抓取后自动下载并按设置采集评论。`;
     } catch (error) {
       if (version !== state.videoLookupVersion || error.name === "AbortError") return;
       $("#singleVideoPreview").textContent = error.message;
@@ -416,7 +479,10 @@ async function runSingleVideo({ forceComments = false } = {}) {
     throw new Error("请等待视频链接识别完成后再抓取。");
   }
   if (!$("#settingsForm").reportValidity()) return;
-  if (!window.confirm(`确认只抓取视频 ${target.video_id}，并归入“${creator.name}”吗？\n请确认这是该博主的作品。本次不会抓取最近多条视频。`)) return;
+  const confirmation = isLinkOnly(creator)
+    ? `确认只抓取视频 ${target.video_id}，并归入“大杂烩”吗？\n本次不会扫描博主主页，也不会抓取其他作品。`
+    : `确认只抓取视频 ${target.video_id}，并归入“${creator.name}”吗？\n请确认这是该博主的作品。本次不会抓取最近多条视频。`;
+  if (!window.confirm(confirmation)) return;
   state.singleVideoSubmitting = true;
   updateSingleVideoControls();
   try {
@@ -429,7 +495,7 @@ async function runSingleVideo({ forceComments = false } = {}) {
       }),
     });
     $("#settingsDialog").close();
-    showToast("已提交指定视频任务，只处理这一条");
+    showToast(isLinkOnly(creator) ? "已提交到大杂烩，只处理这一条" : "已提交指定视频任务，只处理这一条");
     await refresh({ quiet: true });
     monitorCollection();
   } finally {
@@ -609,6 +675,7 @@ if (APP_PREFIX) {
 }
 
 refresh({ quiet: true }).catch((error) => {
+  $("#serviceState").textContent = "连接失败";
   $("#syncStatus").textContent = `采集端读取失败：${error.message}`;
   $("#syncStatus").className = "status-line error";
 });
