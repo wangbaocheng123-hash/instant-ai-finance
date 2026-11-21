@@ -1,5 +1,11 @@
 # 变更记录
 
+## 2026-11-21 — 北京采集统一新域服务器入口上线
+
+- 新加坡main干净同步到8b17a686d28fa2fe31e7cc1aa165ba622de4d0c6，9项Linux部署契约、bash语法、systemd和完整Caddy组合校验通过。执行同提交apply-collector-gateway.sh，返回COLLECTOR_GATEWAY_INSTALLED；备份/etc/caddy/backups/collector-gateway.XKrauM，源SHA留存在服务器。
+- 新增collector-beijing-gateway.service及独立collector-grandpaamu.caddy，两个端口只监听新加坡127.0.0.1，复用既有严格SSH身份转到北京原服务。共享包装文件只追加一行import，原罗盘、即时AI、社区三份配置指纹保持。Caddy按admin off既有方式restart，原应用及网关active。
+- 普通DNS/有效HTTPS验证公开版本200/1.2.0/10fdb3a、模型health ok、login200，统一首页/采集/模型及匿名API302登录，原hub和斜线路径308。即时AI0.34.0及线上新采集链接正常，罗盘网页/MCP、独立OAuth资源和中文社区通过复核。主人登录和真实下载待验收，未发布1.3.0或修改业务数据。
+
 ## 2026-11-21 — 新加坡采集网关安装流程纳入Git
 
 - 新加坡开发main从dbc1a56安全快进到83bcaf3，工作区干净。既有严格主机校验SSH真实返回北京采集器1.2.0/10fdb3a和模型302，待用端口空闲，原三份Caddy站点指纹已记录于Git外。

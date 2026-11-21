@@ -15,5 +15,9 @@
 
 1. 在新加坡核对 18817 和 18819 空闲，确认既有 SSH 身份可转发到北京回环 18797、8787。运行 `systemd-analyze verify` 检查候选单元。得到生产维护授权后，独立安装并启动该单元。在新加坡读取 18817 的 `/health/version`，校对北京采集器身份和修订号，确认 18819 未登录返回原登录入口。
 2. 运行 `python3 services/beijing-blogger-collector/deploy/singapore/render-collector-gateway.py` 生成 `collector-grandpaamu.caddy`。备份当前 `/etc/caddy/Caddyfile.instant-ai`，在候选包装配置末尾追加一次 `import /etc/caddy/collector-grandpaamu.caddy`。校验完整配置并核对罗盘、即时 AI 与社区的已有 import。现场 Caddy 共享配置关闭管理接口，按已有受控维护流程加载配置并核验各站点。
-3. 为精确主机 `collector` 启用 A 记录 `47.236.175.118`，完成证书签发。用普通公网访问核对 `/health/version`、登录前的访问限制和主人登录后的 `/`、`/collector/`、`/model`，然后依次执行北京和即时 AI 的既定发布流程。
+3. 为精确主机 `collector` 启用 A 记录 `47.236.175.118`，完成证书签发。用普通公网访问核对 `/health/version`、登录前的访问限制和主人登录后的 `/`、`/collector/`、`/model`。应用需要变更且收到相应正式发布口令时，再执行各自固定发布器；域名恢复本身不把其他待发布功能顺带上线。
 4. 出现故障时恢复包装文件并校验，重新加载后撤下采集网关的单元与新增 DNS 记录。保留北京服务和现场错误，复核同机其他站点。
+
+## 2026-11-21 现场回执
+
+`8b17a686d28fa2fe31e7cc1aa165ba622de4d0c6`在新加坡安装成功，备份为`/etc/caddy/backups/collector-gateway.XKrauM`。网关enabled/active，18817与18819只监听回环。普通公网版本为北京原应用1.2.0/10fdb3a，TLS与匿名登录保护通过，原站点及两套OAuth元数据正常。主人登录后页面及实际下载仍待验收；应用正式分支未推进。
