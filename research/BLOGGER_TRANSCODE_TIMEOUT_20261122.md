@@ -1,6 +1,6 @@
 # 大杂烩新链接转换超时排查与1.3.1修复
 
-2026-11-22；开发基线0cff6d2，线上仍1.3.0/73a7aaf。本轮源于所有者新视频失败截图，是既有大杂烩修复和新链接验收的续作；只在开发仓库修改与隔离测试，尚未发布或重试真实作品。
+2026-11-22；开发基线0cff6d2，诊断时线上1.3.0/73a7aaf。本轮源于所有者新视频失败截图，是既有大杂烩修复和新链接验收的续作。以下保留发布前诊断与隔离测试的时间边界；所有者随后明确“是的”批准发布及单条重试，1.3.1/6920057已上线，真实目标已入库和送达，结果见末节。
 
 ## 只读事实
 
@@ -26,6 +26,22 @@
 - 既有真实FFmpeg测试仍验证半尺寸H264/yuv420p和AAC/faststart；隔离用例不假装等候真实600秒，也不声称已复现目标视频的性能。未启动真实抖音解析/下载、ASR或AI，没有改生产状态。
 - 参数依据为FFmpeg官方[libx264编码选项](https://ffmpeg.org/ffmpeg-codecs.html#libx264_002c-libx264rgb)及[命令行选项](https://ffmpeg.org/ffmpeg.html)，并读取本机`ffmpeg -h encoder=libx264`确认支持、以真实命令验证输出。编码预设、线程与禁止stdin属于现有FFmpeg能力；超时/缓存策略为自有本地编排，没有引入第三方源码或外部记忆服务。
 
-## 上线与未验证范围
+## 发布前待验范围（历史检查点）
 
 仍需明确发布1.3.1后，按原北京固定套件流程上线，只针对7710805388309244411重新执行一次主人已指定的单条任务，观察真实转换耗时、实际成片/音轨、正式回执和新加坡同一大杂烩；不能用旧五条或合成测试代替本条成功。首次重试需要重新下载，因为旧程序已清理临时原片；以后失败后的复用受24小时校验缓存边界限制。原收费识别审批保持，不自动重抓其他作品、评论或扩大授权。
+
+## 1.3.1正式发布与真实单条验收
+
+所有者明确确认后，发布预检READY，beijing-production由73a7aaf3ff822835894093f34a080f53e7c6b20d安全快进6920057b25533c3ac332ced33260cb7a64c06a7c；只调用一次现有固定套件发布器。北京隔离261项检查通过、采集部署service成功，公网等待器和套件发布器均确认精确版本；公网/回环1.3.1，版本元数据18:06:08。模型发布器识别子树未变而跳过；未发布即时AI/罗盘/社区或变更基础设施。
+
+- 对照候选核实运行VERSION、collector_server.py、creator_sync.py、douyin_core.py的4个摘要一致。
+- 确认新版本空闲后，只POST一次目标7710805388309244411单链接任务，videos_only=true、force_comments=false，HTTP202接受；18:07:32.556768启动。没有重复提交、改状态或批量补办。
+- 这次源视频实际为915.2秒、1080×2142、H264+AAC、45,715,241字节；缓存18:08:50.380148形成，源摘要dfc3360bc9658a82e19e5f5c73b546a9a9dea1b8c7dc0f6bb205f3b46b58e0b1。后续中间输出2.6→6.3→19.7MB持续增长，未发生新的超时。此为重新下载取得的源信息，不能倒推旧失败时的编码耗时或性能诱因。
+- 18:17:51.074315生成交接回调，18:17:51.248239任务正常结束。全过程约619秒；源缓存完成至入库约541秒，该间隔包含转换和后续登记，不等同于精确ffmpeg进程耗时，也不承诺固定提速倍数或全部视频都在600秒内。
+- 作品/asset唯一新增67，总数66→67；评论10405保持，界面busy/has_error均false、phase waiting，提示上次采集已完成。标题《黄金 #黄金》，仍归原大杂烩runtime key/UUID，不生成第二个库。
+- 成片22,617,652字节，540×1072、H264 Main/level3.1/yuv420p、27456视频帧/915.2秒，AAC LC/915.031565秒。文件实际SHA-256为0e543da2596d8e2d8bd322296e914dd2f3eb56a6101c4bb02d3b23799f0acc34，与asset/发送媒体一致。首尾各1秒影音解码均退出0且无错误，既有媒体Range接口返回206、bytes 0-63/22617652及MP4 ftyp。成功后仅保留成片，source-cache/原片/中间输出均清理。
+- 唯一outbox revision1、attempt0，transfer_id与receipt_id同为14c4b98d85591a0157f828b0f75a282d1d811294f3b6321fd208a00c9444630a，18:18:04.081995 delivered。媒体及20字节空评论包均verified/完整上传；空包不代表采集过评论。
+- 新加坡现有只读MCP精确检索返回目标1条，record_id为cloud-video:bede4001db6942b9df1a9e46122beff5c4386e7ea7e419d0f8b0716dba916b89，同一大杂烩准确6条。目标processing_status=awaiting_asr_approval、original_status=missing；本轮没有批准或触发ASR/AI，不把媒体收到说成原文识别或GPT解读完成。
+- 发布前后仅采集器InvocationID变化；模型worker/web、社区、Caddy均active且InvocationID保持。blogger-collector-git-deploy.timer仍disabled/inactive，手动采集边界保持；未使用新的定时Git轮询。
+
+证据仅在Git外/tmp/blogger-transcode-release-20261122，包括branch-publish.log、suite-publish.log、retry-request.json、运行摘要核对、6次过程投影与final-proof.json。服务器数据库均mode=ro/query_only读取，未直接改写生产数据。P3-BLOGGER-TRANSCODE-01完成；P3-BLOGGER-MISC-01仅剩开启评论的真实手动任务验证。失败缓存恢复/24小时失效以隔离检查为证，未在生产故意制造失败；手机实际完整播放及后续识别不冒称已验收。
