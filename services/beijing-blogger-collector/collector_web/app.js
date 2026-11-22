@@ -162,8 +162,12 @@ function renderSyncStatus() {
     line.textContent = `正在处理：${sync.message || "采集任务运行中"}`;
   } else if (sync.has_error) {
     line.textContent = sync.message || "上次采集未正常完成，请查看脱敏诊断状态。";
+  } else if (sync.content_ready_legacy_review) {
+    line.textContent = sync.message || "历史发送记录需核对，详见传输状态。";
   } else if (sync.last_finished_at) {
-    line.textContent = `上次完成 ${formatDate(sync.last_finished_at)}；当前等待手动操作。`;
+    line.textContent = `上次采集完成 ${formatDate(sync.last_finished_at)}；发送结果见下方传输状态。`;
+  } else if (sync.last_content_ready_at) {
+    line.textContent = sync.message || "已交接发送队列，送达结果见下方传输状态。";
   } else if (linkOnly) {
     line.textContent = "当前等待指定链接；不会扫描任何博主主页，也不会定时采集。";
   } else {
@@ -243,7 +247,7 @@ function renderWorks() {
 
 function stateClass(name) {
   if (["delivered", "verified"].includes(name)) return "good";
-  if (["retry_wait", "pending", "manifest_accepted", "media_uploading", "finalizing"].includes(name)) return "warn";
+  if (["legacy_review", "awaiting_export", "retry_wait", "pending", "manifest_accepted", "media_uploading", "finalizing"].includes(name)) return "warn";
   if (["dead_letter", "sender_error"].includes(name)) return "bad";
   return "";
 }
@@ -253,6 +257,8 @@ function renderTransfers() {
   const summary = $("#transferSummary");
   summary.replaceChildren();
   const labels = {
+    awaiting_export: "待打包发送",
+    legacy_review: "历史发送待核对",
     delivered: "已送达",
     pending: "待发送",
     retry_wait: "等待重试",
@@ -572,7 +578,7 @@ async function monitorCollection() {
       const sync = currentCreator()?.sync || {};
       seenBusy = seenBusy || Boolean(sync.busy || sync.queued);
       if (seenBusy && !sync.busy && !sync.queued) {
-        showToast(sync.has_error ? "采集结束，请查看错误状态" : "本次采集已完成");
+        showToast(Number(sync.content_ready_pending || 0) > Number(sync.content_ready_legacy_review || 0) ? "作品已保存，发送前处理等待重试" : sync.has_error ? "采集结束，请查看错误状态" : "本次采集已完成，送达结果见传输状态");
         break;
       }
     }
@@ -644,7 +650,7 @@ $("#runButton").addEventListener("click", () => runSelected().catch((error) => s
 $("#retryButton").addEventListener("click", async () => {
   try {
     const result = await api("/api/collector/transfers/retry", { method: "POST", body: "{}" });
-    showToast(`已唤醒传输队列，提前重试 ${result.expedited || 0} 条`);
+    showToast(`已补入发送队列 ${result.enqueued || 0} 条，提前重试 ${result.expedited || 0} 条${result.export_failed ? `；仍有 ${result.export_failed} 条打包失败，稍后重试` : ""}`);
     window.setTimeout(() => refresh({ quiet: true }), 1200);
   } catch (error) {
     showToast(error.message);

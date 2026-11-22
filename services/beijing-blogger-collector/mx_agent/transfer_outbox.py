@@ -583,6 +583,17 @@ class TransferOutbox:
             ).fetchone()
             return self._serialize_row(row) if row else None
 
+    def latest_for_work(self, *, node_id: str, creator_id: str, platform: str,
+                        source_work_id: str) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT * FROM transfer_outbox
+                   WHERE node_id=? AND creator_id=? AND platform=? AND source_work_id=?
+                   ORDER BY work_revision DESC LIMIT 1""",
+                (node_id, creator_id, platform, source_work_id),
+            ).fetchone()
+            return self._serialize_row(row) if row else None
+
     def artifacts_for(self, transfer_id: str) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
             rows = connection.execute(

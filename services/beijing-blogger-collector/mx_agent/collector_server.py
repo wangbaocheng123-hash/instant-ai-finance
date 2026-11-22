@@ -302,6 +302,7 @@ class CollectorRuntime:
         self._sender_last_error_code = ""
         self._sender_last_processed = 0
         self._sender_last_failed = 0
+        self._sender_last_enqueued = 0
 
     def start(self) -> None:
         with self._state_lock:
@@ -336,6 +337,11 @@ class CollectorRuntime:
             with self._state_lock:
                 self._sender_state = "sending"
             try:
+                try:
+                    recovery = self.sync_manager.retry_pending_content_ready(limit=10)
+                except Exception:
+                    # Local recovery must never block already queued uploads.
+                    recovery = {"enqueued": 0, "failed": 1}
                 results = self.sender.run_once(
                     limit=self.configuration.sender_batch_size
                 )
@@ -351,6 +357,7 @@ class CollectorRuntime:
                     self._sender_last_error_code = ""
                     self._sender_last_processed = len(results)
                     self._sender_last_failed = failed
+                    self._sender_last_enqueued = recovery["enqueued"]
             except Exception:
                 # Sender exceptions can include local paths or endpoint details.
                 # Keep only a stable, non-secret diagnostic code here.
@@ -391,6 +398,7 @@ class CollectorRuntime:
                 "last_error_code": self._sender_last_error_code,
                 "last_processed": self._sender_last_processed,
                 "last_failed": self._sender_last_failed,
+                "last_enqueued": self._sender_last_enqueued,
             }
             running = self._started and not self._closed
         return {
@@ -555,13 +563,21 @@ class CollectorRuntime:
                 sync = {}
             busy = bool(sync.get("busy"))
             queued = bool(sync.get("queued"))
-            has_error = bool(_safe_text(sync.get("last_error"), 1))
+            pending_export = max(0, int(sync.get("content_ready_pending") or 0))
+            legacy_review = max(0, int(sync.get("content_ready_legacy_review") or 0))
+            has_error = bool(_safe_text(sync.get("last_error"), 1)) or pending_export > legacy_review
             if busy or queued:
                 safe_message = "采集任务正在运行。"
+            elif legacy_review and pending_export == legacy_review:
+                safe_message = f"本地作品已保存，{legacy_review}条历史发送记录需核对；未自动重放。"
+            elif pending_export:
+                safe_message = f"本地作品已保存，{pending_export}条尚未进入发送队列。后台会重试，也可点击补发/重试发送。"
             elif has_error:
                 safe_message = "上次采集未正常完成，请查看脱敏诊断状态。"
             elif sync.get("last_finished_at"):
                 safe_message = "上次采集已经完成，当前等待手动操作。"
+            elif sync.get("last_content_ready_at"):
+                safe_message = "本地作品已交接发送队列，送达结果请查看传输状态。"
             else:
                 safe_message = "当前没有采集任务，等待手动操作。"
             result.append(
@@ -588,6 +604,9 @@ class CollectorRuntime:
                         "last_started_at": _safe_text(sync.get("last_started_at"), 80),
                         "last_finished_at": _safe_text(sync.get("last_finished_at"), 80),
                         "has_error": has_error,
+                        "content_ready_pending": pending_export,
+                        "content_ready_legacy_review": legacy_review,
+                        "last_content_ready_at": _safe_text(sync.get("last_content_ready_at"), 80),
                         "works_seen": max(0, int(sync.get("works_seen") or 0)),
                         "works_selected": max(0, int(sync.get("works_selected") or 0)),
                         "new_downloads": max(0, int(sync.get("new_downloads") or 0)),
@@ -619,6 +638,12 @@ class CollectorRuntime:
             }
             for item in recent_transfers
         ]
+        creators = self.creator_summaries()
+        transfer_counts["awaiting_export"] = sum(
+            creator["sync"]["content_ready_pending"] - creator["sync"]["content_ready_legacy_review"]
+            for creator in creators
+        )
+        transfer_counts["legacy_review"] = sum(creator["sync"]["content_ready_legacy_review"] for creator in creators)
         return {
             "status": self.status(),
             "counts": {
@@ -626,7 +651,7 @@ class CollectorRuntime:
                 "assets": max(0, int(counts.get("assets") or 0)),
                 "comments": max(0, int(counts.get("comments") or 0)),
             },
-            "creators": self.creator_summaries(),
+            "creators": creators,
             "transfer_counts": {
                 _safe_text(key, 40): max(0, int(value or 0))
                 for key, value in transfer_counts.items()
@@ -725,9 +750,11 @@ class CollectorRuntime:
         return path, mime_type
 
     def retry_transfers(self) -> dict[str, Any]:
+        recovery = self.sync_manager.retry_pending_content_ready(force=True, limit=10)
         expedited = int(self.outbox.expedite_retries())
         self._sender_wake.set()
-        return {"accepted": True, "expedited": max(0, expedited)}
+        return {"accepted": True, "expedited": max(0, expedited),
+                "enqueued": recovery["enqueued"], "export_failed": recovery["failed"]}
 
     def close(self, *, join_timeout: float = 10.0) -> None:
         with self._state_lock:

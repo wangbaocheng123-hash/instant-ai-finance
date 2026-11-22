@@ -144,7 +144,7 @@ class CreatorRegistry:
                 0,
                 self._normalize(self._legacy_creator(), fallback_id="primary"),
             )
-        if not any(item["id"] == MISC_CREATOR_ID for item in creators):
+        if not any(item.get("collection_kind") == LINK_ONLY_COLLECTION_KIND for item in creators):
             creators.append(self._normalize(self._misc_creator()))
         self._write(creators)
         return creators
@@ -153,7 +153,9 @@ class CreatorRegistry:
         raw = {**self._legacy_creator(), **(existing or {})}
         raw.update(
             {
-                "id": MISC_CREATOR_ID,
+                # Preserve the runtime key as well as UUID: pending delivery
+                # records live in the old key's state directory.
+                "id": (existing or {}).get("id") or MISC_CREATOR_ID,
                 "creator_uuid": raw.get("creator_uuid") or MISC_CREATOR_UUID,
                 "name": MISC_CREATOR_NAME,
                 "collection_kind": LINK_ONLY_COLLECTION_KIND,
@@ -172,8 +174,8 @@ class CreatorRegistry:
         creator_id = re.sub(r"[^A-Za-z0-9_-]+", "-", creator_id).strip("-")
         name = _clean(raw.get("name") or raw.get("source_account_name"), 60) or "新博主"
         if creator_id == MISC_CREATOR_ID or name.casefold() == MISC_CREATOR_NAME.casefold():
-            raw = self._misc_creator(raw)
-            creator_id = MISC_CREATOR_ID
+            raw = self._misc_creator({**raw, "id": creator_id})
+            creator_id = str(raw["id"])
             name = MISC_CREATOR_NAME
         collection_kind = _clean(raw.get("collection_kind"), 30).lower()
         if collection_kind != LINK_ONLY_COLLECTION_KIND:
@@ -227,7 +229,10 @@ class CreatorRegistry:
         target = _clean(creator_id, 80) or "primary"
         with self._lock:
             for creator in self._creators:
-                if creator["id"] == target:
+                if creator["id"] == target or (
+                    target == MISC_CREATOR_ID
+                    and creator.get("collection_kind") == LINK_ONLY_COLLECTION_KIND
+                ):
                     return dict(creator)
         raise ValueError("博主不存在，请刷新页面后重试。")
 
@@ -257,6 +262,7 @@ class CreatorRegistry:
 
     def update(self, creator_id: str, payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
         with self._lock:
+            creator_id = self.get(creator_id)["id"]
             index = next(
                 (index for index, item in enumerate(self._creators) if item["id"] == creator_id),
                 -1,
@@ -381,8 +387,9 @@ class CreatorSyncManager:
 
     def ensure(self, creator_id: str) -> CreatorSyncService:
         with self._lock:
-            service = self._services.get(creator_id)
             creator = self.registry.get(creator_id)
+            creator_id = creator["id"]
+            service = self._services.get(creator_id)
             settings = self.registry.settings_for(creator_id)
             link_only = creator.get("collection_kind") == LINK_ONLY_COLLECTION_KIND
             if service is None:
@@ -402,6 +409,19 @@ class CreatorSyncManager:
                 service.link_only = link_only
                 service.wake()
             return service
+
+    def retry_pending_content_ready(self, *, force: bool = False, limit: int = 10) -> dict[str, int]:
+        result = {"attempted": 0, "enqueued": 0, "failed": 0}
+        for creator in self.registry.list():
+            remaining = max(0, limit - result["attempted"])
+            if not remaining:
+                break
+            outcome = self.ensure(creator["id"]).retry_pending_content_ready(
+                force=force, limit=remaining
+            )
+            for key in result:
+                result[key] += outcome[key]
+        return result
 
     def status(self, creator_id: str | None) -> dict[str, Any]:
         creator = self.registry.get(creator_id)

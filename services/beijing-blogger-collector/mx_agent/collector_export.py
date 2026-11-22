@@ -3,6 +3,7 @@ from __future__ import annotations
 import mimetypes
 import os
 import re
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
@@ -16,6 +17,7 @@ from .transfer_contract import (
     TransferContractError,
     V1_MEDIA_MIME_TYPES,
     build_comment_bundle,
+    canonical_json_bytes,
     new_manifest,
     safe_cross_platform_filename,
     sha256_file,
@@ -337,6 +339,7 @@ class CollectorContentReadyAdapter:
         if requested_limit < 1 or requested_limit > MAX_COMMENT_ITEMS:
             raise ValueError(f"max_comments 必须在 1 到 {MAX_COMMENT_ITEMS} 之间。")
         self.max_comments = requested_limit
+        self._enqueue_lock = threading.Lock()
 
     def __call__(self, video_id: int, creator_runtime_key: str) -> dict[str, Any]:
         return self.export_and_enqueue(video_id, creator_runtime_key)
@@ -481,10 +484,31 @@ class CollectorContentReadyAdapter:
         video_id: int,
         creator_runtime_key: str,
     ) -> dict[str, Any]:
+        with self._enqueue_lock:
+            return self._export_and_enqueue(video_id, creator_runtime_key)
+
+    @staticmethod
+    def _snapshot_content(manifest: Mapping[str, Any]) -> bytes:
+        content = {key: value for key, value in manifest.items()
+                   if key not in {"collector", "revision_sha256", "transfer_id"}}
+        content["work"] = {key: value for key, value in manifest["work"].items()
+                           if key != "revision"}
+        return canonical_json_bytes(content)
+
+    def _export_and_enqueue(self, video_id: int, creator_runtime_key: str) -> dict[str, Any]:
         exported = self.export(video_id, creator_runtime_key)
 
         # Validate all protocol-facing fields before consuming monotonic numbers.
-        self._manifest(exported, source_sequence=1, work_revision=1)
+        baseline = self._manifest(exported, source_sequence=1, work_revision=1)
+        existing = self.outbox.latest_for_work(
+            node_id=self.collector_node_id, creator_id=exported.creator["creator_id"],
+            platform=exported.work["platform"], source_work_id=exported.work["source_work_id"],
+        )
+        if existing and self._snapshot_content(existing["manifest"]) == self._snapshot_content(baseline):
+            if existing["status"] == "dead_letter":
+                raise CollectorExportError("已有传输被拒绝，需要核对后处理，未重复创建。")
+            return {**existing, "reused": True, "comment_count": exported.comment_count,
+                    "media_count": len(exported.media)}
         comment_path = self._write_comment_bundle(exported)
         artifacts = [*exported.media_artifacts]
         artifacts.append(

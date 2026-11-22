@@ -133,6 +133,8 @@ class CreatorRegistryTests(unittest.TestCase):
         miscellaneous = registry.get(MISC_CREATOR_ID)
 
         self.assertEqual(miscellaneous["creator_uuid"], existing_uuid)
+        self.assertEqual(miscellaneous["id"], "creator-old-misc")
+        self.assertEqual(registry.get("creator-old-misc"), miscellaneous)
         self.assertEqual(miscellaneous["profile_url"], "")
         self.assertEqual(miscellaneous["platform_user_id"], MISC_PLATFORM_USER_ID)
         self.assertEqual(len([item for item in registry.list() if item["name"] == "大杂烩"]), 1)

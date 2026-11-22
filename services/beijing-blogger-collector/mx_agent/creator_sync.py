@@ -8,7 +8,7 @@ import re
 import threading
 import time
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -112,6 +112,7 @@ class CreatorSyncService:
                 os.environ["PATH"] = str(FFMPEG_DIR) + os.pathsep + os.environ.get("PATH", "")
 
         self._lock = threading.RLock()
+        self._delivery_lock = threading.RLock()
         self._wake_event = threading.Event()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -172,7 +173,8 @@ class CreatorSyncService:
             value = {}
         if not isinstance(value, dict):
             value = {}
-        value.setdefault("videos", {})
+        if not isinstance(value.get("videos"), dict):
+            value["videos"] = {}
         return value
 
     def _save_state(self) -> None:
@@ -188,6 +190,16 @@ class CreatorSyncService:
         self,
         local_video_id: int,
         aweme_id: str,
+        *,
+        verify_existing: bool = False,
+    ) -> bool | None:
+        with self._delivery_lock:
+            return self._notify_content_ready_unlocked(
+                local_video_id, aweme_id, verify_existing=verify_existing
+            )
+
+    def _notify_content_ready_unlocked(
+        self, local_video_id: int, aweme_id: str, *, verify_existing: bool = False,
     ) -> bool | None:
         """Notify a downstream boundary after local media/comments are durable.
 
@@ -200,22 +212,55 @@ class CreatorSyncService:
             return None
         attempted_at = now_iso()
         error = ""
+        entry = self._state.setdefault("videos", {}).setdefault(str(aweme_id), {})
+        # Persist the intent before invoking the producer. A crash after enqueue
+        # can be recovered by reusing the equivalent existing outbox snapshot.
+        entry.update(local_video_id=int(local_video_id), content_ready_pending=True,
+                     content_ready_retry_version=1)
         try:
-            self._on_content_ready(int(local_video_id), self.runtime_key)
+            self._save_state()
+        except OSError:
+            entry["last_content_ready_error"] = "发送待办尚未保存，保留本地作品等待重试。"
+            return False
+        result: Any = None
+        try:
+            if verify_existing:
+                video = self.storage.get_video(int(local_video_id)) or {}
+                raw = video.get("raw_json") or {}
+                raw = json.loads(raw) if isinstance(raw, str) else raw
+                source_id = str(raw.get("douyin_aweme_id") or raw.get("aweme_id")
+                                or raw.get("source_work_id") or video.get("source_video_id") or "")
+                if source_id != str(aweme_id) or str(video.get("author") or "").strip().casefold() != str(self.settings.source_account_name or "").strip().casefold():
+                    raise ValueError("待发送记录与本地作品身份不匹配，保留待核对。")
+                for asset in self.storage.list_assets(int(local_video_id)):
+                    if asset.get("asset_type") in {"video", "image"} and asset.get("local_path"):
+                        if not Path(asset["local_path"]).is_file():
+                            raise ValueError("已下载媒体文件暂不可用，保留待发送，不重新下载。")
+            result = self._on_content_ready(int(local_video_id), self.runtime_key)
         except Exception as exc:
             error = str(exc).strip()[:500] or type(exc).__name__
 
-        entry = self._state.setdefault("videos", {}).setdefault(str(aweme_id), {})
+        try:
+            attempts = min(100000, max(0, int(entry.get("content_ready_attempts") or 0))) + 1 if error else 0
+        except (TypeError, ValueError):
+            attempts = 1 if error else 0
         entry.update(
             {
                 "local_video_id": int(local_video_id),
                 "content_ready_pending": bool(error),
                 "last_content_ready_attempt_at": attempted_at,
                 "last_content_ready_error": error,
+                "content_ready_attempts": attempts,
+                "content_ready_next_attempt_at": (
+                    (datetime.now(UTC) + timedelta(seconds=min(1800, 30 * 2 ** min(attempts, 6)))).isoformat()
+                    if error else ""
+                ),
             }
         )
         if not error:
             entry["content_ready_notified_at"] = attempted_at
+            if isinstance(result, dict) and result.get("transfer_id"):
+                entry["content_ready_transfer_id"] = str(result["transfer_id"])
         with self._lock:
             self._runtime["content_ready_callbacks"] = int(
                 self._runtime.get("content_ready_callbacks") or 0
@@ -231,6 +276,7 @@ class CreatorSyncService:
             self._save_state()
         except Exception as exc:
             state_error = str(exc).strip()[:500] or type(exc).__name__
+            entry["content_ready_pending"] = True
             with self._lock:
                 self._runtime["last_content_ready_error"] = (
                     f"{error}; 状态保存失败：{state_error}"
@@ -250,6 +296,43 @@ class CreatorSyncService:
             )
             return False
         return True
+
+    def retry_pending_content_ready(self, *, force: bool = False, limit: int = 10) -> dict[str, int]:
+        """Retry durable local exports only: never open Douyin or run recognition."""
+        outcome = {"attempted": 0, "enqueued": 0, "failed": 0}
+        if self._on_content_ready is None:
+            return outcome
+        gate = self._execution_lock if self._execution_lock is not None else self._delivery_lock
+        if not gate.acquire(blocking=False):
+            return outcome
+        try:
+            now = datetime.now(UTC)
+            for aweme_id, entry in list(self._state.get("videos", {}).items()):
+                if outcome["attempted"] >= max(0, min(100, limit)):
+                    break
+                if not isinstance(entry, dict) or not entry.get("content_ready_pending"):
+                    continue
+                # Old ordinary-creator flags may predate already delivered
+                # revisions. Only migrate the diagnosed link-only queue; new
+                # intents in every creator carry the durable retry version.
+                if not self.link_only and entry.get("content_ready_retry_version") != 1:
+                    continue
+                try:
+                    next_at = datetime.fromisoformat(entry.get("content_ready_next_attempt_at") or "")
+                    if not force and next_at.tzinfo and next_at > now:
+                        continue
+                except (TypeError, ValueError):
+                    pass
+                outcome["attempted"] += 1
+                try:
+                    video_id = int(entry.get("local_video_id") or 0)
+                except (TypeError, ValueError):
+                    video_id = 0
+                succeeded = self._notify_content_ready(video_id, str(aweme_id), verify_existing=True)
+                outcome["enqueued" if succeeded else "failed"] += 1
+            return outcome
+        finally:
+            gate.release()
 
     def _event(
         self,
@@ -357,6 +440,15 @@ class CreatorSyncService:
     def status(self) -> dict[str, Any]:
         with self._lock:
             runtime = json.loads(json.dumps(self._runtime, ensure_ascii=False))
+            runtime["content_ready_pending"] = sum(
+                bool(entry.get("content_ready_pending"))
+                for entry in list(self._state.get("videos", {}).values()) if isinstance(entry, dict)
+            )
+            runtime["content_ready_legacy_review"] = sum(
+                bool(entry.get("content_ready_pending")) and not self.link_only
+                and entry.get("content_ready_retry_version") != 1
+                for entry in list(self._state.get("videos", {}).values()) if isinstance(entry, dict)
+            )
             next_run = self._next_run_epoch
         runtime.update(
             {

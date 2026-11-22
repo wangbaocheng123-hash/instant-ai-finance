@@ -93,6 +93,12 @@ class FakeSyncManager:
         self.stopped = 0
         self.run_requests: list[str] = []
         self.run_options: list[dict[str, object]] = []
+        self.pending_exports = 0
+        self.recovery_requests = []
+
+    def retry_pending_content_ready(self, *, force=False, limit=10):
+        self.recovery_requests.append((force, limit))
+        return {"attempted": 0, "enqueued": 0, "failed": 0}
 
     def start(self) -> None:
         self.started += 1
@@ -119,6 +125,7 @@ class FakeSyncManager:
             "last_started_at": "",
             "last_finished_at": "2026-08-31T10:00:00+08:00",
             "last_error": "",
+            "content_ready_pending": self.pending_exports,
             "works_seen": 7,
             "works_selected": 7,
             "new_downloads": 7,
@@ -270,6 +277,35 @@ class FakeOutbox:
 
 
 class CollectorServerTests(unittest.TestCase):
+    def test_local_recovery_failure_does_not_block_existing_uploads(self):
+        sender = FakeSender()
+        runtime, manager = self.runtime(configured=True, sender=sender)
+        manager.retry_pending_content_ready = MagicMock(side_effect=RuntimeError("isolated recovery error"))
+        runtime.start()
+        try:
+            self.assertTrue(sender.called.wait(1))
+        finally:
+            runtime.close()
+
+    def test_pending_export_is_visible_without_exposing_callback_details(self):
+        runtime, manager = self.runtime(configured=True, outbox=FakeOutbox(), storage=FakeStorage(self.root / "existing.mp4"))
+        manager.pending_exports = 2
+        dashboard = runtime.dashboard()
+        sync = dashboard["creators"][0]["sync"]
+        self.assertTrue(sync["has_error"])
+        self.assertEqual(sync["content_ready_pending"], 2)
+        self.assertIn("尚未进入发送队列", sync["message"])
+        self.assertEqual(dashboard["transfer_counts"]["awaiting_export"], 2)
+        self.assertNotIn("last_content_ready_error", sync)
+
+    def test_retry_covers_local_exports_before_existing_network_queue(self):
+        outbox = FakeOutbox()
+        runtime, manager = self.runtime(configured=True, outbox=outbox)
+        result = runtime.retry_transfers()
+        self.assertEqual(manager.recovery_requests, [(True, 10)])
+        self.assertEqual(result["enqueued"], 0)
+        self.assertEqual(result["expedited"], 1)
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
