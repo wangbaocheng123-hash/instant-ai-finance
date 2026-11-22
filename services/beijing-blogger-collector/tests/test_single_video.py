@@ -103,7 +103,10 @@ class SingleVideoCollectionTests(unittest.TestCase):
                 yield service, callback
 
     @staticmethod
-    def fake_download(result, directory, *, custom_filename):
+    def fake_download(result, directory, *, custom_filename, stage_callback=None):
+        if stage_callback:
+            stage_callback("download")
+            stage_callback("transcode")
         path = directory / (custom_filename + ".mp4")
         path.write_bytes(b"synthetic-video" * 300)
         return path

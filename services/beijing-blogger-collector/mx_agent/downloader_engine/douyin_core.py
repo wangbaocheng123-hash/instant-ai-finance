@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 import queue
 import re
@@ -85,6 +87,95 @@ class DownloadCancelled(Exception):
 
 class ParseError(RuntimeError):
     pass
+
+
+class VideoConversionError(ParseError):
+    public_code = "video_conversion_failed"
+
+
+class VideoConversionTimeout(VideoConversionError):
+    public_code = "video_conversion_timeout"
+
+    def __init__(self, seconds: int):
+        self.budget_seconds = seconds
+        super().__init__(f"视频转换超过{math.ceil(seconds / 60)}分钟，下载缓存保留24小时，可重试本条。")
+
+
+SOURCE_CACHE_TTL = 24 * 60 * 60
+
+
+def _source_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _source_cache(receipt: Path, part: Path, audio: Path, work_id: str) -> dict | None:
+    try:
+        if receipt.is_symlink() or receipt.stat().st_size > 4096:
+            return None
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+        age = time.time() - float(data["created_at"])
+        if data["version"] != 1 or data["work_id"] != work_id or not 0 <= age < SOURCE_CACHE_TTL:
+            return None
+        for label, path in (("video", part), ("audio", audio)):
+            expected = data.get(label)
+            if expected is None and label == "audio":
+                continue
+            if path.is_symlink() or path.stat().st_size != expected["size"] or _source_digest(path) != expected["sha256"]:
+                return None
+        return data
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def _save_source_cache(receipt: Path, part: Path, audio: Path | None, work_id: str) -> None:
+    def descriptor(path: Path) -> dict:
+        return {"size": path.stat().st_size, "sha256": _source_digest(path)}
+    # Deliberately exclude URLs, request headers, cookies and resolver data.
+    data = {"version": 1, "work_id": work_id, "created_at": time.time(),
+            "video": descriptor(part), "audio": descriptor(audio) if audio else None}
+    temporary = receipt.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(receipt)
+
+
+def _prune_source_cache(destination: Path) -> None:
+    for index, receipt in enumerate(destination.glob("*.mp4.source-cache.json")):
+        if index >= 100:
+            break
+        try:
+            if time.time() - receipt.stat().st_mtime < SOURCE_CACHE_TTL:
+                continue
+            output = receipt.with_name(receipt.name.removesuffix(".source-cache.json"))
+            for path in (output.with_suffix(".mp4.part"), output.with_suffix(".audio.part.m4a"), receipt):
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+def conversion_budget(duration_seconds: float | None) -> int:
+    if duration_seconds is None or not math.isfinite(duration_seconds) or duration_seconds <= 0:
+        return 1800
+    return max(600, min(3600, math.ceil(duration_seconds * 2 + 120)))
+
+
+def _video_duration(path: Path) -> float | None:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    try:
+        probe = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=15,
+        )
+        if probe.returncode:
+            return None
+        return float(json.loads(probe.stdout)["format"]["duration"])
+    except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
+        return None
 
 
 def extract_douyin_url(text: str) -> str:
@@ -216,7 +307,8 @@ def compact_video_command(
     audio_input: Path | None = None,
 ) -> list[str]:
     """Build the fixed half-resolution, iPhone-compatible video command."""
-    command = [ffmpeg, "-y", "-v", "error", "-i", str(video_input)]
+    command = [ffmpeg, "-nostdin", "-y", "-v", "error", "-filter_threads", "1",
+               "-threads", "2", "-i", str(video_input)]
     if audio_input is not None:
         command.extend(["-i", str(audio_input)])
     command.extend(
@@ -225,7 +317,8 @@ def compact_video_command(
             "-map", "1:a:0" if audio_input is not None else "0:a:0",
             "-vf", BLOGGER_VIDEO_SCALE_FILTER,
             "-c:v", "libx264",
-            "-preset", "medium",
+            "-preset", "veryfast",
+            "-threads", "2",
             "-crf", "27",
             "-profile:v", "main",
             "-level:v", "3.1",
@@ -924,9 +1017,11 @@ def download_video(
     progress: Callable[[int, int, float], None] | None = None,
     cancel_event: threading.Event | None = None,
     custom_filename: str | None = None,
+    stage_callback: Callable[[str], None] | None = None,
 ) -> Path:
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
+    _prune_source_cache(destination)
     cancel_event = cancel_event or threading.Event()
     custom_stem = (custom_filename or "").strip()
     if custom_stem.lower().endswith(".mp4"):
@@ -937,6 +1032,8 @@ def download_video(
     filename = f"{stem}{suffix}.mp4"
     output = destination / filename
     part = output.with_suffix(".mp4.part")
+    if output.is_symlink() or part.is_symlink():
+        raise ParseError("下载文件路径异常，已停止处理。")
     if output.exists() and output.stat().st_size > 1024:
         return output
 
@@ -954,6 +1051,12 @@ def download_video(
     }
     audio_part = output.with_suffix(".audio.part.m4a")
     mux_part = output.with_suffix(".mux.part.mp4")
+    cache_receipt = output.with_suffix(".mp4.source-cache.json")
+    if any(path.is_symlink() for path in (audio_part, mux_part, cache_receipt, cache_receipt.with_suffix(".json.tmp"))):
+        raise ParseError("下载临时文件路径异常，已停止处理。")
+    cached = _source_cache(cache_receipt, part, audio_part, result.video_id)
+    keep_sources = False
+    succeeded = False
 
     def fetch_resource(
         url: str,
@@ -997,55 +1100,57 @@ def download_video(
         return downloaded
 
     try:
-        fetch_resource(
-            result.video_url,
-            part,
-            result.content_length,
-            report_progress=True,
-        )
+        if stage_callback:
+            stage_callback("cached_source" if cached else "download")
+        if not cached:
+            fetch_resource(result.video_url, part, result.content_length, report_progress=True)
         inspection = inspect_mp4(part)
         if not inspection["has_video"]:
             raise ParseError("捕获的资源没有视频画面，已取消保存并等待重试。")
         separate_audio: Path | None = None
         if not inspection["has_audio"]:
-            if not result.audio_url:
+            if not cached and not result.audio_url:
                 raise ParseError(
                     "捕获到的是无声视频流，但没有捕获到配套音频，"
                     "已取消保存并等待重试。"
                 )
-            fetch_resource(
-                result.audio_url,
-                audio_part,
-                result.audio_content_length,
-                report_progress=False,
-            )
+            if cached and cached.get("audio") is None:
+                raise ParseError("下载缓存缺少音轨，等待重新解析。")
+            if not cached:
+                fetch_resource(result.audio_url, audio_part, result.audio_content_length, report_progress=False)
             separate_audio = audio_part
+        if not cached:
+            _save_source_cache(cache_receipt, part, separate_audio, result.video_id)
+        keep_sources = True
+        if cancel_event.is_set():
+            raise DownloadCancelled("下载已取消，已验证的源缓存保留24小时。")
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             raise ParseError("服务器缺少 ffmpeg，无法生成手机轻量视频。")
-        completed = subprocess.run(
-            compact_video_command(
-                ffmpeg,
-                part,
-                mux_part,
-                audio_input=separate_audio,
-            ),
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
+        if stage_callback:
+            stage_callback("transcode")
+        budget = conversion_budget(_video_duration(part))
+        try:
+            completed = subprocess.run(
+                compact_video_command(ffmpeg, part, mux_part, audio_input=separate_audio),
+                capture_output=True, text=True, timeout=budget,
+            )
+        except subprocess.TimeoutExpired:
+            raise VideoConversionTimeout(budget) from None
         if completed.returncode != 0:
             detail = (completed.stderr or "未知错误").strip()[-500:]
-            raise ParseError(f"手机轻量视频生成失败：{detail}")
+            raise VideoConversionError(f"手机轻量视频生成失败：{detail}")
         merged = inspect_mp4(mux_part)
         if not merged["has_video"] or not merged["has_audio"]:
-            raise ParseError("轻量 MP4 未同时包含画面和声音。")
+            raise VideoConversionError("轻量 MP4 未同时包含画面和声音。")
         os.replace(mux_part, output)
+        succeeded = True
         return output
     except Exception:
         raise
     finally:
-        for temporary in (part, audio_part, mux_part):
+        cleanup = (part, audio_part, mux_part, cache_receipt) if succeeded or not keep_sources else (mux_part,)
+        for temporary in cleanup:
             try:
                 temporary.unlink(missing_ok=True)
             except OSError:

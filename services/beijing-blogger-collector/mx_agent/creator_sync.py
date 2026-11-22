@@ -135,6 +135,8 @@ class CreatorSyncService:
             "last_started_at": "",
             "last_finished_at": "",
             "last_error": "",
+            "last_error_code": "",
+            "last_error_budget_seconds": 0,
             "works_seen": 0,
             "works_selected": 0,
             "new_downloads": 0,
@@ -356,6 +358,21 @@ class CreatorSyncService:
             self._runtime["events"] = events[-40:]
             self._runtime["message"] = str(message)
         print(f"[creator-sync] {message}")
+
+    def _set_failure(self, error: Exception) -> None:
+        code = getattr(error, "public_code", "")
+        code = code if code in {"video_conversion_timeout", "video_conversion_failed"} else ""
+        with self._lock:
+            self._runtime.update(last_error=str(error), last_error_code=code,
+                last_error_budget_seconds=getattr(error, "budget_seconds", 0) if code else 0)
+
+    def _download_stage(self, stage: str) -> None:
+        messages = {"download": "正在下载视频。", "cached_source": "正在复用已下载文件。",
+                    "transcode": "视频已下载，正在转换成手机播放格式。"}
+        if stage in messages:
+            with self._lock:
+                self._runtime["phase"] = stage
+            self._event(messages[stage])
 
     def start(self) -> None:
         with self._lock:
@@ -591,6 +608,8 @@ class CreatorSyncService:
                     "phase": "profile",
                     "last_started_at": now_iso(),
                     "last_error": "",
+                    "last_error_code": "",
+                    "last_error_budget_seconds": 0,
                     "works_seen": 0,
                     "works_selected": 0,
                     "new_downloads": 0,
@@ -793,8 +812,7 @@ class CreatorSyncService:
                     except Exception as exc:
                         failures += 1
                         if video_url:
-                            with self._lock:
-                                self._runtime["last_error"] = str(exc)
+                            self._set_failure(exc)
                         if sync_mode == "realtime":
                             realtime_download_failed = True
                         self._remember_video_error(video.video_id, str(exc))
@@ -836,8 +854,7 @@ class CreatorSyncService:
                     except Exception as exc:
                         failures += 1
                         if video_url:
-                            with self._lock:
-                                self._runtime["last_error"] = str(exc)
+                            self._set_failure(exc)
                         self._remember_video_error(video.video_id, str(exc))
                         self._event(
                             f"作品 {video.video_id} 评论同步失败：{exc}",
@@ -929,8 +946,7 @@ class CreatorSyncService:
             self._save_state()
             self._event(summary, level="warning" if failures else "info")
         except Exception as exc:
-            with self._lock:
-                self._runtime["last_error"] = str(exc)
+            self._set_failure(exc)
             self._event(f"同步失败：{exc}", level="error")
         finally:
             with self._lock:
@@ -1002,6 +1018,7 @@ class CreatorSyncService:
                 result,
                 self.video_dir,
                 custom_filename=filename,
+                stage_callback=self._download_stage,
             )
             inspection = inspect_mp4(output)
             if not inspection.get("has_mdat") or not inspection.get("has_video"):

@@ -566,14 +566,24 @@ class CollectorRuntime:
             pending_export = max(0, int(sync.get("content_ready_pending") or 0))
             legacy_review = max(0, int(sync.get("content_ready_legacy_review") or 0))
             has_error = bool(_safe_text(sync.get("last_error"), 1)) or pending_export > legacy_review
-            if busy or queued:
+            failure_code = sync.get("last_error_code")
+            if busy and sync.get("phase") == "transcode":
+                safe_message = "视频已下载，正在转换成手机播放格式。"
+            elif busy and sync.get("phase") == "cached_source":
+                safe_message = "正在复用已下载文件，无需重新下载。"
+            elif busy or queued:
                 safe_message = "采集任务正在运行。"
             elif legacy_review and pending_export == legacy_review:
                 safe_message = f"本地作品已保存，{legacy_review}条历史发送记录需核对；未自动重放。"
             elif pending_export:
                 safe_message = f"本地作品已保存，{pending_export}条尚未进入发送队列。后台会重试，也可点击补发/重试发送。"
             elif has_error:
-                safe_message = "上次采集未正常完成，请查看脱敏诊断状态。"
+                if failure_code == "video_conversion_timeout":
+                    safe_message = "视频转换超时。下载缓存保留24小时，可重新粘贴本条链接继续处理。"
+                elif failure_code == "video_conversion_failed":
+                    safe_message = "视频转换失败。下载缓存保留24小时，可重试本条；作品尚未入库或发送。"
+                else:
+                    safe_message = "上次采集未正常完成，请查看脱敏诊断状态。"
             elif sync.get("last_finished_at"):
                 safe_message = "上次采集已经完成，当前等待手动操作。"
             elif sync.get("last_content_ready_at"):
@@ -604,6 +614,7 @@ class CollectorRuntime:
                         "last_started_at": _safe_text(sync.get("last_started_at"), 80),
                         "last_finished_at": _safe_text(sync.get("last_finished_at"), 80),
                         "has_error": has_error,
+                        "failure_code": failure_code if failure_code in {"video_conversion_timeout", "video_conversion_failed"} else "",
                         "content_ready_pending": pending_export,
                         "content_ready_legacy_review": legacy_review,
                         "last_content_ready_at": _safe_text(sync.get("last_content_ready_at"), 80),

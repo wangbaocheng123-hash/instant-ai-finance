@@ -277,6 +277,25 @@ class FakeOutbox:
 
 
 class CollectorServerTests(unittest.TestCase):
+    def test_conversion_timeout_message_is_actionable_and_does_not_expose_raw_error(self):
+        runtime, manager = self.runtime(configured=True)
+        manager.status = MagicMock(return_value={
+            'last_error':'ffmpeg /private/path secret', 'last_error_code':'video_conversion_timeout',
+            'busy':False, 'queued':False,
+        })
+        sync = runtime.creator_summaries()[0]['sync']
+        self.assertTrue(sync['has_error'])
+        self.assertEqual(sync['failure_code'],'video_conversion_timeout')
+        self.assertIn('转换超时',sync['message'])
+        self.assertIn('24小时',sync['message'])
+        self.assertNotIn('private',str(sync))
+        self.assertNotIn('secret',str(sync))
+
+    def test_conversion_progress_names_the_current_stage(self):
+        runtime, manager = self.runtime(configured=True)
+        manager.status = MagicMock(return_value={'busy':True,'phase':'transcode'})
+        self.assertIn('正在转换',runtime.creator_summaries()[0]['sync']['message'])
+
     def test_local_recovery_failure_does_not_block_existing_uploads(self):
         sender = FakeSender()
         runtime, manager = self.runtime(configured=True, sender=sender)
