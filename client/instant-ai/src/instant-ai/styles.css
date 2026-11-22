@@ -422,6 +422,7 @@ img { display: block; }
 .blogger-header { border-top-color: #0f8a7b; }
 .blogger-body { background: #f5f9f8; }
 .blogger-view { min-height: 100%; padding: 12px; }
+.blogger-view > .blogger-processing { margin-top: 12px; }
 .blogger-creator-switch { display: flex; gap: 7px; margin-bottom: 10px; overflow-x: auto; padding: 2px 1px 6px; scrollbar-width: thin; }
 .blogger-creator-switch button, .blogger-add-creator { flex: 0 0 auto; min-height: 38px; display: inline-flex; align-items: center; justify-content: center; padding: 8px 11px; border: 1px solid #cfe0dc; border-radius: 8px; background: #fff; color: #176e63; cursor: pointer; font-size: 11px; font-weight: 700; text-decoration: none; white-space: nowrap; }
 .blogger-creator-switch button.is-active { border-color: #0f8a7b; background: #0f8a7b; color: #fff; }

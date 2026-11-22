@@ -266,12 +266,11 @@ export class BloggerPanel {
     root.append(
       this.renderCreatorSwitch(),
       this.viewHeading(creator.display_name, `${this.works.length} 部作品 · 视频、原文、评论、关键词与解读`),
-      this.renderProcessing(),
     );
     const list = document.createElement('div'); list.className = 'blogger-card-list';
     this.works.forEach((work) => list.append(this.renderWorkCard(work)));
     if (!this.works.length) list.append(this.message('这位博主当前没有已推送作品。'));
-    root.append(list); this.body.replaceChildren(root);
+    root.append(list, this.renderProcessing()); this.body.replaceChildren(root);
   }
 
   private renderProcessing(compact = false): HTMLElement {
@@ -463,7 +462,7 @@ export class BloggerPanel {
     const detail = this.detail;
     if (!detail) { this.renderWorks(); return; }
     const root = document.createElement('div'); root.className = 'blogger-view blogger-detail-view';
-    root.append(this.renderCreatorSwitch(), this.backButton('返回作品', 'back-works'), this.renderProcessing(true));
+    root.append(this.renderCreatorSwitch(), this.backButton('返回作品', 'back-works'));
     const article = document.createElement('article'); article.className = 'blogger-work-detail';
     const header = document.createElement('header'); header.className = 'blogger-workspace-header';
     const title = document.createElement('h3'); title.textContent = detail.title || detail.description || '未命名作品';
@@ -510,7 +509,7 @@ export class BloggerPanel {
       source.href = safeSourceUrl; source.target = '_blank'; source.rel = 'noopener noreferrer'; source.referrerPolicy = 'no-referrer';
       source.textContent = '核验抖音原链接'; article.append(source);
     }
-    root.append(article); this.body.replaceChildren(root);
+    root.append(article, this.renderProcessing(true)); this.body.replaceChildren(root);
   }
 
   private renderVideo(detail: BloggerWorkDetail): HTMLElement {
