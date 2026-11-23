@@ -44,11 +44,9 @@ def headline_provider() -> TranslationProvider:
 
 
 def needs_translation(text: str) -> bool:
-    """Translate Latin-script headlines while leaving Chinese or numeric titles alone."""
-
-    cjk_count = sum("\u3400" <= char <= "\u9fff" for char in text)
-    latin_count = sum(char.isascii() and char.isalpha() for char in text)
-    return cjk_count == 0 and latin_count >= 6
+    """Translate English/Korean headlines while leaving Chinese/numeric titles alone."""
+    from .headline_translation import source_language
+    return source_language(text) is not None
 
 
 def utf8_prefix(text: str, max_bytes: int = MAX_TITLE_BYTES) -> str:

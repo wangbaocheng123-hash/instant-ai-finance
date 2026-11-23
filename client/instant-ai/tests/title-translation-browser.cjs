@@ -10,7 +10,10 @@ async function until(predicate) {
   throw Error('Timed out waiting for synthetic translation');
 }
 function item(id) {
-  return { id, title: id === 3 ? '黄金价格上涨' : `English market headline number ${id}`, summary: '',
+  const title = id === 3 ? '黄金价格上涨' : id === 4 ? '코스피 상승, 반도체주 강세'
+    : id === 8 ? '韓國 금값 상승, 원화 약세' : id === 2001 ? '韓國 증시, AI 반도체株 강세'
+      : `English market headline number ${id}`;
+  return { id, title, summary: '',
     url: 'https://example.test/story', thumbnail_url: '/thumb.png', published_at: '2026-11-23T08:00:00Z',
     first_seen_at: '2026-11-23T08:00:00Z', event_type: '市场', trust_level: 4, importance_score: 70,
     is_read: false, is_saved: false, topics: ['黄金'], sources: ['合成新闻源'], source_count: 1 };
@@ -126,7 +129,8 @@ async function main() {
       assert.equal(await failure.page.locator('.news-row h3').first().innerText(), item(901).title);
       await failure.page.close();
       console.log(JSON.stringify({ width, foregroundOnly: 'pass', offscreenAndChinese: 'pass',
-        cacheReopen: 'pass', oneInFlight: 'pass', hiddenStopsNext: 'pass', failureNoRetry: 'pass', realPaidCalls: 0 }));
+        koreanVisibleAndCache: 'pass', cacheReopen: 'pass', oneInFlight: 'pass',
+        hiddenStopsNext: 'pass', failureNoRetry: 'pass', realPaidCalls: 0 }));
     }
   } finally { await browser.close(); }
 }

@@ -116,7 +116,7 @@ export class InstantFinanceApp {
           <div class="header-status"><span class="status-dot"></span><b id="healthText">连接资讯数据核心</b><span id="lastUpdate">--:--</span></div>
           <div class="header-actions">
             <div class="header-tools" role="group" aria-label="客户端状态工具">
-               <button type="button" class="translate-button" data-action="translate" title="把英文财经标题翻译成中文，并保留英文原题">汉化开启</button>
+               <button type="button" class="translate-button" data-action="translate" title="把英文和韩文财经标题翻译成中文，并保留原文标题">汉化开启</button>
                <button type="button" class="push-button" data-action="push" title="把高相关重要新消息通知到这部手机">手机通知</button>
                <button type="button" data-action="sources" title="查看内部采集通道状态">采集</button>
               ${this.authRequired ? '<button type="button" data-action="logout" title="退出主人账户">退出</button>' : ''}
@@ -135,7 +135,7 @@ export class InstantFinanceApp {
           <aside class="rail">
             <div class="rail-title">情报频道</div>
             <nav id="sectionNav"></nav>
-            <div class="translation-note"><b>标题汉化工具</b><small>中文译文在上 · 英文原题保留 · 译文安全缓存</small></div>
+            <div class="translation-note"><b>标题汉化工具</b><small>中文译文在上 · 原文标题保留 · 译文安全缓存</small></div>
             <div class="local-only"><span></span><div><b>个人数据模式</b><small>无注册 · 无团队 · 无自动视频</small></div></div>
           </aside>
           <main class="workspace">
@@ -419,7 +419,7 @@ export class InstantFinanceApp {
       text.dataset.headlineId = String(item.id); text.textContent = headline;
       button.append(score, text);
       const titleParts = ['即时热点：融合最新发布、多来源关注度、重要度和新鲜度'];
-      if (headline !== item.title) titleParts.push(`英文原题：${item.title}`);
+      if (headline !== item.title) titleParts.push(`原文标题：${item.title}`);
       if (titleParts.length > 0) button.title = titleParts.join('\n');
       track.append(button);
     };
@@ -473,7 +473,7 @@ export class InstantFinanceApp {
       title.textContent = displayTitle;
       const originalTitle = document.createElement('p');
       originalTitle.className = 'detail-original-title';
-      originalTitle.textContent = displayTitle !== item.title ? `英文原题：${item.title}` : '';
+      originalTitle.textContent = displayTitle !== item.title ? `原文标题：${item.title}` : '';
       originalTitle.classList.toggle('hidden', !originalTitle.textContent);
       const meta = document.createElement('p');
       meta.className = 'detail-meta';
@@ -724,10 +724,10 @@ export class InstantFinanceApp {
     this.renderCurrentItems();
     if (this.translationEnabled) {
       this.titleTranslator.retryByOwner();
-      this.toast('标题汉化已开启：只翻译当前看到的英文标题，切到后台停止后续请求。');
+      this.toast('标题汉化已开启：只翻译当前看到的英文和韩文标题，切到后台停止后续请求。');
       await this.translateVisible(true);
     } else {
-      this.toast('标题汉化已关闭，当前显示英文原题。');
+      this.toast('标题汉化已关闭，当前显示原文标题。');
     }
   }
 
@@ -821,7 +821,7 @@ export class InstantFinanceApp {
 
   private translateVisible(showToast: boolean): void {
     this.titleTranslator.observe();
-    if (showToast) this.toast('只翻译屏幕里看到的英文标题；已有译文直接复用。');
+    if (showToast) this.toast('只翻译屏幕里看到的英文和韩文标题；已有译文直接复用。');
   }
 
   private findFinanceItem(id: number): FinanceItem | null {
@@ -857,11 +857,11 @@ export class InstantFinanceApp {
       node.textContent = title;
       const original = node.parentElement?.querySelector<HTMLElement>('.news-original-title, .detail-original-title');
       if (original) {
-        original.textContent = title !== item.title ? (node.tagName === 'H1' ? `英文原题：${item.title}` : item.title) : '';
+        original.textContent = title !== item.title ? (node.tagName === 'H1' ? `原文标题：${item.title}` : item.title) : '';
         original.classList.toggle('hidden', !original.textContent);
       }
       if (node.closest('#tickerTrack') && node.parentElement) {
-        node.parentElement.title = title !== item.title ? `英文原题：${item.title}` : item.title;
+        node.parentElement.title = title !== item.title ? `原文标题：${item.title}` : item.title;
       }
     });
   }
@@ -869,8 +869,10 @@ export class InstantFinanceApp {
   private shouldTranslate(item: FinanceItem): boolean {
     if (item.translated_title?.trim()) return false;
     const hasChinese = /[\u3400-\u9fff]/u.test(item.title);
+    const hasKorean = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3]/u.test(item.title);
     const latinLetters = (item.title.match(/[A-Za-z]/g) || []).length;
-    return !hasChinese && latinLetters >= 6 && new TextEncoder().encode(item.title).length <= 1_000;
+    return (hasKorean || (!hasChinese && latinLetters >= 6))
+      && new TextEncoder().encode(item.title).length <= 1_000;
   }
 
   private displayTitle(item: FinanceItem): string {
@@ -887,7 +889,7 @@ export class InstantFinanceApp {
     const remaining = this.translationStatus?.remaining_characters_today;
     const provider = this.translationStatus?.provider_label || '标题翻译';
     button.title = remaining == null
-      ? `${provider}；只翻译当前可见标题，切到后台停止后续请求；英文原题保留。`
+      ? `${provider}；只翻译当前可见标题，切到后台停止后续请求；原文标题保留。`
       : `${provider}；今日剩余上限约 ${remaining} 字符；仅翻译可见标题，已译不重复调用。`;
   }
 

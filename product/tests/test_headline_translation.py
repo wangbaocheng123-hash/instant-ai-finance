@@ -6,13 +6,14 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import unicodedata
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 from instant_ai import headline_translation as adapter
 from instant_ai.database import connect, initialize, transaction, utc_now
 from instant_ai.translation import (TranslationProvider, active_provider, headline_provider,
-                                    translate_items, translation_status)
+                                    needs_translation, translate_items, translation_status)
 
 
 class HeadlineTranslationTests(unittest.TestCase):
@@ -133,6 +134,43 @@ class HeadlineTranslationTests(unittest.TestCase):
     def test_summary_translation_keeps_its_previous_provider(self):
         self.assertEqual(headline_provider().name, adapter.MODEL)
         self.assertEqual(active_provider().name, "mymemory-anonymous")
+
+    def test_headline_scripts_select_korean_including_hanja_and_decomposed_hangul(self):
+        cases = [("코스피 상승, 반도체주 강세", "ko"), ("韓國 증시, AI 반도체株 강세", "ko"),
+                 (unicodedata.normalize("NFD", "금값 상승"), "ko"),
+                 ("Gold rises as dollar weakens", "en"), ("黄金价格上涨", None),
+                 ("中国AI产业上涨", None), ("2026-11-23 12:30", None)]
+        for text, language in cases:
+            with self.subTest(text=text):
+                self.assertEqual(adapter.source_language(text), language)
+                self.assertEqual(needs_translation(text), language is not None)
+
+    def test_korean_request_uses_ko_to_zh_and_keeps_the_full_original(self):
+        for title in ["코스피 상승, 반도체주 강세", "韓國 증시, AI 반도체株 강세"]:
+            with self.subTest(title=title), patch.object(adapter, "build_opener") as opener:
+                opener.return_value.open.return_value = self.response()
+                adapter.translate_headline(title)
+                payload = json.loads(opener.return_value.open.call_args.args[0].data)
+                content = payload["input"][0]["content"][0]
+                self.assertEqual(content["text"], title)
+                self.assertEqual(content["translation_options"], {"source_language": "ko", "target_language": "zh"})
+                opener.return_value.open.assert_called_once()
+
+    def test_korean_translation_is_cached_while_chinese_stays_unchanged(self):
+        title = "삼성전자 반도체 매출 증가"
+        self.add_item(1, title)
+        self.add_item(2, "黄金价格上涨")
+        call = Mock(return_value="三星电子半导体营收增长")
+        provider = TranslationProvider(adapter.MODEL, True, 50_000, call, "豆包标题翻译")
+        first = translate_items([1, 2], path=self.path, provider=provider)
+        second = translate_items([1], path=self.path, provider=provider)
+        call.assert_called_once_with(title)
+        self.assertEqual(first["skipped_count"], 1)
+        self.assertEqual(second["cached_count"], 1)
+        self.assertEqual(second["original_titles"]["1"], title)
+        with connect(self.path) as connection:
+            self.assertEqual(connection.execute("SELECT title FROM items WHERE id=1").fetchone()[0], title)
+            self.assertEqual(connection.execute("SELECT title FROM items WHERE id=2").fetchone()[0], "黄金价格上涨")
 
     def test_model_redirect_is_rejected_instead_of_forwarding_credentials(self):
         with self.assertRaises(adapter.HeadlineTranslationUnavailable):

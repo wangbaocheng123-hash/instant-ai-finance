@@ -22,6 +22,15 @@ class HeadlineTranslationUnavailable(RuntimeError):
     pass
 
 
+def source_language(text: str) -> str | None:
+    """Recognize supported headline scripts; Hangul can coexist with Hanja/Latin."""
+    if re.search(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3]", text):
+        return "ko"
+    if not re.search(r"[\u3400-\u9fff]", text) and len(re.findall(r"[A-Za-z]", text)) >= 6:
+        return "en"
+    return None
+
+
 def configured() -> bool:
     return bool(_api_key())
 
@@ -43,11 +52,14 @@ def translate_headline(text: str) -> str:
         raise HeadlineTranslationUnavailable("豆包标题翻译尚未配置方舟 API Key。")
     if not text.strip() or len(text.encode("utf-8")) > MAX_INPUT_BYTES:
         raise HeadlineTranslationUnavailable("标题为空或超过翻译长度上限，已保留原题。")
+    language = source_language(text)
+    if language is None:
+        raise HeadlineTranslationUnavailable("标题不属于待翻译的英文或韩文，已保留原题。")
     payload = {
         "model": MODEL,
         "input": [{"role": "user", "content": [{
             "type": "input_text", "text": text,
-            "translation_options": {"source_language": "en", "target_language": "zh"},
+            "translation_options": {"source_language": language, "target_language": "zh"},
         }]}],
     }
     request = Request(ARK_URL, method="POST", data=json.dumps(payload).encode("utf-8"),
