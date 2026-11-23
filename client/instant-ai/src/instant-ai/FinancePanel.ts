@@ -102,6 +102,7 @@ export class FinancePanel {
     meta.append(source, time, score);
 
     const title = document.createElement('h3');
+    title.dataset.headlineId = String(item.id);
     const translatedTitle = useChineseTitles ? item.translated_title?.trim() : '';
     title.textContent = translatedTitle || item.title;
     const originalTitle = document.createElement('p');

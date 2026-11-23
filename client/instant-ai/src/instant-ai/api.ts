@@ -144,7 +144,7 @@ export const instantApi = {
   translationStatus: () => request<TranslationStatus>('/api/translation/status'),
   translate: (itemIds: number[], maxNew = 12) => request<TranslationBatchResult>('/api/translate', {
     method: 'POST',
-    body: JSON.stringify({ item_ids: itemIds, max_new: maxNew }),
+    body: JSON.stringify({ item_ids: itemIds, max_new: maxNew, visible_only: true }),
   }),
   readerTranslation: (id: number) => request<ReaderTranslationResult>(`/api/items/${id}/reader-translation`, {
     method: 'POST',

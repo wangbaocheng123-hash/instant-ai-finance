@@ -33,6 +33,14 @@ class TranslationProvider:
     external: bool
     daily_limit: int | None
     translate: Callable[[str], str]
+    label: str = ""
+    configured: bool = True
+
+
+def headline_provider() -> TranslationProvider:
+    from .headline_translation import DAILY_CHARACTER_LIMIT, MODEL, configured, translate_headline
+    return TranslationProvider(name=MODEL, external=True, daily_limit=DAILY_CHARACTER_LIMIT,
+                               translate=translate_headline, label="豆包标题翻译", configured=configured())
 
 
 def needs_translation(text: str) -> bool:
@@ -165,15 +173,16 @@ def translation_status(
     path: Path | str | None = None,
     provider: TranslationProvider | None = None,
 ) -> dict[str, object]:
-    provider = provider or active_provider()
+    provider = provider or headline_provider()
     used = _used_characters(provider.name, path)
     with connect(path) as connection:
         cached = int(connection.execute("SELECT COUNT(*) FROM item_translations").fetchone()[0])
     limit = provider.daily_limit
     return {
-        "enabled": True,
+        "enabled": provider.configured,
+        "configured": provider.configured,
         "provider": provider.name,
-        "provider_label": "MyMemory 免费翻译" if provider.name == MYMEMORY_PROVIDER else "本机 LibreTranslate",
+        "provider_label": provider.label or ("MyMemory 免费翻译" if provider.name == MYMEMORY_PROVIDER else "本机 LibreTranslate"),
         "external": provider.external,
         "cached_titles": cached,
         "used_characters_today": used,
@@ -261,7 +270,7 @@ def translate_items(
         if item_id > 0:
             normalized_ids.append(item_id)
     unique_ids = list(dict.fromkeys(normalized_ids))[:MAX_BATCH_ITEMS]
-    selected_provider = provider or active_provider()
+    selected_provider = provider or headline_provider()
     max_new = min(max(int(max_new), 1), MAX_NEW_PER_BATCH)
 
     with TRANSLATION_LOCK:
@@ -280,10 +289,23 @@ def translate_items(
                 ).fetchall()
             else:
                 rows = []
+            titles = list(dict.fromkeys(str(row["title"]) for row in rows))
+            cached_by_title: dict[str, tuple[str, str]] = {}
+            if titles:
+                placeholders = ",".join("?" for _ in titles)
+                for cached in connection.execute(
+                    f"SELECT original_title,translated_title,provider FROM item_translations "
+                    f"WHERE target_language=? AND original_title IN ({placeholders}) ORDER BY updated_at DESC",
+                    (TARGET_LANGUAGE, *titles),
+                ):
+                    cached_by_title.setdefault(str(cached["original_title"]),
+                                               (str(cached["translated_title"]), str(cached["provider"])))
 
         translations: dict[str, str] = {}
+        original_titles = {str(row["id"]): str(row["title"]) for row in rows}
         providers: dict[str, str] = {}
         candidates: list[tuple[int, str]] = []
+        copies: dict[int, tuple[str, str, str]] = {}
         skipped = 0
         for row in rows:
             item_id = int(row["id"])
@@ -291,7 +313,13 @@ def translate_items(
                 translations[str(item_id)] = str(row["translated_title"])
                 providers[str(item_id)] = str(row["provider"])
             elif needs_translation(str(row["title"])):
-                candidates.append((item_id, str(row["title"])))
+                title = str(row["title"])
+                cached = cached_by_title.get(title)
+                if cached:
+                    translations[str(item_id)], providers[str(item_id)] = cached
+                    copies[item_id] = (title, *cached)
+                else:
+                    candidates.append((item_id, title))
             else:
                 skipped += 1
 
@@ -299,19 +327,23 @@ def translate_items(
         reserved = 0
         chosen: list[tuple[int, str]] = []
         quota_exhausted = False
+        picked_titles: set[str] = set()
         for item_id, title in candidates:
             if len(chosen) >= max_new:
                 break
-            cost = len(utf8_prefix(title))
+            if title in picked_titles:
+                continue
+            cost = len(title) if selected_provider.label == "豆包标题翻译" else len(utf8_prefix(title))
             if selected_provider.daily_limit is not None and used + reserved + cost > selected_provider.daily_limit:
                 quota_exhausted = True
                 continue
             chosen.append((item_id, title))
+            picked_titles.add(title)
             reserved += cost
 
         results: dict[int, str] = {}
         errors: list[str] = []
-        if chosen:
+        if chosen and selected_provider.configured:
             worker_count = min(3, len(chosen))
             with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="instant-ai-translate") as executor:
                 futures = {
@@ -325,14 +357,24 @@ def translate_items(
                         if translated and translated.casefold() != title.casefold():
                             results[item_id] = translated
                     except (OSError, ValueError, RuntimeError, urllib.error.URLError) as error:
-                        errors.append(f"{item_id}: {type(error).__name__}: {error}"[:300])
+                        errors.append(f"{item_id}: 翻译未确认完成，已保留原题。")
+        elif chosen:
+            errors.append("豆包标题翻译尚未配置方舟 API Key。")
+            chosen = []
 
-        requested_characters = sum(len(utf8_prefix(title)) for _, title in chosen)
-        if results or requested_characters:
+        requested_characters = sum(len(title) if selected_provider.label == "豆包标题翻译"
+                                   else len(utf8_prefix(title)) for _, title in chosen)
+        translated_by_title = {original_titles[str(item_id)]: value for item_id, value in results.items()}
+        for item_id, title in candidates:
+            if item_id not in results and title in translated_by_title:
+                results[item_id] = translated_by_title[title]
+        writes = dict(copies)
+        writes.update({item_id: (original_titles[str(item_id)], value, selected_provider.name)
+                       for item_id, value in results.items()})
+        if writes or requested_characters:
             now = utc_now()
             with transaction(path) as connection:
-                for item_id, translated in results.items():
-                    original = next(title for candidate_id, title in chosen if candidate_id == item_id)
+                for item_id, (original, translated, provider_name) in writes.items():
                     connection.execute(
                         """
                         INSERT INTO item_translations(
@@ -345,10 +387,10 @@ def translate_items(
                             provider=excluded.provider,
                             updated_at=excluded.updated_at
                         """,
-                        (item_id, TARGET_LANGUAGE, original, translated, selected_provider.name, now, now),
+                        (item_id, TARGET_LANGUAGE, original, translated, provider_name, now, now),
                     )
                     translations[str(item_id)] = translated
-                    providers[str(item_id)] = selected_provider.name
+                    providers[str(item_id)] = provider_name
                 connection.execute(
                     """
                     INSERT INTO translation_usage(usage_date, provider, character_count, updated_at)
@@ -364,6 +406,7 @@ def translate_items(
         return {
             "ok": not errors,
             "translations": translations,
+            "original_titles": original_titles,
             "providers": providers,
             "translated_count": len(results),
             "cached_count": len(translations) - len(results),

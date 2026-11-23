@@ -1361,6 +1361,9 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
             return
 
         if path == "/api/translate":
+            if payload.get("visible_only") is not True:
+                self._json({"error": "foreground_translation_required"}, HTTPStatus.BAD_REQUEST)
+                return
             raw_ids = payload.get("item_ids", [])
             if not isinstance(raw_ids, list):
                 self._json({"error": "item_ids_must_be_a_list"}, HTTPStatus.BAD_REQUEST)
@@ -1375,7 +1378,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
                 max_new = int(payload.get("max_new", 12))
             except (TypeError, ValueError):
                 max_new = 12
-            self._json(translate_items(item_ids, max_new=max_new))
+            self._json(translate_items(item_ids[:1], max_new=min(max_new, 1)))
             return
 
         parts = path.strip("/").split("/")

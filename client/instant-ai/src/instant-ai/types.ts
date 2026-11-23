@@ -428,6 +428,7 @@ export interface ModelMrChatResult {
 
 export interface TranslationStatus {
   enabled: boolean;
+  configured?: boolean;
   provider: string;
   provider_label: string;
   external: boolean;
@@ -442,6 +443,7 @@ export interface TranslationStatus {
 export interface TranslationBatchResult {
   ok: boolean;
   translations: Record<string, string>;
+  original_titles?: Record<string, string>;
   providers: Record<string, string>;
   translated_count: number;
   cached_count: number;

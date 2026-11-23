@@ -3,6 +3,7 @@ import { BloggerPanel } from './BloggerPanel';
 import { FinancePanel } from './FinancePanel';
 import { ModelMrPanel } from './ModelMrPanel';
 import { WatchEventsPanel } from './WatchEventsPanel';
+import { VisibleTitleTranslation } from './VisibleTitleTranslation';
 import type {
   AppStatus, AuthStatus, FinanceItem, FinanceItemDetail, ReaderTranslationResult, SectionDefinition, SourceStatus,
   TranslationBatchResult, TranslationStatus,
@@ -57,6 +58,7 @@ export class InstantFinanceApp {
   private translationEnabled = true;
   private translationInFlight = false;
   private translationStatus: TranslationStatus | null = null;
+  private readonly titleTranslator: VisibleTitleTranslation;
   private lastRefreshStartedAt = 0;
   private authRequired = false;
   private refreshTimer: number | null = null;
@@ -64,6 +66,14 @@ export class InstantFinanceApp {
 
   constructor(root: HTMLElement) {
     this.root = root;
+    this.titleTranslator = new VisibleTitleTranslation(root, {
+      enabled: () => this.translationEnabled && this.translationStatus?.enabled !== false,
+      find: (id) => this.findFinanceItem(id),
+      needs: (item) => this.shouldTranslate(item),
+      translate: (id) => instantApi.translate([id], 1),
+      apply: (result, title) => this.acceptTitleTranslation(result, title),
+      busy: (value) => { this.translationInFlight = value; this.updateTranslationButton(); },
+    });
     try {
       this.translationEnabled = localStorage.getItem('instant-ai-translation-enabled') !== 'false';
     } catch {
@@ -176,12 +186,14 @@ export class InstantFinanceApp {
 
   private bindEvents(): void {
     const refreshOnResume = (): void => {
+      this.titleTranslator.observe();
       if (document.visibilityState === 'hidden' || Date.now() - this.lastRefreshStartedAt < 5_000) return;
       void this.refresh(false);
     };
     document.addEventListener('visibilitychange', refreshOnResume);
     window.addEventListener('pageshow', refreshOnResume);
     window.addEventListener('online', refreshOnResume);
+    window.addEventListener('pagehide', () => this.titleTranslator.pause());
 
     this.root.addEventListener('click', (event) => {
       const target = event.target as HTMLElement;
@@ -211,6 +223,7 @@ export class InstantFinanceApp {
   }
 
   private renderLogin(status: AuthStatus | null, initialMessage = ''): void {
+    this.titleTranslator.pause();
     if (this.refreshTimer !== null) {
       window.clearInterval(this.refreshTimer);
       this.refreshTimer = null;
@@ -332,6 +345,7 @@ export class InstantFinanceApp {
     this.bloggerPanel.element.classList.toggle('is-active', bloggerActive);
 
     if (resetViewport) window.scrollTo({ top: 0, behavior: 'auto' });
+    this.titleTranslator.observe();
   }
 
   private async refresh(showErrors = true): Promise<void> {
@@ -401,7 +415,9 @@ export class InstantFinanceApp {
       const score = document.createElement('b');
       score.textContent = item.source_count > 1 ? `${item.source_count}源` : String(item.importance_score);
       const headline = this.displayTitle(item);
-      button.append(score, document.createTextNode(headline));
+      const text = document.createElement('span');
+      text.dataset.headlineId = String(item.id); text.textContent = headline;
+      button.append(score, text);
       const titleParts = ['即时热点：融合最新发布、多来源关注度、重要度和新鲜度'];
       if (headline !== item.title) titleParts.push(`英文原题：${item.title}`);
       if (titleParts.length > 0) button.title = titleParts.join('\n');
@@ -438,17 +454,7 @@ export class InstantFinanceApp {
 
   private async openItem(id: number): Promise<void> {
     try {
-      let item = await instantApi.item(id);
-      if (this.translationEnabled && this.shouldTranslate(item)) {
-        try {
-          const result = await instantApi.translate([id], 1);
-          this.translationStatus = result.status;
-          item = await instantApi.item(id);
-          this.updateTranslationButton();
-        } catch {
-          // The evidence view still opens with the source title if translation fails.
-        }
-      }
+      const item = await instantApi.item(id);
       this.activeDetail = item;
       void instantApi.read(id);
       const card = this.required('#overlayCard');
@@ -462,6 +468,7 @@ export class InstantFinanceApp {
       kicker.className = 'detail-kicker';
       kicker.textContent = `${item.event_type} · 重要度 ${item.importance_score} · 可信级别 ${item.trust_level}/5`;
       const title = document.createElement('h1');
+      title.dataset.headlineId = String(item.id);
       const displayTitle = this.displayTitle(item);
       title.textContent = displayTitle;
       const originalTitle = document.createElement('p');
@@ -544,6 +551,7 @@ export class InstantFinanceApp {
       });
       card.append(close, detailHeader, summary, actions, browserTranslationTip, readerTranslation, evidenceTitle, evidence);
       this.required('#overlay').classList.remove('hidden');
+      this.titleTranslator.observe();
     } catch (error) {
       this.toast(error instanceof Error ? error.message : '详情读取失败', true);
     }
@@ -564,10 +572,6 @@ export class InstantFinanceApp {
     container.append(loading);
     try {
       const result = await instantApi.readerTranslation(itemId);
-      if (result.status) {
-        this.translationStatus = result.status;
-        this.updateTranslationButton();
-      }
       if (!result.ok || !result.translated_text) {
         const message = result.quota_exhausted
           ? '今日免费摘要翻译额度已用完；仍可用浏览器打开并翻译原文。'
@@ -706,6 +710,7 @@ export class InstantFinanceApp {
       const items = this.sectionItems.get(section.id);
       if (panel && items) panel.render(items, this.translationEnabled);
     });
+    this.titleTranslator.observe();
   }
 
   private async toggleTranslation(): Promise<void> {
@@ -718,7 +723,8 @@ export class InstantFinanceApp {
     this.updateTranslationButton();
     this.renderCurrentItems();
     if (this.translationEnabled) {
-      this.toast('标题汉化已开启：中文译文在上，英文原题保留在下。');
+      this.titleTranslator.retryByOwner();
+      this.toast('标题汉化已开启：只翻译当前看到的英文标题，切到后台停止后续请求。');
       await this.translateVisible(true);
     } else {
       this.toast('标题汉化已关闭，当前显示英文原题。');
@@ -813,54 +819,49 @@ export class InstantFinanceApp {
     return buffer;
   }
 
-  private async translateVisible(showToast: boolean): Promise<void> {
-    if (!this.translationEnabled || this.translationInFlight) return;
-    const priorityItems = [
-      ...this.latestItems.slice(0, 16),
-      ...this.instantHotItems.slice(0, 16),
-      ...SECTIONS.flatMap((section) => (this.sectionItems.get(section.id) || []).slice(0, 2)),
-    ];
-    const unique = Array.from(new Map(priorityItems.map((item) => [item.id, item])).values());
-    const candidates = unique.filter((item) => this.shouldTranslate(item)).slice(0, 40);
-    if (candidates.length === 0) {
-      if (showToast) this.toast('当前显示的英文标题已经完成汉化。');
-      return;
-    }
-
-    this.translationInFlight = true;
-    this.updateTranslationButton();
-    try {
-      const result = await instantApi.translate(candidates.map((item) => item.id), 12);
-      this.applyTranslations(this.latestItems, result);
-      this.applyTranslations(this.instantHotItems, result);
-      this.sectionItems.forEach((items) => this.applyTranslations(items, result));
-      this.translationStatus = result.status;
-      this.renderCurrentItems();
-      if (showToast) {
-        if (result.translated_count > 0) {
-          this.toast(`已新增 ${result.translated_count} 条中文标题，译文已缓存到本机。`);
-        } else if (result.quota_exhausted) {
-          this.toast('今日免费翻译额度已用完；已有译文仍可继续使用。', true);
-        } else if (result.errors.length > 0) {
-          this.toast('翻译通道暂时不可用，已保留英文原题。', true);
-        } else {
-          this.toast('当前标题已有译文缓存。');
-        }
-      }
-    } catch (error) {
-      if (showToast) this.toast(error instanceof Error ? error.message : '标题翻译失败', true);
-    } finally {
-      this.translationInFlight = false;
-      this.updateTranslationButton();
-    }
+  private translateVisible(showToast: boolean): void {
+    this.titleTranslator.observe();
+    if (showToast) this.toast('只翻译屏幕里看到的英文标题；已有译文直接复用。');
   }
 
-  private applyTranslations(items: FinanceItem[], result: TranslationBatchResult): void {
-    items.forEach((item) => {
-      const translated = result.translations[String(item.id)];
-      if (translated) {
+  private findFinanceItem(id: number): FinanceItem | null {
+    if (this.activeDetail?.id === id) return this.activeDetail;
+    return this.latestItems.find((item) => item.id === id)
+      || this.instantHotItems.find((item) => item.id === id)
+      || [...this.sectionItems.values()].flat().find((item) => item.id === id) || null;
+  }
+
+  private acceptTitleTranslation(result: TranslationBatchResult, original: string): void {
+    this.translationStatus = result.status;
+    const pair = Object.entries(result.translations)[0];
+    if (pair && (!result.original_titles || result.original_titles[pair[0]] === original)) {
+      const [id, translated] = pair;
+      const items = [...this.latestItems, ...this.instantHotItems, ...[...this.sectionItems.values()].flat()];
+      if (this.activeDetail) items.push(this.activeDetail);
+      items.filter((item) => item.title === original).forEach((item) => {
         item.translated_title = translated;
-        item.translation_provider = result.providers[String(item.id)] || result.status.provider;
+        item.translation_provider = result.providers[id] || result.status.provider;
+      });
+      this.updateHeadlineText();
+    }
+    this.updateTranslationButton();
+    if (result.errors.length) this.toast('豆包标题翻译未完成，保留原题；可关闭再开启汉化后手动重试。', true);
+    else if (result.quota_exhausted) this.toast('今日标题翻译用量已达上限，已有译文仍可阅读。', true);
+  }
+
+  private updateHeadlineText(): void {
+    this.root.querySelectorAll<HTMLElement>('[data-headline-id]').forEach((node) => {
+      const item = this.findFinanceItem(Number(node.dataset.headlineId));
+      if (!item) return;
+      const title = this.displayTitle(item);
+      node.textContent = title;
+      const original = node.parentElement?.querySelector<HTMLElement>('.news-original-title, .detail-original-title');
+      if (original) {
+        original.textContent = title !== item.title ? (node.tagName === 'H1' ? `英文原题：${item.title}` : item.title) : '';
+        original.classList.toggle('hidden', !original.textContent);
+      }
+      if (node.closest('#tickerTrack') && node.parentElement) {
+        node.parentElement.title = title !== item.title ? `英文原题：${item.title}` : item.title;
       }
     });
   }
@@ -869,7 +870,7 @@ export class InstantFinanceApp {
     if (item.translated_title?.trim()) return false;
     const hasChinese = /[\u3400-\u9fff]/u.test(item.title);
     const latinLetters = (item.title.match(/[A-Za-z]/g) || []).length;
-    return !hasChinese && latinLetters >= 6;
+    return !hasChinese && latinLetters >= 6 && new TextEncoder().encode(item.title).length <= 1_000;
   }
 
   private displayTitle(item: FinanceItem): string {
@@ -881,18 +882,19 @@ export class InstantFinanceApp {
     const button = this.root.querySelector<HTMLButtonElement>('[data-action="translate"]');
     if (!button) return;
     button.classList.toggle('is-active', this.translationEnabled);
-    button.disabled = this.translationInFlight;
-    button.textContent = this.translationInFlight ? '汉化中…' : this.translationEnabled ? '汉化开启' : '汉化关闭';
+    button.disabled = false;
+    button.textContent = this.translationEnabled && this.translationInFlight ? '汉化中…' : this.translationEnabled ? '汉化开启' : '汉化关闭';
     const remaining = this.translationStatus?.remaining_characters_today;
     const provider = this.translationStatus?.provider_label || '标题翻译';
     button.title = remaining == null
-      ? `${provider}；译文安全缓存，英文原题始终保留。`
-      : `${provider}；今日免费安全余量约 ${remaining} 字符；译文安全缓存。`;
+      ? `${provider}；只翻译当前可见标题，切到后台停止后续请求；英文原题保留。`
+      : `${provider}；今日剩余上限约 ${remaining} 字符；仅翻译可见标题，已译不重复调用。`;
   }
 
   private closeOverlay(): void {
     this.required('#overlay').classList.add('hidden');
     this.activeDetail = null;
+    this.titleTranslator.observe();
   }
 
   private toast(message: string, error = false): void {
