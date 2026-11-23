@@ -59,6 +59,7 @@ export class InstantFinanceApp {
   private translationInFlight = false;
   private translationStatus: TranslationStatus | null = null;
   private readonly titleTranslator: VisibleTitleTranslation;
+  private readonly completedTitles = new Map<string, { text: string; provider: string }>();
   private lastRefreshStartedAt = 0;
   private authRequired = false;
   private refreshTimer: number | null = null;
@@ -126,6 +127,10 @@ export class InstantFinanceApp {
             </div>
           </div>
         </header>
+        <div id="headlineNotice" class="headline-notice hidden" role="status">
+          <span>部分标题暂未翻译，已有中文仍可阅读。</span>
+          <button type="button" data-action="retry-headlines">重试汉化</button>
+        </div>
         <section class="ticker-board" aria-label="即时热点">
           <div class="ticker ticker-highlight" title="融合最新发布、多来源关注度、重要度和新鲜度，交错去重展示">
             <b>即时热点</b><div class="ticker-window"><div id="tickerTrack" class="ticker-track"><span>正在汇总最新与重要财经事件…</span></div></div>
@@ -209,6 +214,10 @@ export class InstantFinanceApp {
       }
       const action = target.closest<HTMLElement>('[data-action]')?.dataset.action;
       if (action === 'translate') void this.toggleTranslation();
+      if (action === 'retry-headlines') {
+        this.titleTranslator.retryByOwner();
+        this.updateTranslationButton();
+      }
       if (action === 'push') void this.togglePushNotifications();
       if (action === 'sources') void this.openSources();
       if (action === 'logout') void this.logout();
@@ -224,6 +233,7 @@ export class InstantFinanceApp {
 
   private renderLogin(status: AuthStatus | null, initialMessage = ''): void {
     this.titleTranslator.pause();
+    this.completedTitles.clear();
     if (this.refreshTimer !== null) {
       window.clearInterval(this.refreshTimer);
       this.refreshTimer = null;
@@ -359,6 +369,10 @@ export class InstantFinanceApp {
       this.instantHotItems = this.selectInstantHotItems(latest, hot);
       this.renderStatus(status);
       this.updateTranslationButton();
+      // Show news and start its visible-title observer without waiting for
+      // unrelated watch/video modules to finish loading.
+      this.sectionItems.set('global', latest);
+      this.renderCurrentItems();
       try {
         this.watchPanel.render(await instantApi.watchEvents());
       } catch (error) {
@@ -455,6 +469,7 @@ export class InstantFinanceApp {
   private async openItem(id: number): Promise<void> {
     try {
       const item = await instantApi.item(id);
+      this.reconcileCompletedTitles([item]);
       this.activeDetail = item;
       void instantApi.read(id);
       const card = this.required('#overlayCard');
@@ -704,6 +719,11 @@ export class InstantFinanceApp {
   }
 
   private renderCurrentItems(): void {
+    // GET snapshots may have been taken before an in-flight translation
+    // completed. Reconcile exact original titles before replacing any DOM.
+    const items = [...this.latestItems, ...this.instantHotItems, ...[...this.sectionItems.values()].flat()];
+    if (this.activeDetail) items.push(this.activeDetail);
+    this.reconcileCompletedTitles(items);
     this.renderTicker(this.instantHotItems);
     SECTIONS.forEach((section) => {
       const panel = this.panels.get(section.id);
@@ -711,6 +731,16 @@ export class InstantFinanceApp {
       if (panel && items) panel.render(items, this.translationEnabled);
     });
     this.titleTranslator.observe();
+  }
+
+  private reconcileCompletedTitles(items: FinanceItem[]): void {
+    items.forEach((item) => {
+      const completed = this.completedTitles.get(item.title);
+      if (!item.translated_title?.trim() && completed) {
+        item.translated_title = completed.text;
+        item.translation_provider = completed.provider;
+      }
+    });
   }
 
   private async toggleTranslation(): Promise<void> {
@@ -722,8 +752,10 @@ export class InstantFinanceApp {
     }
     this.updateTranslationButton();
     this.renderCurrentItems();
+    this.updateHeadlineText();
     if (this.translationEnabled) {
       this.titleTranslator.retryByOwner();
+      this.updateTranslationButton();
       this.toast('标题汉化已开启：只翻译当前看到的英文和韩文标题，切到后台停止后续请求。');
       await this.translateVisible(true);
     } else {
@@ -836,6 +868,9 @@ export class InstantFinanceApp {
     const pair = Object.entries(result.translations)[0];
     if (pair && (!result.original_titles || result.original_titles[pair[0]] === original)) {
       const [id, translated] = pair;
+      this.completedTitles.delete(original);
+      this.completedTitles.set(original, { text: translated, provider: result.providers[id] || result.status.provider });
+      if (this.completedTitles.size > 512) this.completedTitles.delete(this.completedTitles.keys().next().value!);
       const items = [...this.latestItems, ...this.instantHotItems, ...[...this.sectionItems.values()].flat()];
       if (this.activeDetail) items.push(this.activeDetail);
       items.filter((item) => item.title === original).forEach((item) => {
@@ -845,7 +880,7 @@ export class InstantFinanceApp {
       this.updateHeadlineText();
     }
     this.updateTranslationButton();
-    if (result.errors.length) this.toast('豆包标题翻译未完成，保留原题；可关闭再开启汉化后手动重试。', true);
+    if (result.errors.length) this.toast('豆包标题翻译未完成，已保留原题；可点“重试汉化”继续。', true);
     else if (result.quota_exhausted) this.toast('今日标题翻译用量已达上限，已有译文仍可阅读。', true);
   }
 
@@ -885,7 +920,12 @@ export class InstantFinanceApp {
     if (!button) return;
     button.classList.toggle('is-active', this.translationEnabled);
     button.disabled = false;
-    button.textContent = this.translationEnabled && this.translationInFlight ? '汉化中…' : this.translationEnabled ? '汉化开启' : '汉化关闭';
+    button.setAttribute('aria-pressed', String(this.translationEnabled));
+    button.textContent = !this.translationEnabled ? '汉化关闭' : this.translationInFlight ? '汉化中…'
+      : this.titleTranslator.interrupted ? '汉化待重试'
+        : this.translationStatus?.enabled === false ? '汉化未就绪' : '汉化开启';
+    const notice = this.root.querySelector<HTMLElement>('#headlineNotice');
+    notice?.classList.toggle('hidden', !this.translationEnabled || !this.titleTranslator.interrupted || this.translationInFlight);
     const remaining = this.translationStatus?.remaining_characters_today;
     const provider = this.translationStatus?.provider_label || '标题翻译';
     button.title = remaining == null

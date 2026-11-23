@@ -51,6 +51,10 @@ export class VisibleTitleTranslation {
     this.observe();
   }
 
+  get interrupted(): boolean {
+    return this.blocked;
+  }
+
   private foreground(): boolean {
     return document.visibilityState === 'visible' && this.hooks.enabled()
       && this.root.querySelector('.terminal-shell') !== null;

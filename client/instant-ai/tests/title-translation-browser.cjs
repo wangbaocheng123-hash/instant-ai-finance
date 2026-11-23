@@ -52,12 +52,24 @@ async function mount(browser, dist, width, state) {
     }
     if (u.pathname.startsWith('/api/')) {
       if (u.pathname === '/api/auth/status') return json({ required: true, authenticated: true, session_days: 30 });
-      if (u.pathname === '/api/status') return json({ collection: { running: false, interval_seconds: 300 } });
+      if (u.pathname === '/api/status') {
+        if (state.holdStatus) {
+          state.holdStatus = false;
+          await new Promise(resolve => { state.releaseStatus = resolve; });
+        }
+        return json({ collection: { running: false, interval_seconds: 300 } });
+      }
       if (u.pathname === '/api/items') return json((u.searchParams.get('topic') === '华尔街'
         ? state.wallItems : state.items).map(translated));
       if (u.pathname === '/api/hot') return json([]);
       if (u.pathname === '/api/translation/status') return json(status());
-      if (u.pathname === '/api/watch-events') return json({ events: [], counts: {}, sync: null });
+      if (u.pathname === '/api/watch-events') {
+        if (state.holdWatch) {
+          state.holdWatch = false;
+          await new Promise(resolve => { state.releaseWatch = resolve; });
+        }
+        return json({ events: [], counts: {}, sync: null });
+      }
       if (u.pathname === '/api/model-mr/status' || u.pathname === '/api/blogger-library/status') return json({ available: false, counts: {} });
       if (u.pathname === '/api/blogger-library/processing') return json({ enabled: false, summary: {}, items: [] });
       return json({});
@@ -121,16 +133,69 @@ async function main() {
       assert.equal(state.requests.length, beforeReopen, 'cached title caused another model call');
       assert.equal(await reopened.page.locator('.news-row h3').first().innerText(), '已缓存中文标题');
       await reopened.page.close();
+      // A news snapshot can predate a completed translation while another API
+      // delays Promise.all. Returning to the foreground must not erase it.
+      for (const changeTitle of [false, true]) {
+        const original = item(changeTitle ? 802 : 801);
+        const updated = { ...original, title: 'Updated English market headline after a source correction' };
+        const raced = { ...state, items: [original], cache: new Map(), requests: [],
+          holdNext: true, release: null, holdStatus: false, releaseStatus: null };
+        const racing = await mount(browser, dist, width, raced);
+        await until(() => raced.release !== null);
+        await sleep(5_100);
+        if (changeTitle) raced.items = [updated];
+        raced.holdStatus = true;
+        await racing.page.evaluate(() => window.dispatchEvent(new Event('online')));
+        await until(() => raced.releaseStatus !== null);
+        raced.release(); raced.release = null;
+        await until(() => raced.cache.has(original.title));
+        await racing.page.waitForFunction(id => document.querySelector('.news-row h3')?.textContent === `中文标题 ${id}`, original.id);
+        raced.releaseStatus(); raced.releaseStatus = null;
+        if (changeTitle) await until(() => raced.cache.has(updated.title));
+        await sleep(700);
+        assert.equal(await racing.page.locator('.news-row h3').first().innerText(), `中文标题 ${original.id}`,
+          'a stale loading response erased a completed translation until the owner toggled the switch');
+        assert.equal(raced.requests.length, changeTitle ? 2 : 1,
+          'reuse only the exact original title; source corrections require their own translation');
+        assert.deepEqual(racing.errors, []);
+        await racing.page.close();
+      }
+      const loading = { ...state, items: [item(851)], cache: new Map(), requests: [],
+        holdWatch: true, releaseWatch: null };
+      const firstPaint = await mount(browser, dist, width, loading);
+      await until(() => loading.releaseWatch !== null && loading.cache.has(item(851).title));
+      assert.equal(await firstPaint.page.locator('.news-row h3').first().innerText(), '中文标题 851',
+        'news translation waited for an unrelated module to finish loading');
+      loading.releaseWatch(); loading.releaseWatch = null;
+      await sleep(500);
+      assert.equal(loading.requests.length, 1);
+      assert.equal(await firstPaint.page.locator('.news-row h3').first().innerText(), '中文标题 851');
+      await firstPaint.page.close();
       const failed = { ...state, items: [item(901), item(902)], cache: new Map(), requests: [], fail: true };
       const failure = await mount(browser, dist, width, failed);
       await until(() => failed.requests.length === 1);
       await sleep(650);
       assert.equal(failed.requests.length, 1, 'an unconfirmed paid call was retried automatically');
       assert.equal(await failure.page.locator('.news-row h3').first().innerText(), item(901).title);
+      assert.equal(await failure.page.locator('[data-action="translate"]').innerText(), '汉化待重试');
+      assert(await failure.page.locator('#headlineNotice').isVisible(), 'interrupted translation was silent');
+      assert(await failure.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+        'the retry notice overflowed the mobile viewport');
+      await failure.page.screenshot({ path: path.join(output, `interrupted-title-${width}.png`), fullPage: true });
+      failed.fail = false;
+      await failure.page.locator('[data-action="retry-headlines"]').click();
+      await until(() => failed.cache.size === 2);
+      await sleep(250);
+      assert.equal(failed.requests.filter(id => id === 901).length, 2,
+        'only an explicit owner retry may repeat the interrupted headline');
+      assert.equal(await failure.page.locator('.news-row h3').first().innerText(), '中文标题 901');
+      assert(!(await failure.page.locator('#headlineNotice').isVisible()));
+      assert.deepEqual(failure.errors, []);
       await failure.page.close();
       console.log(JSON.stringify({ width, foregroundOnly: 'pass', offscreenAndChinese: 'pass',
         koreanVisibleAndCache: 'pass', cacheReopen: 'pass', oneInFlight: 'pass',
-        hiddenStopsNext: 'pass', failureNoRetry: 'pass', realPaidCalls: 0 }));
+        hiddenStopsNext: 'pass', failureNoRetry: 'pass', staleLoadingSnapshot: 'pass', changedOriginalIsolated: 'pass',
+        newsBeforeOtherModules: 'pass', visibleOwnerRetry: 'pass', realPaidCalls: 0 }));
     }
   } finally { await browser.close(); }
 }
