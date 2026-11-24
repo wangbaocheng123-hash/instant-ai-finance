@@ -40,6 +40,7 @@ from .service import (
 from .retention import run_retention_cleanup
 from .reader_translation import translate_reader_item
 from .translation import translate_items, translation_status
+from .watch_translation import annotate_watch_titles, translate_watch_title
 from .thumbnails import backfill_thumbnail_candidates, get_thumbnail
 from .watch_events import list_watch_events, refresh_watch_events, sync_watch_events
 from .monetary_policy import dispatch_policy_signals, policy_snapshot
@@ -1072,7 +1073,7 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
         elif path == "/api/hot":
             self._json(query_hot_items(limit=int(query.get("limit", ["40"])[0])))
         elif path == "/api/watch-events":
-            self._json({**list_watch_events(), "discovery": calendar_snapshot(), "monetaryPolicy": policy_snapshot()})
+            self._json(annotate_watch_titles({**list_watch_events(), "discovery": calendar_snapshot(), "monetaryPolicy": policy_snapshot()}))
         elif path.startswith("/api/items/") and path.endswith("/thumbnail"):
             parts = path.strip("/").split("/")
             if len(parts) != 4:
@@ -1358,6 +1359,17 @@ small{{display:block;margin-top:14px;color:#64748b;line-height:1.5}}
 
         if path == "/api/restore-drill":
             self._json({"ok": True, "result": run_restore_drill()})
+            return
+
+        if path == "/api/watch-events/translate":
+            if payload.get("visible_only") is not True:
+                self._json({"error": "foreground_translation_required"}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                result = translate_watch_title(payload.get("kind"), payload.get("key"), payload.get("expected_title"))
+                self._json(result)
+            except ValueError:
+                self._json({"error": "watch_title_changed_or_invalid"}, HTTPStatus.BAD_REQUEST)
             return
 
         if path == "/api/translate":

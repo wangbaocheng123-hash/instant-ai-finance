@@ -20,7 +20,7 @@ function item(id) {
 }
 
 async function mount(browser, dist, width, state) {
-  const page = await browser.newPage({ viewport: { width, height: 844 } });
+  const page = await browser.newPage({ viewport: { width, height: 844 }, ...(state.userAgent ? { userAgent: state.userAgent } : {}) });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.addInitScript(() => {
     window.hiddenForTest = false;
@@ -32,10 +32,13 @@ async function mount(browser, dist, width, state) {
   const handleRoute = async route => {
     const u = new URL(route.request().url()); assert.equal(u.origin, 'http://headline.test');
     const json = value => route.fulfill({ contentType: 'application/json', body: JSON.stringify(value) });
-    if (u.pathname === '/api/translate') {
+    if (u.pathname === '/api/translate' || u.pathname === '/api/watch-events/translate') {
       const body = route.request().postDataJSON();
-      assert.equal(body.visible_only, true); assert.equal(body.max_new, 1); assert.equal(body.item_ids.length, 1);
-      const id = body.item_ids[0]; const row = state.items.find(x => x.id === id) || item(id);
+      assert.equal(body.visible_only, true);
+      const watch = u.pathname === '/api/watch-events/translate';
+      if (!watch) { assert.equal(body.max_new, 1); assert.equal(body.item_ids.length, 1); }
+      const id = watch ? `watch:${body.kind}:${body.key}` : body.item_ids[0];
+      const row = watch ? { title: body.expected_title } : state.items.find(x => x.id === id) || item(id);
       assert.equal(await page.evaluate(() => document.visibilityState), 'visible');
       state.requests.push(id); state.running++; state.maxRunning = Math.max(state.maxRunning, state.running);
       if (state.holdNext) {
@@ -67,6 +70,13 @@ async function mount(browser, dist, width, state) {
         if (state.holdWatch) {
           state.holdWatch = false;
           await new Promise(resolve => { state.releaseWatch = resolve; });
+        }
+        if (state.watch) {
+          const payload = JSON.parse(JSON.stringify(state.watch));
+          for (const group of [payload.events, payload.discovery?.events, payload.monetaryPolicy?.signals]) {
+            for (const row of group || []) row.translated_title = state.staleWatch ? '' : state.cache.get(row.title) || '';
+          }
+          return json(payload);
         }
         return json({ events: [], counts: {}, sync: null });
       }
@@ -199,4 +209,5 @@ async function main() {
     }
   } finally { await browser.close(); }
 }
-main().catch(e => { console.error(e); process.exitCode = 1; });
+module.exports = { mount, item, sleep, until };
+if (require.main === module) main().catch(e => { console.error(e); process.exitCode = 1; });

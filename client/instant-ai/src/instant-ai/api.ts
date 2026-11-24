@@ -139,6 +139,9 @@ export const instantApi = {
   },
   hot: (limit = 40) => request<FinanceItem[]>(`/api/hot?limit=${limit}`),
   watchEvents: () => request<WatchEventsResponse>('/api/watch-events'),
+  translateWatchTitle: (kind: string, key: string, title: string) => request<TranslationBatchResult>('/api/watch-events/translate', {
+    method: 'POST', body: JSON.stringify({ kind, key, expected_title: title, visible_only: true }),
+  }),
   item: (id: number) => request<FinanceItemDetail>(`/api/items/${id}`),
   sources: () => request<SourceStatus[]>('/api/sources'),
   translationStatus: () => request<TranslationStatus>('/api/translation/status'),

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from instant_ai.collectors import Entry, Source
 from instant_ai.database import connect, initialize, seed_sources, transaction
@@ -75,6 +75,60 @@ class MonetaryPolicyTests(unittest.TestCase):
                 result = classify_policy(title, '', url)
                 self.assertIsNotNone(result)
                 self.assertEqual(result['kind'], kind)
+
+    def test_policy_mechanics_and_named_speaker_are_high_priority_without_inventing_decisions(self):
+        for title in ['Fed discusses quantitative tightening and balance-sheet runoff',
+                      'Fed considers asset purchases and QE',
+                      'Christopher Waller discusses 50 basis points in January',
+                      '美联储考虑缩表及货币政策调整']:
+            with self.subTest(title=title):
+                result=classify_policy(title, '', URL)
+                self.assertIsNotNone(result)
+                self.add(title=title, url=URL+'-'+str(len(title)))
+        self.assertIsNone(classify_policy('Fed cuts staff and operating costs', '', URL))
+        self.assertIsNone(classify_policy('Tim Cook cuts iPhone prices', '', URL))
+        with connect(self.path) as db:
+            self.assertTrue(all(row[0]>=90 for row in db.execute('SELECT importance_score FROM items')))
+            self.assertGreater(db.execute('SELECT COUNT(*) FROM notification_outbox').fetchone()[0],0)
+
+    def test_final_policy_priority_queues_existing_phone_channel_once(self):
+        with transaction(self.path) as db:
+            db.execute("INSERT INTO web_push_subscriptions(id,endpoint,p256dh,auth_secret,created_at,updated_at) VALUES('synthetic-phone','https://web.push.apple.com/synthetic','synthetic-public-key','synthetic-auth',?,?)",(NOW.isoformat(),NOW.isoformat()))
+        self.add(title='Christopher Waller discusses 50 basis points in January')
+        self.add(title='Christopher Waller discusses 50 basis points in January')
+        self.add(title='Christopher Waller discusses 50 basis points in January', url='https://www.reuters.com/world/us/synthetic-same-policy/')
+        with connect(self.path) as db:
+            rows=db.execute('SELECT channel,reason_json FROM notification_outbox ORDER BY channel').fetchall()
+            self.assertEqual([row['channel'] for row in rows],['in_app','web_push'])
+            self.assertTrue(all(json.loads(row['reason_json'])['importance_score']>=90 for row in rows))
+            self.assertTrue(all(json.loads(row['reason_json'])['event_type']=='央行利率政策线索' for row in rows))
+        from instant_ai.service import dispatch_web_push_notifications
+        sender=Mock(available=True)
+        sender.send.return_value=Mock(ok=True,status=201,expired=False,error='')
+        first=dispatch_web_push_notifications(self.path,sender=sender)
+        second=dispatch_web_push_notifications(self.path,sender=sender)
+        self.assertEqual(first['delivered'],1)
+        self.assertEqual(second['attempted'],0)
+        sender.send.assert_called_once()
+        message=sender.send.call_args.args[1]
+        self.assertIn('美联储',message['title'])
+        self.assertIn('官员表态线索',message['title'])
+        self.assertIn('政策线索待核验',message['body'])
+
+    def test_policy_source_health_reports_disabled_failed_stale_and_healthy(self):
+        at=NOW.isoformat()
+        with transaction(self.path) as db:
+            db.execute("UPDATE sources SET last_success_at=?,last_error=NULL",(at,))
+            db.execute("UPDATE sources SET enabled=0 WHERE key='federal-reserve-press'")
+            db.execute("UPDATE sources SET last_error='sensitive error body' WHERE key='cnbc-top-news'")
+            db.execute("UPDATE sources SET last_success_at=? WHERE key='federal-reserve-monetary-policy'",((NOW-timedelta(hours=2)).isoformat(),))
+        snapshot=policy_snapshot(path=self.path,now=NOW)
+        states={row['key']:row['state'] for row in snapshot['monitoring']['sources']}
+        self.assertEqual(states['federal-reserve-press'],'disabled')
+        self.assertEqual(states['cnbc-top-news'],'error')
+        self.assertEqual(states['federal-reserve-monetary-policy'],'stale')
+        self.assertEqual(states['cnbc-finance'],'ok')
+        self.assertNotIn('sensitive',str(snapshot))
 
     def test_unrelated_and_untrusted_sources_do_not_create_signals(self):
         for title, url in [('FedEx raises shipping rates', URL), ('Mortgage rates decline', URL),

@@ -1,4 +1,8 @@
 import type { WatchEvent, WatchEventsResponse } from './types';
+import type { HeadlineTarget } from './VisibleTitleTranslation';
+import { sourceReadingLinks } from './BrowserReading';
+
+type TitleRecord = { title: string; translated_title?: string | null; translation_provider?: string | null };
 
 const formatEventDate = (date: string, time: string): { month: string; day: string; full: string } => {
   const [year, month, day] = date.split('-').map(Number);
@@ -17,7 +21,10 @@ export class WatchEventsPanel {
   private readonly body: HTMLElement;
   private readonly count: HTMLElement;
 
-  constructor() {
+  private readonly titles = new Map<string, TitleRecord>();
+  private useChinese = true;
+
+  constructor(private readonly completed: (title: string) => string | undefined = () => undefined) {
     this.element = document.createElement('section');
     this.element.className = 'finance-panel watch-events-panel';
     this.element.dataset.panel = 'watch-events';
@@ -50,7 +57,9 @@ export class WatchEventsPanel {
     this.body.replaceChildren(this.message(message, 'error'));
   }
 
-  render(response: WatchEventsResponse): void {
+  render(response: WatchEventsResponse, useChinese = true): void {
+    this.useChinese = useChinese;
+    this.titles.clear();
     const policyCount = response.monetaryPolicy?.signals.length || 0;
     this.count.textContent = String(response.counts.total + policyCount);
     const summary = document.createElement('div');
@@ -75,7 +84,9 @@ export class WatchEventsPanel {
     if (response.events.length === 0) list.append(this.message('罗盘尚未同步重点事件，连接后会自动出现。'));
     const discovery = this.discoveryPanel(response.discovery);
     const policy = this.policyPanel(response.monetaryPolicy);
-    this.body.replaceChildren(...[policy, discovery, summary, sync, list].filter((node): node is HTMLElement => node !== null));
+    const reading = this.message('中文阅读通过 Google 翻译打开；iPhone 使用 Chrome。原站不支持时，可选 Chrome 原文并在菜单中点“翻译”。');
+    reading.className = 'watch-sync';
+    this.body.replaceChildren(...[policy, reading, discovery, summary, sync, list].filter((node): node is HTMLElement => node !== null));
   }
 
   private policyPanel(policy: WatchEventsResponse['monetaryPolicy']): HTMLElement | null {
@@ -83,13 +94,25 @@ export class WatchEventsPanel {
     const section = document.createElement('section');
     section.className = 'official-calendar-discovery monetary-policy-signals';
     const heading = document.createElement('h3');
-    heading.textContent = `加息 / 降息重点跟踪 · ${policy.signals.length} 条`;
+    heading.textContent = `加息 / 降息 / 美联储政策 · ${policy.signals.length} 条`;
     section.append(heading, this.message('正式决议、官员表态、机构预测和市场预期分别核验；输送成功不等于政策已确认。'));
+    if (policy.monitoring) {
+      const active = policy.monitoring.sources.filter(source => source.state !== 'disabled');
+      const unhealthy = policy.monitoring.sources.filter(source => source.state !== 'ok');
+      const health = this.message(active.length === 0 ? '利率政策来源未启用，请查看采集状态。'
+        : unhealthy.length ? `${unhealthy.length} 个重点政策来源暂停、待更新或读取异常；保留已核实线索，不代表近期没有政策变化。`
+          : '已启用的重点政策来源近期读取正常；默认每5分钟检查，官方来源优先。', unhealthy.length || !active.length ? 'error' : '');
+      section.append(health);
+      for (const source of unhealthy) {
+        const line = document.createElement('p'); line.className = 'watch-sync has-error';
+        line.textContent = `${source.name}：${source.state === 'stale' ? '更新已延迟' : source.state === 'error' ? '最近读取失败' : source.state === 'disabled' ? '主人已暂停采集' : '等待首次读取'}${source.lastSuccessAt ? ` · 最近成功 ${this.formatClock(source.lastSuccessAt)}` : ''}`;
+        section.append(line);
+      }
+    }
     for (const signal of policy.signals) {
       const card = document.createElement('article');
       card.className = 'watch-event-content watch-official';
-      const title = document.createElement('h3');
-      title.textContent = signal.title;
+      const title = this.headline(`watch:policy:${signal.key}`, signal);
       const kind = document.createElement('p');
       kind.textContent = `${signal.bankName} · ${signal.kindLabel}${signal.speaker ? ` · ${signal.speaker}` : ''}`;
       const origin = document.createElement('p');
@@ -105,9 +128,8 @@ export class WatchEventsPanel {
       try {
         const url = new URL(signal.firstObservedSource.url);
         if (url.protocol === 'https:' && !url.username && !url.password) {
-          const link = document.createElement('a');
-          link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer';
-          link.textContent = '查看来源原链接'; card.append(link);
+          const links = sourceReadingLinks(url.href, '报道来源');
+          if (links) card.append(links);
         }
       } catch { /* Keep the clue visible while its source is being reviewed. */ }
       section.append(card);
@@ -152,8 +174,7 @@ export class WatchEventsPanel {
       dateBlock.append(month, day);
       const content = document.createElement('div');
       content.className = 'watch-event-content';
-      const title = document.createElement('h3');
-      title.textContent = event.title;
+      const title = this.headline(`watch:calendar:${event.key}`, event);
       const time = document.createElement('p');
       time.textContent = event.time ? `${date.full}（北京时间）` : `官方当地日期 ${event.date}；具体时间及北京时间待确认`;
       const verified = document.createElement('p');
@@ -163,12 +184,8 @@ export class WatchEventsPanel {
       try {
         const url = new URL(event.source.url);
         if (url.protocol === 'https:' && ['www.federalreserve.gov', 'federalreserve.gov', 'www.frbsf.org', 'frbsf.org'].includes(url.hostname)) {
-          const link = document.createElement('a');
-          link.href = url.href;
-          link.target = '_blank';
-          link.rel = 'noopener noreferrer';
-          link.textContent = `查看${event.source.name}`;
-          content.append(link);
+          const links = sourceReadingLinks(url.href, event.source.name);
+          if (links) content.append(links);
         }
       } catch { /* Keep the confirmed text visible if a source URL is unavailable. */ }
       card.append(dateBlock, content);
@@ -177,6 +194,51 @@ export class WatchEventsPanel {
     if (!discovery.events.length) list.append(this.message(discovery.enabled ? '暂无已核实时间的近期会议，继续关注官方日程更新。' : '重新启用后会继续核对官方会议。'));
     section.append(list);
     return section;
+  }
+
+  findHeadline(ref: string): HeadlineTarget | null {
+    const row = this.titles.get(ref);
+    return row ? { ref, title: row.title, translated_title: row.translated_title || this.completed(row.title) } : null;
+  }
+
+  acceptTranslation(original: string, translated: string, provider: string): void {
+    this.titles.forEach((row) => {
+      if (row.title === original) {
+        row.translated_title = translated;
+        row.translation_provider = provider;
+      }
+    });
+    this.updateTitles(this.useChinese);
+  }
+
+  updateTitles(enabled: boolean): void {
+    this.useChinese = enabled;
+    this.element.querySelectorAll<HTMLElement>('[data-watch-headline-ref]').forEach((node) => {
+      const row = this.titles.get(node.dataset.watchHeadlineRef || '');
+      if (!row) return;
+      const translated = enabled ? row.translated_title || this.completed(row.title) : '';
+      node.textContent = translated || row.title;
+      const original = node.parentElement?.querySelector<HTMLElement>('.news-original-title');
+      if (original) {
+        original.textContent = translated && translated !== row.title ? row.title : '';
+        original.classList.toggle('hidden', !original.textContent);
+      }
+    });
+  }
+
+  private headline(ref: string, row: TitleRecord, tag = 'h3'): HTMLElement {
+    this.titles.set(ref, row);
+    const box = document.createElement('div');
+    const title = document.createElement(tag);
+    title.dataset.watchHeadlineRef = ref;
+    const translated = this.useChinese ? row.translated_title || this.completed(row.title) : '';
+    title.textContent = translated || row.title;
+    const original = document.createElement('p');
+    original.className = 'news-original-title';
+    original.textContent = translated && translated !== row.title ? row.title : '';
+    original.classList.toggle('hidden', !original.textContent);
+    box.append(title, original);
+    return box;
   }
 
   private metric(label: string, value: number): HTMLElement {
@@ -228,8 +290,7 @@ export class WatchEventsPanel {
       badges.append(pipeline);
     }
 
-    const title = document.createElement('h3');
-    title.textContent = event.title;
+    const title = this.headline(`watch:event:${event.event_key}`, event);
     const meta = document.createElement('p');
     meta.className = 'watch-event-meta';
     meta.textContent = `${date.full} · ${event.category || '重点事件'} · 重要性 ${event.importance}/5`;
@@ -266,8 +327,7 @@ export class WatchEventsPanel {
         const button = document.createElement('button');
         button.type = 'button';
         button.dataset.itemId = String(match.item_id);
-        const headline = document.createElement('b');
-        headline.textContent = match.translated_title?.trim() || match.title;
+        const headline = this.headline(`news:${match.item_id}`, match, 'b');
         const detail = document.createElement('span');
         detail.textContent = `${this.formatClock(match.published_at || match.first_seen_at)} · 命中 ${match.matched_terms.slice(0, 3).join('、')}`;
         button.append(headline, detail);
@@ -293,10 +353,8 @@ export class WatchEventsPanel {
     const channels = document.createElement('div');
     channels.className = 'watch-official-channels';
     event.official_channels.forEach((channel) => {
-      const link = document.createElement('a');
-      link.href = channel.url;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
+      const row = document.createElement('div');
+      row.className = 'watch-source-channel';
       const name = document.createElement('b');
       name.textContent = channel.name;
       const status = document.createElement('span');
@@ -306,8 +364,10 @@ export class WatchEventsPanel {
         : channel.last_success_at
           ? `官方页面可达 · ${this.formatClock(channel.last_success_at)}`
           : `待首次检查${channel.next_check_at ? ` · ${this.formatClock(channel.next_check_at)}` : ''}`;
-      link.append(name, status);
-      channels.append(link);
+      row.append(name, status);
+      const links = sourceReadingLinks(channel.url, '官方渠道');
+      if (links) row.append(links);
+      channels.append(row);
     });
     if (!event.official_channels.length) {
       const pending = document.createElement('p');
@@ -358,7 +418,7 @@ export class WatchEventsPanel {
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return value;
     return new Intl.DateTimeFormat('zh-CN', {
-      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+      timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
     }).format(parsed);
   }
 

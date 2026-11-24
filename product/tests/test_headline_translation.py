@@ -139,7 +139,7 @@ class HeadlineTranslationTests(unittest.TestCase):
         cases = [("코스피 상승, 반도체주 강세", "ko"), ("韓國 증시, AI 반도체株 강세", "ko"),
                  (unicodedata.normalize("NFD", "금값 상승"), "ko"),
                  ("Gold rises as dollar weakens", "en"), ("黄金价格上涨", None),
-                 ("中国AI产业上涨", None), ("2026-11-23 12:30", None)]
+                 ("中国AI产业上涨", None), ("美联储：The Economic Outlook", "en"), ("美联储：Inflation", "en"), ("美联储Inflation", "en"), ("中国Microsoft OpenAI合作", None), ("黄金 ETF 与 AI", None), ("2026-11-23 12:30", None)]
         for text, language in cases:
             with self.subTest(text=text):
                 self.assertEqual(adapter.source_language(text), language)

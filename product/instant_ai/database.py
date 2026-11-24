@@ -13,7 +13,7 @@ from .paths import BACKUPS_ROOT, CACHE_ROOT, DATABASE_PATH, EVIDENCE_ROOT, ensur
 from .publishers import resolve_publisher_identity
 
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -666,6 +666,16 @@ def initialize(path: Path | str | None = None) -> None:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (item_id, target_language)
             );
+
+            CREATE TABLE IF NOT EXISTS watch_title_translations (
+                original_title TEXT PRIMARY KEY,
+                translated_title TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_watch_title_expiry ON watch_title_translations(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_item_title_original ON item_translations(original_title,target_language);
 
             CREATE TABLE IF NOT EXISTS reader_translations (
                 item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,

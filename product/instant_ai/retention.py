@@ -181,6 +181,7 @@ def run_retention_cleanup(
 
     with transaction(database_path) as connection:
         corrected_embedded_dates = _apply_missing_embedded_dates(connection, now)
+        connection.execute("DELETE FROM watch_title_translations WHERE expires_at<=?", (_iso(_now(now)),))
         expired_thumbnail_paths = [
             str(row[0] or "")
             for row in connection.execute(

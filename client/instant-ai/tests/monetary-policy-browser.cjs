@@ -37,7 +37,7 @@ async function main(){
       assert((await section.innerText()).includes('20:42'));checks++;
       assert(!(await section.innerText()).includes('07:42'));checks++;
       assert((await section.innerText()).includes('等待既有GPT任务核验'));checks++;
-      assert.equal(await section.locator('a[rel="noopener noreferrer"][target="_blank"]').count(),3);checks++;
+      assert.equal(await section.locator('a[data-reading="original"][rel="noopener noreferrer"][target="_blank"]').count(),3);checks++;
       assert((await section.locator('.has-error').innerText()).includes('自动重试'));checks++;
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),width);checks++;
       await page.screenshot({path:path.join(output,`monetary-policy-${width}.png`),fullPage:true});

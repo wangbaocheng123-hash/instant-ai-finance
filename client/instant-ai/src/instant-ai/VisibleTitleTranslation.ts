@@ -1,10 +1,16 @@
-import type { FinanceItem, TranslationBatchResult } from './types';
+import type { TranslationBatchResult } from './types';
+
+export interface HeadlineTarget {
+  ref: string;
+  title: string;
+  translated_title?: string | null;
+}
 
 interface TranslationHooks {
   enabled: () => boolean;
-  find: (id: number) => FinanceItem | null;
-  needs: (item: FinanceItem) => boolean;
-  translate: (id: number) => Promise<TranslationBatchResult>;
+  find: (ref: string) => HeadlineTarget | null;
+  needs: (item: HeadlineTarget) => boolean;
+  translate: (item: HeadlineTarget) => Promise<TranslationBatchResult>;
   apply: (result: TranslationBatchResult, title: string) => void;
   busy: (value: boolean) => void;
 }
@@ -34,7 +40,7 @@ export class VisibleTitleTranslation {
     this.pause();
     if (!this.foreground()) return;
     this.watching = true;
-    this.root.querySelectorAll('[data-headline-id]').forEach((element) => this.observer.observe(element));
+    this.root.querySelectorAll('[data-headline-id], [data-watch-headline-ref]').forEach((element) => this.observer.observe(element));
   }
 
   pause(): void {
@@ -65,14 +71,16 @@ export class VisibleTitleTranslation {
     this.timer = window.setTimeout(() => { this.timer = null; void this.pump(); }, 180);
   }
 
-  private candidate(): FinanceItem | null {
+  private candidate(): HeadlineTarget | null {
     const overlay = this.root.querySelector('#overlay:not(.hidden)');
     for (const element of this.visible) {
       if (!element.isConnected || (overlay && !overlay.contains(element))) continue;
       const box = element.getBoundingClientRect();
       if (box.width <= 0 || box.height <= 0 || box.bottom <= 0 || box.top >= innerHeight
           || box.right <= 0 || box.left >= innerWidth || !element.getClientRects().length) continue;
-      const item = this.hooks.find(Number((element as HTMLElement).dataset.headlineId));
+      const node = element as HTMLElement;
+      const ref = node.dataset.watchHeadlineRef || `news:${node.dataset.headlineId}`;
+      const item = this.hooks.find(ref);
       if (item && this.hooks.needs(item) && !this.attempted.has(item.title)) return item;
     }
     return null;
@@ -87,7 +95,7 @@ export class VisibleTitleTranslation {
     this.inFlight = true;
     this.hooks.busy(true);
     try {
-      const result = await this.hooks.translate(item.id);
+      const result = await this.hooks.translate(item);
       this.hooks.apply(result, title);
       if (result.errors.length || result.quota_exhausted || result.status.enabled === false) this.blocked = true;
     } catch {

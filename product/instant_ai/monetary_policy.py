@@ -23,6 +23,10 @@ BANKS = {
 }
 MEDIA_DOMAINS = ("cnbc.com", "reuters.com", "bloomberg.com", "ft.com", "wsj.com", "apnews.com", "cls.cn")
 POLICY_TERMS = r"加息|降息|利率|货币政策|貨幣政策|紧缩|寬鬆|宽松|\brates?\b|\bhikes?\b|\bcuts?\b|monetary policy|tighten|easing|FOMC (?:statement|minutes)|minutes of the federal open market committee"
+# Explicit policy mechanics are often reported without the word "rate".
+POLICY_TERMS += r"|federal funds|basis[- ]points?|量化宽松|量化寬鬆|量化紧缩|量化緊縮|缩表|縮表|扩表|擴表|\bQE\b|\bQT\b|quantitative (?:easing|tightening)|balance[ -]sheet (?:runoff|reduction|policy)|asset purchases"
+PRIORITY_SOURCE_KEYS = ('federal-reserve-monetary-policy', 'federal-reserve-press',
+                        'federal-reserve-speeches', 'federal-reserve-testimony', 'cnbc-top-news', 'cnbc-finance')
 SPEECH_TERMS = r"economic outlook|monetary policy|经济展望|經濟展望|通胀|inflation"
 FORECAST_TERMS = r"预计|預計|预测|預測|预测调查|调查|\bforecast|\bpoll\b|economists? expect|strategists?|goldman|高盛|jpmorgan|摩根|美银|美国银行|bank of america|deutsche bank|德意志"
 INSTITUTION_TERMS = r"economists?|strategists?|经济学家|机构|goldman|高盛|jpmorgan|摩根|美银|美国银行|bank of america|deutsche bank|德意志"
@@ -78,7 +82,11 @@ def classify_policy(title: str, summary: str, url: str, *, source_key: str = "")
     bank = next((key for key, (_, _, domains) in BANKS.items() if any(_host_matches(host, domain) for domain in domains)), None)
     bank = bank or next((key for key, (_, pattern, _) in BANKS.items() if re.search(pattern, title, re.I)), None)
     bank = bank or next((key for key, (_, pattern, _) in BANKS.items() if re.search(pattern, summary, re.I)), None)
+    if not bank and any(re.search(r"\b" + re.escape(name) + r"\b", title, re.I) for name, _ in SPEAKERS[:10]):
+        bank = "fed"
     if not bank:
+        return None
+    if re.search(r"\bcuts?\s+(?:staff|jobs|workforce|costs|spending)\b", title, re.I) and not re.search(r"interest rates?|policy rates?|federal funds|monetary|加息|降息|利率|QE|QT", text, re.I):
         return None
     official = any(_host_matches(host, domain) for domain in BANKS[bank][2])
     if not re.search(POLICY_TERMS, text, re.I) and not (official and re.search(SPEECH_TERMS, text, re.I)):
@@ -102,6 +110,8 @@ def classify_policy(title: str, summary: str, url: str, *, source_key: str = "")
 
 
 def lock_policy_entry(connection, source, entry, *, item_id: int, observed_at: str) -> bool:
+    if source.kind == "official_calendar":
+        return False
     policy = classify_policy(entry.title, entry.summary, entry.url, source_key=source.key)
     if not policy:
         return False
@@ -235,6 +245,8 @@ def policy_snapshot(*, path: object = None, now: datetime | None = None) -> dict
     at = _iso(now or datetime.now(UTC))
     with connect(path) as db:
         rows = db.execute("SELECT * FROM monetary_policy_signals WHERE expires_at>? ORDER BY first_seen_at DESC LIMIT 30", (at,)).fetchall()
+        marks = ','.join('?' for _ in PRIORITY_SOURCE_KEYS)
+        source_rows = db.execute(f"SELECT key,name,enabled,last_success_at,next_fetch_at,last_error FROM sources WHERE key IN ({marks})", PRIORITY_SOURCE_KEYS).fetchall()
     signals = []
     for row in rows:
         payload = json.loads(row["payload_json"])
@@ -242,4 +254,13 @@ def policy_snapshot(*, path: object = None, now: datetime | None = None) -> dict
                         "pipelineStatus": row["feedback"] if row["status"] == "delivered" else
                         "日期或时效待核验，尚未自动输送" if row["status"] == "date_review" else
                         "投递未确认，自动重试" if row["status"] == "failed" else "已锁定，等待输送罗盘"})
-    return {"signals": signals, "coverage": "监测已接入的官方与财经媒体渠道；首发渠道须核验，不保证覆盖全部采访。"}
+    sources = []
+    current = _at(at)
+    for row in source_rows:
+        success = _at(row['last_success_at'])
+        state = ('disabled' if not row['enabled'] else 'error' if row['last_error'] else
+                 'pending' if not success else 'stale' if (current-success).total_seconds() > 900 or success > current+timedelta(minutes=5) else 'ok')
+        sources.append({'key': row['key'], 'name': row['name'], 'state': state,
+                        'lastSuccessAt': row['last_success_at'] or '', 'nextCheckAt': row['next_fetch_at'] or ''})
+    return {"signals": signals, "monitoring": {"defaultIntervalSeconds": 300, "sources": sources},
+            "coverage": "优先检查已接入的美联储政策、讲话/证词及财经媒体；默认每5分钟一轮，来源异常另列。首发渠道须核验，不保证覆盖全部采访。"}

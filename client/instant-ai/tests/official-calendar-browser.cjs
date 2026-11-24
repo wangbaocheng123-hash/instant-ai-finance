@@ -48,7 +48,7 @@ async function main() {
       assert((await page.locator('.official-calendar-discovery').innerText()).includes('2026年11月17日 01:00（北京时间）')); checks++;
       assert((await page.locator('.official-calendar-discovery').innerText()).includes('官方当地日期 2026-11-20')); checks++;
       assert(!(await page.locator('.official-calendar-discovery').innerText()).includes('00:00')); checks++;
-      assert.equal(await page.locator('.official-agenda a[target="_blank"][rel="noopener noreferrer"]').count(), 2); checks++;
+      assert.equal(await page.locator('.official-agenda a[data-reading="original"][target="_blank"][rel="noopener noreferrer"]').count(), 2); checks++;
       assert((await page.locator('[data-panel="global"]').innerText()).includes('发现于')); checks++;
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width); checks++;
       await page.screenshot({ path: path.join(output, `official-calendar-${width}.png`), fullPage: true });
@@ -64,6 +64,18 @@ async function main() {
       });
       assert.equal(await page.locator('.official-agenda img, .official-agenda a').count(), 0); checks++;
       assert((await page.locator('.official-agenda').innerText()).includes('<img src=x')); checks++;
+      const unsafe = await page.evaluate(async () => {
+        const { publicReadingUrl, sourceReadingLinks } = await import('/BrowserReading.js');
+        const urls = ['javascript:alert(1)', 'http://127.0.0.1/private', 'https://10.0.0.1/private',
+          'https://user:password@www.federalreserve.gov/private', 'https://www.federalreserve.gov/?api_key=synthetic',
+          'https://www.federalreserve.gov/oauth/callback?code=synthetic', 'https://www.federalreserve.gov/#access_token=synthetic'];
+        return urls.map(url => publicReadingUrl(url) === null && sourceReadingLinks(url) === null);
+      });
+      assert(unsafe.every(Boolean)); checks += unsafe.length;
+      assert(await page.evaluate(async () => {
+        const { publicReadingUrl } = await import('/BrowserReading.js');
+        return publicReadingUrl('https://www.federalreserve.gov/public?code=1234') !== null;
+      })); checks++;
       assert.deepEqual(errors, []); checks++;
       await page.close();
     }

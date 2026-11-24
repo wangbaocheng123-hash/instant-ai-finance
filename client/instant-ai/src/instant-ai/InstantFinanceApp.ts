@@ -3,7 +3,8 @@ import { BloggerPanel } from './BloggerPanel';
 import { FinancePanel } from './FinancePanel';
 import { ModelMrPanel } from './ModelMrPanel';
 import { WatchEventsPanel } from './WatchEventsPanel';
-import { VisibleTitleTranslation } from './VisibleTitleTranslation';
+import { VisibleTitleTranslation, type HeadlineTarget } from './VisibleTitleTranslation';
+import { iosChromeUrl } from './BrowserReading';
 import type {
   AppStatus, AuthStatus, FinanceItem, FinanceItemDetail, ReaderTranslationResult, SectionDefinition, SourceStatus,
   TranslationBatchResult, TranslationStatus,
@@ -47,7 +48,7 @@ const formatFullTime = (value: string | null): string => {
 export class InstantFinanceApp {
   private readonly root: HTMLElement;
   private readonly panels = new Map<string, FinancePanel>();
-  private readonly watchPanel = new WatchEventsPanel();
+  private readonly watchPanel = new WatchEventsPanel((title) => this.completedTitles.get(title)?.text);
   private readonly modelMrPanel = new ModelMrPanel();
   private readonly bloggerPanel = new BloggerPanel();
   private readonly sectionItems = new Map<string, FinanceItem[]>();
@@ -69,9 +70,13 @@ export class InstantFinanceApp {
     this.root = root;
     this.titleTranslator = new VisibleTitleTranslation(root, {
       enabled: () => this.translationEnabled && this.translationStatus?.enabled !== false,
-      find: (id) => this.findFinanceItem(id),
+      find: (ref) => this.findTranslationTarget(ref),
       needs: (item) => this.shouldTranslate(item),
-      translate: (id) => instantApi.translate([id], 1),
+      translate: (item) => {
+        if (item.ref.startsWith('news:')) return instantApi.translate([Number(item.ref.slice(5))], 1);
+        const [, kind = '', ...key] = item.ref.split(':');
+        return instantApi.translateWatchTitle(kind, key.join(':'), item.title);
+      },
       apply: (result, title) => this.acceptTitleTranslation(result, title),
       busy: (value) => { this.translationInFlight = value; this.updateTranslationButton(); },
     });
@@ -374,7 +379,8 @@ export class InstantFinanceApp {
       this.sectionItems.set('global', latest);
       this.renderCurrentItems();
       try {
-        this.watchPanel.render(await instantApi.watchEvents());
+        this.watchPanel.render(await instantApi.watchEvents(), this.translationEnabled);
+        this.titleTranslator.observe();
       } catch (error) {
         this.watchPanel.setError(error instanceof Error ? error.message : '重点事件读取失败');
       }
@@ -724,6 +730,7 @@ export class InstantFinanceApp {
     const items = [...this.latestItems, ...this.instantHotItems, ...[...this.sectionItems.values()].flat()];
     if (this.activeDetail) items.push(this.activeDetail);
     this.reconcileCompletedTitles(items);
+    this.watchPanel.updateTitles(this.translationEnabled);
     this.renderTicker(this.instantHotItems);
     SECTIONS.forEach((section) => {
       const panel = this.panels.get(section.id);
@@ -856,6 +863,14 @@ export class InstantFinanceApp {
     if (showToast) this.toast('只翻译屏幕里看到的英文和韩文标题；已有译文直接复用。');
   }
 
+  private findTranslationTarget(ref: string): HeadlineTarget | null {
+    if (ref.startsWith('news:')) {
+      const item = this.findFinanceItem(Number(ref.slice(5)));
+      if (item) return { ref, title: item.title, translated_title: item.translated_title || this.completedTitles.get(item.title)?.text };
+    }
+    return this.watchPanel.findHeadline(ref);
+  }
+
   private findFinanceItem(id: number): FinanceItem | null {
     if (this.activeDetail?.id === id) return this.activeDetail;
     return this.latestItems.find((item) => item.id === id)
@@ -877,6 +892,7 @@ export class InstantFinanceApp {
         item.translated_title = translated;
         item.translation_provider = result.providers[id] || result.status.provider;
       });
+      this.watchPanel.acceptTranslation(original, translated, result.providers[id] || result.status.provider);
       this.updateHeadlineText();
     }
     this.updateTranslationButton();
@@ -901,12 +917,13 @@ export class InstantFinanceApp {
     });
   }
 
-  private shouldTranslate(item: FinanceItem): boolean {
+  private shouldTranslate(item: Pick<FinanceItem, 'title' | 'translated_title'>): boolean {
     if (item.translated_title?.trim()) return false;
     const hasChinese = /[\u3400-\u9fff]/u.test(item.title);
     const hasKorean = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3]/u.test(item.title);
     const latinLetters = (item.title.match(/[A-Za-z]/g) || []).length;
-    return (hasKorean || (!hasChinese && latinLetters >= 6))
+    const englishPhrase = hasChinese && /\b(?:economic|economy|outlook|monetary|policy|interest|rates?|inflation|employment|unemployment|productivity|jobs|financial|stability|artificial|intelligence|conference|speech|testimony|regulation|banking|finance|payments?|innovation|technology|liquidity|risks?|remarks|welcoming|community|development|education|conversation)\b/iu.test(item.title);
+    return (hasKorean || (!hasChinese && latinLetters >= 6) || englishPhrase)
       && new TextEncoder().encode(item.title).length <= 1_000;
   }
 
@@ -956,13 +973,7 @@ export class InstantFinanceApp {
   }
 
   private chromeUrl(value: string): string | null {
-    const userAgent = navigator.userAgent || '';
-    const isIos = /iPad|iPhone|iPod/u.test(userAgent)
-      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    if (!isIos || value === '#') return null;
-    if (value.startsWith('https://')) return `googlechromes://${value.slice('https://'.length)}`;
-    if (value.startsWith('http://')) return `googlechrome://${value.slice('http://'.length)}`;
-    return null;
+    return iosChromeUrl(value);
   }
 
   private required<T extends Element = HTMLElement>(selector: string): T {

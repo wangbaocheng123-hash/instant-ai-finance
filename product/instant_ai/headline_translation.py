@@ -28,6 +28,10 @@ def source_language(text: str) -> str | None:
         return "ko"
     if not re.search(r"[\u3400-\u9fff]", text) and len(re.findall(r"[A-Za-z]", text)) >= 6:
         return "en"
+    # Official agenda titles may already have a Chinese speaker prefix but an
+    # untranslated English topic. Short acronyms in Chinese remain untouched.
+    if re.search(r"[\u3400-\u9fff]", text) and re.search(r"\b(?:economic|economy|outlook|monetary|policy|interest|rates?|inflation|employment|unemployment|productivity|jobs|financial|stability|artificial|intelligence|conference|speech|testimony|regulation|banking|finance|payments?|innovation|technology|liquidity|risks?|remarks|welcoming|community|development|education|conversation)\b", text, re.I | re.ASCII):
+        return "en"
     return None
 
 

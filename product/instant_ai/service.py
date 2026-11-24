@@ -14,9 +14,9 @@ from .collectors import Entry, Source, collect_source
 from .database import connect, transaction, utc_now
 from .paths import BACKUPS_ROOT, DATABASE_PATH, EVIDENCE_ROOT, EXPORTS_ROOT, LIBRARY_ROOT, RAW_ROOT
 from .publishers import UNKNOWN_PUBLISHER
-from .rules import analyze, canonical_key
+from .rules import Analysis, analyze, canonical_key
 from .retention import published_within_hard_limit, run_retention_cleanup
-from .monetary_policy import lock_policy_entry
+from .monetary_policy import classify_policy, lock_policy_entry, PRIORITY_SOURCE_KEYS
 from .thumbnails import (
     THUMBNAIL_BROWSER_CACHE_VERSION,
     invalidate_google_news_image_index,
@@ -112,8 +112,7 @@ def _select_due_source_rows(
             grouped.setdefault(group, (limit, []))[1].append(row)
 
     # Policy sources must not sit behind unrelated, slow news endpoints.
-    priority_keys = {"federal-reserve-monetary-policy", "federal-reserve-press",
-                     "federal-reserve-speeches", "federal-reserve-testimony", "cnbc-top-news", "cnbc-finance"}
+    priority_keys = set(PRIORITY_SOURCE_KEYS)
     selected = sorted(normal, key=lambda row: str(row["key"]) not in priority_keys)
     for limit, candidates in grouped.values():
         candidates.sort(key=lambda row: (str(row["next_fetch_at"] or ""), int(row["id"])))
@@ -151,9 +150,12 @@ def list_sources(enabled_only: bool = False) -> list[dict[str, Any]]:
     return result
 
 
-def _notification_reason(source: Source, analysis: Any) -> dict[str, Any] | None:
+def _notification_reason(source: Source, analysis: Any, *, policy_candidate: dict | None = None) -> dict[str, Any] | None:
     threshold = int(source.config.get("notification_min_score", 85))
-    if source.trust_level < 4 or analysis.importance_score < threshold:
+    if policy_candidate:
+        threshold = max(threshold, 90)
+    minimum_trust = 3 if policy_candidate else 4
+    if source.trust_level < minimum_trust or analysis.importance_score < threshold:
         return None
     allowed_events = {
         str(value) for value in source.config.get("notification_event_types", []) if str(value)
@@ -169,8 +171,12 @@ def _notification_reason(source: Source, analysis: Any) -> dict[str, Any] | None
         "topics": analysis.topics,
         "entities": analysis.entities,
         "source_key": source.key,
+        **({"policy_signal_key": policy_candidate["signal_key"], "policy_evidence_hash": policy_candidate["evidence_hash"],
+            "policy_bank": policy_candidate["bankName"], "policy_kind": policy_candidate["kindLabel"],
+            "fact_status": "policy-candidate-requires-verification"} if policy_candidate else {}),
         "reason": str(
-            source.config.get("notification_reason")
+            ("重点利率政策线索，具体表态与正式决定须核验" if policy_candidate else "")
+            or source.config.get("notification_reason")
             or "高可信来源与高重要度规则同时命中"
         ),
     }
@@ -184,8 +190,9 @@ def _queue_notifications(
     analysis: Any,
     created_at: str,
     published_at: str | None = None,
+    policy_candidate: dict | None = None,
 ) -> None:
-    reason = _notification_reason(source, analysis)
+    reason = _notification_reason(source, analysis, policy_candidate=policy_candidate)
     if reason is None:
         return
     if "notification_backfill_hours" in source.config:
@@ -198,18 +205,24 @@ def _queue_notifications(
         if published is None or (first_connected and published < first_connected - timedelta(hours=hours)):
             return
     reason_json = json.dumps(reason, ensure_ascii=False)
-    connection.execute(
-        """
-        INSERT OR IGNORE INTO notification_outbox(
-            item_id, channel, status, reason_json, created_at
-        ) VALUES (?, 'in_app', 'pending', ?, ?)
-        """,
-        (item_id, reason_json, created_at),
-    )
+    def policy_duplicate(channel: str) -> bool:
+        return bool(policy_candidate and connection.execute(
+            "SELECT 1 FROM notification_outbox WHERE channel=? AND json_extract(reason_json,'$.policy_signal_key')=? AND json_extract(reason_json,'$.policy_evidence_hash')=? LIMIT 1",
+            (channel, policy_candidate['signal_key'], policy_candidate['evidence_hash']),
+        ).fetchone())
+    if not policy_duplicate('in_app'):
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO notification_outbox(
+                item_id, channel, status, reason_json, created_at
+            ) VALUES (?, 'in_app', 'pending', ?, ?)
+            """,
+            (item_id, reason_json, created_at),
+        )
     active_push = connection.execute(
         "SELECT COUNT(*) FROM web_push_subscriptions WHERE enabled=1"
     ).fetchone()[0]
-    if active_push:
+    if active_push and not policy_duplicate('web_push'):
         connection.execute(
             """
             INSERT OR IGNORE INTO notification_outbox(
@@ -292,14 +305,7 @@ def _upsert_entry(
         )
         is_updated = True
 
-    _queue_notifications(
-        connection,
-        item_id=item_id,
-        source=source,
-        analysis=analysis,
-        created_at=now,
-        published_at=entry.published_at,
-    )
+
 
     if entry.image_url:
         register_thumbnail_candidate(connection, item_id, entry.image_url)
@@ -363,6 +369,27 @@ def _upsert_entry(
     ).fetchone()[0]
     connection.execute("UPDATE items SET source_count=? WHERE id=?", (source_count, item_id))
     lock_policy_entry(connection, source, entry, item_id=item_id, observed_at=now)
+    # Policy locking raises priority after generic rules. Queue from that final
+    # decision; otherwise important new policy clues could never reach push.
+    policy = classify_policy(entry.title, entry.summary, entry.url, source_key=source.key) if source.kind != "official_calendar" else None
+    notify = True
+    policy_notice = None
+    if policy:
+        row = connection.execute("SELECT i.importance_score,i.topics_json,i.entities_json,i.event_type,p.status,p.signal_key,p.evidence_hash FROM items i JOIN monetary_policy_signals p ON p.item_id=i.id WHERE i.id=? ORDER BY p.updated_at DESC LIMIT 1", (item_id,)).fetchone()
+        notify = row is not None and row['status'] != 'date_review'
+        if row:
+            analysis = Analysis(json.loads(row['topics_json']), json.loads(row['entities_json']), row['event_type'], row['importance_score'])
+            policy_notice = {**policy, 'signal_key': row['signal_key'], 'evidence_hash': row['evidence_hash']}
+    if notify:
+        _queue_notifications(
+            connection,
+            item_id=item_id,
+            source=source,
+            analysis=analysis,
+            created_at=now,
+            published_at=entry.published_at,
+            policy_candidate=policy_notice,
+        )
     return is_new, is_updated
 
 
@@ -965,6 +992,9 @@ def _dispatch_web_push_notifications(
         reason = json.loads(row["reason_json"])
         entities = [str(value) for value in reason.get("entities", []) if str(value)]
         heading = "、".join(entities[:2]) or row["event_type"] or "重要消息"
+        if reason.get('policy_signal_key'):
+            heading = f"{reason.get('policy_bank', '央行')} · {reason.get('policy_kind', '政策线索')}"
+        body = ("政策线索待核验：" if reason.get('policy_signal_key') else "") + row['title']
         result = sender.send(
             {
                 "endpoint": row["endpoint"],
@@ -973,7 +1003,7 @@ def _dispatch_web_push_notifications(
             },
             {
                 "title": f"即时 AI · {heading}",
-                "body": row["title"],
+                "body": body,
                 "url": f"/?item={row['item_id']}",
                 "tag": f"instant-ai-calendar-{reason['calendar_event_key']}" if reason.get("calendar_event_key") else f"instant-ai-item-{row['item_id']}",
                 "item_id": row["item_id"],

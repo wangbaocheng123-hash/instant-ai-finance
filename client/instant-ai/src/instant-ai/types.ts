@@ -555,6 +555,8 @@ export interface WatchEventAnalysisFeedback {
 }
 
 export interface WatchEvent {
+  translated_title?: string | null;
+  translation_provider?: string | null;
   event_key: string;
   scope: 'home' | 'zijin';
   source_kind: 'timeline' | 'manual' | 'research' | string;
@@ -595,7 +597,8 @@ export interface WatchEvent {
 export interface WatchEventsResponse {
   monetaryPolicy?: {
     coverage: string;
-    signals: Array<{ key: string; title: string; bankName: string; kindLabel: string; speaker: string;
+    monitoring?: { defaultIntervalSeconds: number; sources: Array<{ key: string; name: string; state: string; lastSuccessAt: string; nextCheckAt: string }> };
+    signals: Array<{ key: string; title: string; translated_title?: string | null; translation_provider?: string | null; bankName: string; kindLabel: string; speaker: string;
       itemId: number | null; publishedAt: string; detectedAt: string; status: string; pipelineStatus: string;
       firstObservedSource: { publisher: string; url: string; publishedAt: string; sourceRole: string; originality: string } }>;
   };
@@ -605,7 +608,7 @@ export interface WatchEventsResponse {
     pendingDelivery: number;
     failedDelivery: number;
     sources: Array<{ key: string; name: string; url: string; state: string; lastSuccessAt: string; lastError: string }>;
-    events: Array<{ key: string; title: string; date: string; time: string; importance: number; checkedAt: string;
+    events: Array<{ key: string; title: string; translated_title?: string | null; translation_provider?: string | null; date: string; time: string; importance: number; checkedAt: string;
       source: { name: string; url: string; verifiedAt: string } }>;
   };
   events: WatchEvent[];

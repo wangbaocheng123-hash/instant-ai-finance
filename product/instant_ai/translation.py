@@ -175,6 +175,7 @@ def translation_status(
     used = _used_characters(provider.name, path)
     with connect(path) as connection:
         cached = int(connection.execute("SELECT COUNT(*) FROM item_translations").fetchone()[0])
+        cached += int(connection.execute("SELECT COUNT(*) FROM watch_title_translations WHERE expires_at>?", (utc_now(),)).fetchone()[0])
     limit = provider.daily_limit
     return {
         "enabled": provider.configured,
@@ -320,6 +321,24 @@ def translate_items(
                     candidates.append((item_id, title))
             else:
                 skipped += 1
+
+        if titles:
+            with connect(path) as connection:
+                marks = ",".join("?" for _ in titles)
+                for cached in connection.execute(
+                    f"SELECT original_title,translated_title,provider FROM watch_title_translations WHERE expires_at>? AND original_title IN ({marks})",
+                    (utc_now(), *titles),
+                ):
+                    cached_by_title.setdefault(str(cached[0]), (str(cached[1]), str(cached[2])))
+            # Watch and news views share a paid result even after changing views.
+            remaining = []
+            for item_id, title in candidates:
+                if title in cached_by_title:
+                    translations[str(item_id)], providers[str(item_id)] = cached_by_title[title]
+                    copies[item_id] = (title, *cached_by_title[title])
+                else:
+                    remaining.append((item_id, title))
+            candidates = remaining
 
         used = _used_characters(selected_provider.name, path)
         reserved = 0
