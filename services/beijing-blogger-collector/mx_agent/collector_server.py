@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, urlsplit
 from .collector_export import CollectorContentReadyAdapter
 from .creators import CreatorRegistry, CreatorSyncManager
 from .roles import ApplicationRole, require_role
-from .settings import CONFIG_DIR, DATA_DIR, ROOT_DIR, load_settings, comment_tracking_minutes
+from .settings import CONFIG_DIR, DATA_DIR, ROOT_DIR, load_settings, comment_tracking_minutes, comment_collect_minutes
 from .storage import Storage
 from .single_video import VideoLinkError, normalize_video_link, resolve_video_link
 from .model_downloader_bridge import ModelDownloaderBridge
@@ -64,6 +64,7 @@ CREATOR_INPUT_FIELDS = {
     "comment_limit",
     "comment_tracking_hours",
     "comment_tracking_minutes",
+    "comment_collect_minutes",
 }
 
 
@@ -445,7 +446,10 @@ class CollectorRuntime:
             raise VideoLinkError("大杂烩不扫描博主主页，请先粘贴一条抖音视频链接。")
         if int(creator.get("creator_sync_history_limit", 1)) == 0 and not str(video_url or "").strip():
             raise VideoLinkError("按数量抓取已设为 0，请先粘贴一条视频链接；不会扫描博主主页。")
-        options = {"force_comments": bool(force_comments), "videos_only": bool(videos_only)}
+        options = {
+            "force_comments": bool(force_comments),
+            "videos_only": bool(videos_only) or comment_collect_minutes(creator) == 0,
+        }
         if video_url:
             options["video_url"] = normalize_video_link(video_url)
         self.sync_manager.run_now(safe_runtime_key, **options)
@@ -478,6 +482,7 @@ class CollectorRuntime:
             ),
             "comment_tracking_minutes": comment_tracking_minutes(creator),
             "comment_tracking_hours": comment_tracking_minutes(creator) / 60,
+            "comment_collect_minutes": comment_collect_minutes(creator),
         }
 
     @staticmethod
@@ -496,6 +501,8 @@ class CollectorRuntime:
             result["creator_comments_enabled"] = payload.get("comments_enabled")
         if "comment_limit" in payload:
             result["creator_comment_limit"] = payload.get("comment_limit")
+        if "comment_collect_minutes" in payload:
+            result["creator_comment_collect_minutes"] = payload["comment_collect_minutes"]
         if "comment_tracking_minutes" in payload:
             result["creator_comment_tracking_minutes"] = payload["comment_tracking_minutes"]
         elif "comment_tracking_hours" in payload:
@@ -574,6 +581,8 @@ class CollectorRuntime:
                 safe_message = "视频已下载，正在转换成手机播放格式。"
             elif busy and sync.get("phase") == "cached_source":
                 safe_message = "正在复用已下载文件，无需重新下载。"
+            elif busy and sync.get("phase") == "comments":
+                safe_message = f"正在采集公开评论，最多 {int(sync.get('comment_budget_seconds') or 0) // 60} 分钟，到时保存已采到内容。"
             elif busy or queued:
                 safe_message = "采集任务正在运行。"
             elif legacy_review and pending_export == legacy_review:
@@ -587,6 +596,8 @@ class CollectorRuntime:
                     safe_message = "视频转换失败。下载缓存保留24小时，可重试本条；作品尚未入库或发送。"
                 else:
                     safe_message = "上次采集未正常完成，请查看脱敏诊断状态。"
+            elif sync.get("last_finished_at") and sync.get("comment_time_limits_reached"):
+                safe_message = "评论已按设定时长结束，采到的内容已保存；发送结果见传输状态。"
             elif sync.get("last_finished_at"):
                 safe_message = "上次采集已经完成，当前等待手动操作。"
             elif sync.get("last_content_ready_at"):
@@ -626,6 +637,9 @@ class CollectorRuntime:
                         "new_downloads": max(0, int(sync.get("new_downloads") or 0)),
                         "comments_created": max(0, int(sync.get("comments_created") or 0)),
                         "comments_updated": max(0, int(sync.get("comments_updated") or 0)),
+                        "comment_time_limits_reached": max(0, int(sync.get("comment_time_limits_reached") or 0)),
+                        "comment_budget_seconds": max(0, int(sync.get("comment_budget_seconds") or 0)),
+                        "comment_deadline_at": _safe_text(sync.get("comment_deadline_at"), 80),
                     },
                 }
             )
@@ -1186,9 +1200,13 @@ class CollectorRequestHandler(BaseHTTPRequestHandler):
                 "comment_limit",
                 "comment_tracking_hours",
                 "comment_tracking_minutes",
+                "comment_collect_minutes",
             )
         ):
             self._json({"error": "invalid_request"}, HTTPStatus.BAD_REQUEST)
+            return
+        if "comment_collect_minutes" in payload and not 0 <= payload["comment_collect_minutes"] <= 60:
+            self._json({"error": "评论采集时长必须为 0～60 分钟。"}, HTTPStatus.BAD_REQUEST)
             return
         if path == "/api/collector/transfers/retry":
             try:

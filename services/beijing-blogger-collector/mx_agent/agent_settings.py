@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .settings import CONFIG_DIR, ROOT_DIR, Settings, comment_tracking_minutes
+from .settings import CONFIG_DIR, ROOT_DIR, Settings, comment_tracking_minutes, comment_collect_minutes
 
 
 ENV_PATH = Path(
@@ -93,6 +93,7 @@ def public_agent_settings(settings: Settings) -> dict[str, Any]:
         "creator_comment_refresh_minutes": settings.creator_comment_refresh_minutes,
         "creator_comment_tracking_hours": comment_tracking_minutes(settings) / 60,
         "creator_comment_tracking_minutes": comment_tracking_minutes(settings),
+        "creator_comment_collect_minutes": comment_collect_minutes(settings),
         "api_keys_are_local": True,
         "restart_required": False,
     }
@@ -147,6 +148,7 @@ def update_agent_settings(settings: Settings, payload: dict[str, Any]) -> dict[s
         "creator_sync_history_limit": (0, 1000),
         "creator_comment_limit": (20, 50000),
         "creator_comment_refresh_minutes": (30, 1440),
+        "creator_comment_collect_minutes": (0, 60),
     }
     for field, (minimum, maximum) in int_fields.items():
         if field not in payload:

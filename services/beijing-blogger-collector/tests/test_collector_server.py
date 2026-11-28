@@ -81,6 +81,7 @@ class FakeRegistry:
             "creator_comment_limit": "creator_comment_limit",
             "creator_comment_tracking_hours": "creator_comment_tracking_hours",
             "creator_comment_tracking_minutes": "creator_comment_tracking_minutes",
+            "creator_comment_collect_minutes": "creator_comment_collect_minutes",
         }
         for source, target in field_map.items():
             if source in payload:
@@ -668,6 +669,22 @@ print(json.dumps(sorted(set(loaded))))
             })
             self.assertEqual(status, 202)
             self.assertEqual(manager.run_requests, ["primary"])
+            status, saved = post("/api/collector/creators/primary/settings", {"comment_collect_minutes": 0})
+            self.assertEqual(status, 200)
+            self.assertEqual(saved["comment_collect_minutes"], 0)
+            status, _ = post("/api/collector/run-once", {
+                "creator_id": "primary", "video_url": "https://www.douyin.com/video/7678988051075051365",
+            })
+            self.assertEqual(status, 202)
+            self.assertTrue(manager.run_options[-1]["videos_only"])
+            for invalid in (-1, 61, False, "5", 1.5):
+                status, _ = post("/api/collector/creators/primary/settings", {"comment_collect_minutes": invalid})
+                self.assertEqual(status, 400)
+            status, saved = post("/api/collector/creators/primary/settings", {"comment_collect_minutes": 5})
+            self.assertEqual(status, 200)
+            runtime.registry = CreatorRegistry(settings, path=registry_path)
+            self.assertEqual(runtime.creator_settings("primary")["comment_collect_minutes"], 5)
+            self.assertEqual(runtime.creator_settings("primary")["comment_tracking_minutes"], 15)
         finally:
             server.shutdown()
             server.server_close()

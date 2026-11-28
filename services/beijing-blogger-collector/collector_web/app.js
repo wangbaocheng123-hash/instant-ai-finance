@@ -165,7 +165,9 @@ function renderSyncStatus() {
   } else if (sync.content_ready_legacy_review) {
     line.textContent = sync.message || "历史发送记录需核对，详见传输状态。";
   } else if (sync.last_finished_at) {
-    line.textContent = `上次采集完成 ${formatDate(sync.last_finished_at)}；发送结果见下方传输状态。`;
+    line.textContent = sync.comment_time_limits_reached
+      ? `上次完成 ${formatDate(sync.last_finished_at)}；评论已按设定时长结束并保存，发送结果见下方。`
+      : `上次采集完成 ${formatDate(sync.last_finished_at)}；发送结果见下方传输状态。`;
   } else if (sync.last_content_ready_at) {
     line.textContent = sync.message || "已交接发送队列，送达结果见下方传输状态。";
   } else if (linkOnly || Number(creator.history_limit ?? 1) === 0) {
@@ -328,7 +330,7 @@ function settingsPayload() {
     history_limit: linkOnly ? 1 : Number($("#settingsHistoryLimit").value),
     comments_enabled: $("#settingsCommentsEnabled").checked,
     comment_limit: Number($("#settingsCommentLimit").value),
-    comment_tracking_minutes: Number($("#settingsTrackingMinutes").value),
+    comment_collect_minutes: Number($("#settingsCommentMinutes").value),
   };
 }
 
@@ -343,9 +345,7 @@ async function openSettings() {
   $("#settingsHistoryLimit").value = String(settings.history_limit ?? 1);
   $("#settingsCommentsEnabled").checked = Boolean(settings.comments_enabled);
   $("#settingsCommentLimit").value = String(settings.comment_limit || 5000);
-  $("#settingsTrackingMinutes").value = String(
-    settings.comment_tracking_minutes ?? Math.round((settings.comment_tracking_hours ?? 24) * 60),
-  );
+  $("#settingsCommentMinutes").value = String(settings.comment_collect_minutes ?? 3);
   $("#profileSettingsFields").hidden = linkOnly;
   $("#bulkSettingsCard").hidden = linkOnly;
   $("#settingsName").disabled = linkOnly;
@@ -421,7 +421,7 @@ async function runSelected({ forceComments = false } = {}) {
 function toggleCommentOptions() {
   const disabled = !$("#settingsCommentsEnabled").checked;
   $("#settingsCommentLimit").disabled = disabled;
-  $("#settingsTrackingMinutes").disabled = disabled;
+  $("#settingsCommentMinutes").disabled = disabled;
   $("#forceCommentsButton").disabled = disabled;
   updateSingleVideoControls();
 }
@@ -438,7 +438,8 @@ function updateSingleVideoControls() {
   $("#saveAndRunButton").textContent = linkOnly
     ? "抓取并归入大杂烩"
     : (hasInput ? "保存并抓取这条视频" : (requiresLink ? "请先粘贴视频链接" : "保存并抓取"));
-  $("#forceCommentsButton").disabled = (requiresLink && !ready) || pending || !$("#settingsCommentsEnabled").checked;
+  $("#forceCommentsButton").disabled = (requiresLink && !ready) || pending
+    || !$("#settingsCommentsEnabled").checked || Number($("#settingsCommentMinutes").value) === 0;
   $("#forceCommentsButton").textContent = hasInput ? "补抓这条视频评论" : "补抓当前可见评论";
 }
 
@@ -500,7 +501,8 @@ async function runSingleVideo({ forceComments = false } = {}) {
       method: "POST",
       body: JSON.stringify({
         creator_id: creator.id, video_url: target.video_url,
-        force_comments: Boolean(forceComments), videos_only: !saved.comments_enabled,
+        force_comments: Boolean(forceComments),
+        videos_only: !saved.comments_enabled || saved.comment_collect_minutes === 0,
       }),
     });
     $("#settingsDialog").close();
@@ -620,6 +622,7 @@ $("#addCreatorForm").addEventListener("submit", async (event) => {
 $("#settingsButton").addEventListener("click", () => openSettings().catch((error) => showToast(error.message)));
 $("#settingsCommentsEnabled").addEventListener("change", toggleCommentOptions);
 $("#settingsHistoryLimit").addEventListener("input", updateSingleVideoControls);
+$("#settingsCommentMinutes").addEventListener("input", updateSingleVideoControls);
 $("#settingsVideoUrl").addEventListener("input", scheduleVideoLookup);
 $("#runSingleVideoButton").addEventListener("click", () => runSingleVideo().catch((error) => showToast(error.message)));
 $("#settingsForm").addEventListener("submit", (event) => {

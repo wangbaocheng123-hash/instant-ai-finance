@@ -42,6 +42,28 @@ ARCHIVE_DIR = DATA_DIR / "archive"
 DEFAULT_DOUBAO_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_DOUBAO_TEXT_MODEL = "doubao-seed-2-1-turbo-260628"
 MAX_COMMENT_TRACKING_MINUTES = 30 * 24 * 60
+DEFAULT_COMMENT_COLLECT_MINUTES = 3
+MAX_COMMENT_COLLECT_MINUTES = 60
+
+
+def comment_collect_minutes(settings: object) -> int:
+    """Per-run budget, distinct from the legacy work-age tracking window."""
+    def get(name):
+        return settings.get(name) if isinstance(settings, Mapping) else getattr(settings, name, None)
+
+    value = get("creator_comment_collect_minutes")
+    if value is None:
+        # 1.3.2 exposed minute input for this request. Preserve explicitly
+        # entered sub-hour values (e.g. 5), not legacy 60/1440-hour windows.
+        try:
+            legacy_minutes = int(get("creator_comment_tracking_minutes"))
+        except (TypeError, ValueError, OverflowError):
+            legacy_minutes = 0
+        value = legacy_minutes if 0 < legacy_minutes < 60 else DEFAULT_COMMENT_COLLECT_MINUTES
+    try:
+        return max(0, min(MAX_COMMENT_COLLECT_MINUTES, int(value)))
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_COMMENT_COLLECT_MINUTES
 
 
 def comment_tracking_minutes(settings: object) -> int:
@@ -95,6 +117,7 @@ class Settings:
     doubao_text_model: str | None
     doubao_vision_model: str | None
     creator_comment_tracking_minutes: int | None = None
+    creator_comment_collect_minutes: int = DEFAULT_COMMENT_COLLECT_MINUTES
 
 
 def load_settings() -> Settings:
@@ -167,6 +190,7 @@ def load_settings() -> Settings:
         ),
         creator_comment_tracking_hours=tracking_minutes / 60,
         creator_comment_tracking_minutes=tracking_minutes,
+        creator_comment_collect_minutes=comment_collect_minutes(config),
         database_path=_runtime_path(
             "BLOGGER_AGENT_DATABASE_PATH",
             DATA_DIR / "mx_agent.sqlite3",

@@ -144,13 +144,13 @@
               <input id="settingsCommentLimit" name="comment_limit" type="number" min="20" max="50000" required>
             </label>
             <label>
-              <span>新作品评论跟踪时长（分钟）</span>
-              <input id="settingsTrackingMinutes" name="comment_tracking_minutes" type="number" min="1" max="43200" step="1" required>
+              <span>评论采集时长（分钟）</span>
+              <input id="settingsCommentMinutes" name="comment_collect_minutes" type="number" min="0" max="60" step="1" required>
             </label>
           </div>
         </section>
 
-        <p class="single-video-help">评论跟踪时长可填 1～43200 分钟，例如 15、30、60。按作品发布时间计算跟踪窗口；首次抓取和手动补抓不受窗口限制。手动模式不会定时自动抓评。</p>
+        <p class="single-video-help">0 表示不抓评论，只下载视频；5 表示进入评论阶段后最多采集 5 分钟，到时保存已采到的评论并结束。范围 0～60 分钟；抓完公开评论或达到数量上限可提前结束。保存和发送可能再需少量时间，不影响模型先生继续抓取视频。</p>
         <div id="settingsNote" class="settings-note">指定视频沿用下方评论设置。保存设置不会开始采集；抓取前会再次确认。</div>
         <div class="dialog-actions split-actions">
           <button id="forceCommentsButton" type="button">补抓当前可见评论</button>

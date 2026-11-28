@@ -21,6 +21,7 @@
   "creator_comment_limit": 5000,
   "creator_comment_refresh_minutes": 60,
   "creator_comment_tracking_hours": 24,
-  "creator_comment_tracking_minutes": 1440
+  "creator_comment_tracking_minutes": 1440,
+  "creator_comment_collect_minutes": 3
 }
 

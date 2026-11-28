@@ -136,6 +136,29 @@ class CreatorRegistryTests(unittest.TestCase):
             self.assertEqual(row["creator_comment_tracking_minutes"], 60)
             self.assertEqual(row["creator_comment_tracking_hours"], 1)
 
+    def test_per_run_comment_budget_is_independent_and_persists_zero_or_five(self) -> None:
+        registry = CreatorRegistry(self.settings, path=self.registry_path)
+        for minutes in (0, 5):
+            registry.update("primary", {"creator_comment_collect_minutes": minutes})
+            registry = CreatorRegistry(self.settings, path=self.registry_path)
+            self.assertEqual(registry.settings_for("primary").creator_comment_collect_minutes, minutes)
+            self.assertEqual(registry.get("primary")["creator_comment_tracking_minutes"], 1440)
+
+    def test_existing_five_minute_selection_migrates_without_using_legacy_hours_as_budget(self) -> None:
+        registry = CreatorRegistry(self.settings, path=self.registry_path)
+        rows = registry.list()
+        for row in rows:
+            row.pop("creator_comment_collect_minutes", None)
+            row["creator_comment_tracking_minutes"] = 5
+        self.registry_path.write_text(json.dumps({"version": 2, "creators": rows}), encoding="utf-8")
+        registry = CreatorRegistry(self.settings, path=self.registry_path)
+        self.assertTrue(all(row["creator_comment_collect_minutes"] == 5 for row in registry.list()))
+        for row in rows:
+            row["creator_comment_tracking_minutes"] = 1440
+        self.registry_path.write_text(json.dumps({"version": 2, "creators": rows}), encoding="utf-8")
+        registry = CreatorRegistry(self.settings, path=self.registry_path)
+        self.assertTrue(all(row["creator_comment_collect_minutes"] == 3 for row in registry.list()))
+
     def test_existing_named_miscellaneous_creator_is_upgraded_without_identity_change(self) -> None:
         existing_uuid = "e20f3957-28ad-4faa-a210-b43493c3f31d"
         self.registry_path.write_text(

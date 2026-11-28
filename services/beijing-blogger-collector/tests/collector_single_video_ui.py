@@ -53,9 +53,11 @@ def main():
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(f"http://127.0.0.1:{server.server_port}/collector/")
             page.locator("#settingsButton").click()
-            assert page.locator("#settingsTrackingMinutes").input_value() == "1440"
+            assert page.locator("#settingsCommentMinutes").input_value() == "3"
             page.locator("#settingsHistoryLimit").fill("0")
-            page.locator("#settingsTrackingMinutes").fill("15")
+            page.locator("#settingsCommentMinutes").fill("0")
+            assert page.locator("#forceCommentsButton").is_disabled()
+            page.locator("#settingsCommentMinutes").fill("5")
             assert page.locator("#settingsForm").evaluate("e => e.checkValidity()")
             assert page.locator("#saveAndRunButton").is_disabled()
             assert page.locator("#forceCommentsButton").is_disabled()
@@ -77,14 +79,15 @@ def main():
             assert manager.run_requests == ["creator-one"]
             assert manager.run_options[0]["video_url"] == URL
             assert runtime.registry.creators[0]["creator_sync_history_limit"] == 0
-            assert runtime.registry.creators[0]["creator_comment_tracking_minutes"] == 15
+            assert runtime.registry.creators[0]["creator_comment_collect_minutes"] == 5
+            assert manager.run_options[0]["videos_only"] is False
             assert page.locator("#runButton").inner_text() == "粘贴链接抓取"
 
             page.locator("#settingsButton").click()
             page.locator("#settingsDialog").wait_for(state="visible")
             assert page.locator("#settingsVideoUrl").input_value() == ""
             assert page.locator("#settingsHistoryLimit").input_value() == "0"
-            assert page.locator("#settingsTrackingMinutes").input_value() == "15"
+            assert page.locator("#settingsCommentMinutes").input_value() == "5"
             assert page.locator("#saveAndRunButton").is_disabled()
             page.locator("#settingsHistoryLimit").fill("2")
             assert page.locator("#saveAndRunButton").is_enabled()
@@ -98,6 +101,8 @@ def main():
 
             page.locator("#settingsVideoUrl").fill(SHARE)
             page.locator("#singleVideoPreview").filter(has_text="已识别视频").wait_for()
+            page.locator("#settingsCommentMinutes").fill("0")
+            assert page.locator("#forceCommentsButton").is_disabled()
             for width in (390, 320):
                 page.set_viewport_size({"width": width, "height": 844})
                 page.locator("#settingsVideoUrl").scroll_into_view_if_needed()
@@ -110,10 +115,13 @@ def main():
             page.locator("#settingsDialog").wait_for(state="hidden")
             assert len(manager.run_requests) == 2
             assert manager.run_options[-1]["video_url"] == URL
+            assert manager.run_options[-1]["videos_only"] is True
+            page.locator("#settingsButton").click()
+            assert page.locator("#settingsCommentMinutes").input_value() == "0"
             assert not errors, errors
             context.close()
             browser.close()
-        print("PASS: zero count/minute window saved and reopened, legacy hours converted, link-only guards, auto preview, confirmation/cancel, selected creator, single target, invalid input, mobile 390/320 px, no browser errors")
+        print("PASS: zero count, 0/5 minute per-run budgets saved and reopened, zero skips comments only, link-only guards, auto preview, confirmation/cancel, selected creator, single target, invalid input, mobile 390/320 px, no browser errors")
         print(preview)
     finally:
         if server:

@@ -37,6 +37,10 @@ class CommentCollectError(RuntimeError):
     pass
 
 
+class _CollectionDeadlineReached(TimeoutError):
+    pass
+
+
 class CommentCollector:
     """Collect public comments exposed by the work page's own network calls."""
 
@@ -54,12 +58,31 @@ class CommentCollector:
         self.chrome: subprocess.Popen | None = None
         self.cdp: CDPConnection | None = None
         self.last_summary: dict[str, object] = {}
+        self._deadline: float | None = None
+
+    def _remaining_timeout(self, maximum: float) -> float:
+        if self._deadline is None:
+            return maximum
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise _CollectionDeadlineReached()
+        return min(maximum, remaining)
+
+    def _call(self, method: str, params: dict | None = None) -> dict:
+        if not self.cdp:
+            raise CommentCollectError("评论采集浏览器尚未连接。")
+        try:
+            return self.cdp.call(method, params, timeout=self._remaining_timeout(8))
+        except (queue.Empty, TimeoutError):
+            self._remaining_timeout(8)
+            raise
 
     def _check_cancel(self) -> None:
         if self.cancel_event is not None and self.cancel_event.is_set():
             raise DownloadCancelled("任务已取消。")
 
     def _start(self) -> None:
+        self._remaining_timeout(15)
         if not self.chrome_path.exists():
             raise CommentCollectError(
                 f"未找到 Chromium：{self.chrome_path}"
@@ -100,7 +123,7 @@ class CommentCollector:
             )
         self.chrome = subprocess.Popen(args, **popen_kwargs)
 
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + self._remaining_timeout(15)
         port: int | None = None
         while time.monotonic() < deadline:
             self._check_cancel()
@@ -118,15 +141,16 @@ class CommentCollector:
                     pass
             time.sleep(0.1)
         if port is None:
+            self._remaining_timeout(1)
             raise CommentCollectError("等待评论采集浏览器超时。")
 
-        deadline = time.monotonic() + 8
+        deadline = time.monotonic() + self._remaining_timeout(8)
         last_error: Exception | None = None
         while time.monotonic() < deadline:
             try:
                 targets = requests.get(
                     f"http://127.0.0.1:{port}/json/list",
-                    timeout=1,
+                    timeout=self._remaining_timeout(1),
                 ).json()
                 page = next(
                     row
@@ -134,10 +158,12 @@ class CommentCollector:
                     if row.get("type") == "page"
                 )
                 self.cdp = CDPConnection(page["webSocketDebuggerUrl"])
+                self._remaining_timeout(1)
                 return
             except Exception as exc:
                 last_error = exc
                 time.sleep(0.15)
+        self._remaining_timeout(1)
         raise CommentCollectError(
             f"连接评论采集浏览器失败：{last_error}"
         )
@@ -145,7 +171,7 @@ class CommentCollector:
     def _evaluate(self, expression: str):
         if not self.cdp:
             raise CommentCollectError("评论采集浏览器尚未连接。")
-        result = self.cdp.call(
+        result = self._call(
             "Runtime.evaluate",
             {
                 "expression": expression,
@@ -335,21 +361,10 @@ class CommentCollector:
         limit: int = 200,
         creator_uid: str = "",
     ) -> list[dict]:
-        self._start()
-        assert self.cdp
-        self.cdp.call(
-            "Network.enable",
-            {
-                "maxTotalBufferSize": 20_000_000,
-                "maxResourceBufferSize": 5_000_000,
-            },
-        )
-        self.cdp.call("Page.enable")
-        self.cdp.call("Runtime.enable")
-        self.cdp.call("Page.navigate", {"url": video_url})
-        self.log("正在采集公开评论数据…")
-
-        deadline = time.monotonic() + timeout
+        started = time.monotonic()
+        deadline = started + max(0.0, float(timeout))
+        self._deadline = deadline
+        self.last_summary = {}
         matching_requests: dict[str, tuple[str, str]] = {}
         completed: set[str] = set()
         by_id: dict[str, dict] = {}
@@ -363,6 +378,23 @@ class CommentCollector:
         expand_candidates = 0
         scrolling_more = True
         last_trigger = 0.0
+        stop_reason = "time_limit"
+        try:
+            self._remaining_timeout(8)
+            self._start()
+            self._call(
+                "Network.enable",
+                {
+                    "maxTotalBufferSize": 20_000_000,
+                    "maxResourceBufferSize": 5_000_000,
+                },
+            )
+            self._call("Page.enable")
+            self._call("Runtime.enable")
+            self._call("Page.navigate", {"url": video_url})
+            self.log("正在采集公开评论数据…")
+        except _CollectionDeadlineReached:
+            pass
         while time.monotonic() < deadline:
             self._check_cancel()
             if time.monotonic() - last_trigger > 0.9:
@@ -489,10 +521,14 @@ class CommentCollector:
                         if clicked:
                             expand_clicks += clicked
                             last_expand = time.monotonic()
+                except _CollectionDeadlineReached:
+                    break
                 except Exception:
                     pass
             try:
-                event = self.cdp.events.get(timeout=0.25)
+                event = self.cdp.events.get(timeout=self._remaining_timeout(0.25))
+            except _CollectionDeadlineReached:
+                break
             except queue.Empty:
                 now = time.monotonic()
                 last_main_has_more = (
@@ -506,6 +542,7 @@ class CommentCollector:
                     and not scrolling_more
                     and last_main_has_more is False
                 ):
+                    stop_reason = "source_exhausted"
                     break
                 continue
 
@@ -534,7 +571,7 @@ class CommentCollector:
                 completed.add(request_id)
                 request_kind, request_url = matching_requests[request_id]
                 try:
-                    body = self.cdp.call(
+                    body = self._call(
                         "Network.getResponseBody",
                         {"requestId": request_id},
                     )
@@ -545,6 +582,8 @@ class CommentCollector:
                             errors="replace",
                         )
                     payload = json.loads(text)
+                except _CollectionDeadlineReached:
+                    break
                 except Exception:
                     continue
                 if request_kind == "detail":
@@ -575,6 +614,8 @@ class CommentCollector:
                     payload,
                     creator_uid=creator_uid,
                 ):
+                    if time.monotonic() >= deadline:
+                        break
                     comment_id = row["comment_id"]
                     if comment_id not in by_id:
                         by_id[comment_id] = row
@@ -615,6 +656,7 @@ class CommentCollector:
                             {},
                         )
                 if len(by_id) >= limit:
+                    stop_reason = "comment_limit"
                     break
 
         rows = list(by_id.values())[:limit]
@@ -678,6 +720,9 @@ class CommentCollector:
                 row.get("is_author_digged") is True for row in rows
             ),
             "video_metrics": video_metrics,
+            "stop_reason": stop_reason,
+            "time_budget_seconds": max(0.0, float(timeout)),
+            "elapsed_seconds": max(0.0, time.monotonic() - started),
         }
         if rows:
             self.log(
@@ -692,7 +737,7 @@ class CommentCollector:
             )
         else:
             self.log(
-                "本次未取得公开评论；可能需要登录，稍后会自动重试。"
+                "本次未取得公开评论；可能需要登录，可稍后手动重试。"
             )
         return rows
 

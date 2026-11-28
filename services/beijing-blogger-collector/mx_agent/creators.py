@@ -12,7 +12,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .creator_sync import CreatorSyncService
-from .settings import CONFIG_DIR, Settings, comment_tracking_minutes
+from .settings import CONFIG_DIR, Settings, comment_tracking_minutes, comment_collect_minutes
 from .storage import Storage
 
 
@@ -27,6 +27,7 @@ INT_FIELDS = {
     "creator_sync_history_limit": (0, 1000),
     "creator_comment_limit": (20, 50000),
     "creator_comment_refresh_minutes": (30, 1440),
+    "creator_comment_collect_minutes": (0, 60),
 }
 PROFILE_COLLECTION_KIND = "profile"
 LINK_ONLY_COLLECTION_KIND = "link_only"
@@ -110,6 +111,7 @@ class CreatorRegistry:
             "creator_comment_refresh_minutes": int(settings.creator_comment_refresh_minutes),
             "creator_comment_tracking_hours": comment_tracking_minutes(settings) / 60,
             "creator_comment_tracking_minutes": comment_tracking_minutes(settings),
+            "creator_comment_collect_minutes": comment_collect_minutes(settings),
         }
 
     def _load_or_migrate(self) -> list[dict[str, Any]]:
@@ -151,6 +153,8 @@ class CreatorRegistry:
 
     def _misc_creator(self, existing: dict[str, Any] | None = None) -> dict[str, Any]:
         raw = {**self._legacy_creator(), **(existing or {})}
+        if existing:
+            raw["creator_comment_collect_minutes"] = comment_collect_minutes(existing)
         if existing and any(field in existing for field in (
             "creator_comment_tracking_minutes", "creator_comment_tracking_hours",
         )):
@@ -220,6 +224,7 @@ class CreatorRegistry:
         ) else defaults
         creator["creator_comment_tracking_minutes"] = comment_tracking_minutes(tracking)
         creator["creator_comment_tracking_hours"] = creator["creator_comment_tracking_minutes"] / 60
+        creator["creator_comment_collect_minutes"] = comment_collect_minutes(raw)
         return creator
 
     def _write(self, creators: list[dict[str, Any]]) -> None:
@@ -342,6 +347,7 @@ class CreatorRegistry:
             creator_comment_refresh_minutes=creator["creator_comment_refresh_minutes"],
             creator_comment_tracking_hours=creator["creator_comment_tracking_hours"],
             creator_comment_tracking_minutes=creator["creator_comment_tracking_minutes"],
+            creator_comment_collect_minutes=creator["creator_comment_collect_minutes"],
         )
 
 

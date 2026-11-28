@@ -34,7 +34,7 @@ from .downloader_engine.profile_monitor import (
     refine_created_at_from_title,
     video_created_at,
 )
-from .settings import DATA_DIR, ROOT_DIR, Settings, comment_tracking_minutes
+from .settings import DATA_DIR, ROOT_DIR, Settings, comment_tracking_minutes, comment_collect_minutes
 from .single_video import VideoLinkError, normalize_video_link, resolve_video_link
 from .storage import Storage, from_json, now_iso
 
@@ -485,6 +485,7 @@ class CreatorSyncService:
                 ),
                 "comment_tracking_minutes": comment_tracking_minutes(self.settings),
                 "comment_tracking_hours": comment_tracking_minutes(self.settings) / 60,
+                "comment_collect_minutes": comment_collect_minutes(self.settings),
                 "video_dir": str(self.video_dir),
                 "image_dir": str(self.image_dir),
                 "profile_dir": str(self.profile_dir),
@@ -621,6 +622,10 @@ class CreatorSyncService:
                     "comments_updated": 0,
                     "content_ready_callbacks": 0,
                     "content_ready_callback_failures": 0,
+                    "comment_budget_seconds": 0,
+                    "comment_deadline_at": "",
+                    "comment_stop_reason": "",
+                    "comment_time_limits_reached": 0,
                     "requested_start_date": (
                         start_date.isoformat() if start_date else ""
                     ),
@@ -921,6 +926,8 @@ class CreatorSyncService:
                 )
             if failures:
                 summary += f" 有 {failures} 个步骤等待下次重试。"
+            if self._runtime.get("comment_time_limits_reached"):
+                summary += " 评论已按设定时长结束，采到的内容已保存。"
             if content_ready_callback_failures:
                 summary += (
                     f" 有 {content_ready_callback_failures} 个后续处理通知失败，"
@@ -944,6 +951,7 @@ class CreatorSyncService:
                 "comments_updated": comment_updated,
                 "content_ready_callbacks": content_ready_callbacks,
                 "content_ready_callback_failures": content_ready_callback_failures,
+                "comment_time_limits_reached": int(self._runtime.get("comment_time_limits_reached") or 0),
                 "failures": failures,
             }
             self._save_state()
@@ -1398,6 +1406,8 @@ class CreatorSyncService:
         newly_downloaded: bool,
         force: bool,
     ) -> bool:
+        if comment_collect_minutes(self.settings) == 0:
+            return False
         if force or newly_downloaded:
             return True
         age = _china_now() - video.created_at.replace(tzinfo=CHINA_TZ)
@@ -1427,12 +1437,19 @@ class CreatorSyncService:
         creator: str,
         profile_url: str,
     ) -> dict[str, int]:
-        self._event(f"正在同步作品 {video.video_id} 的公开评论。")
-        collector = CommentCollector(self.profile_dir, log=self._event)
+        minutes = comment_collect_minutes(self.settings)
+        if minutes == 0:
+            return {"seen": 0, "created": 0, "updated": 0}
+        budget_seconds = minutes * 60
+        with self._lock:
+            self._runtime["comment_budget_seconds"] = budget_seconds
+            self._runtime["comment_deadline_at"] = (_china_now() + timedelta(seconds=budget_seconds)).isoformat()
+        self._event(f"正在采集作品 {video.video_id} 的公开评论，最多 {minutes} 分钟，到时保存已采到内容。")
+        collector = CommentCollector(self.profile_dir, log=self._event, cancel_event=self._stop_event)
         try:
             rows = collector.collect(
                 video.url,
-                timeout=180,
+                timeout=budget_seconds,
                 limit=int(self.settings.creator_comment_limit),
                 creator_uid=_profile_uid(profile_url),
             )
@@ -1441,6 +1458,12 @@ class CreatorSyncService:
             raise
         finally:
             collector.close()
+        with self._lock:
+            self._runtime["comment_stop_reason"] = str(summary.get("stop_reason") or "")
+            if summary.get("stop_reason") == "time_limit":
+                self._runtime["comment_time_limits_reached"] = int(self._runtime.get("comment_time_limits_reached") or 0) + 1
+        if summary.get("stop_reason") == "time_limit":
+            self._event(f"评论采集已到 {minutes} 分钟上限，正在保存已采到的 {len(rows)} 条评论。")
         normalized: list[dict[str, Any]] = []
         for index, row in enumerate(rows):
             comment_id = str(row.get("comment_id") or "").strip()

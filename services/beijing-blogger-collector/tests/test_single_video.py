@@ -179,6 +179,35 @@ class SingleVideoCollectionTests(unittest.TestCase):
             self.assertEqual(service.status()["new_downloads"], 1)
             self.assertEqual(service.status()["history_limit"], 0)
 
+    def test_comment_budget_zero_skips_comments_but_still_sends_video(self):
+        with self.service() as (service, callback):
+            service.settings.creator_comment_collect_minutes = 0
+            with patch.object(service, "_collect_and_merge_comments") as comments, \
+                 patch.object(service, "_ensure_video", return_value=(1, True)):
+                service._perform_cycle(manual=True, force_comments=True, video_url=URL)
+            comments.assert_not_called()
+            callback.assert_called_once_with(1, service.runtime_key)
+            self.assertFalse(service.status()["last_error"])
+
+    def test_five_minute_partial_comments_are_saved_before_video_handoff(self):
+        with self.service() as (service, callback):
+            service.settings.creator_comment_collect_minutes = 5
+            collector = MagicMock()
+            collector.collect.return_value = [{"comment_id": "partial-one", "text": "已采到的一条", "author_name": "公开用户"}]
+            collector.last_summary = {"stop_reason": "time_limit", "complete": False, "expected_total": 100}
+            with patch.object(creator_sync, "CommentCollector", return_value=collector), \
+                 patch.object(creator_sync, "DouyinResolver") as resolver, \
+                 patch.object(creator_sync, "download_video", side_effect=self.fake_download), \
+                 patch.object(creator_sync, "inspect_mp4", return_value={"has_mdat": True, "has_video": True}):
+                resolver.return_value.resolve.return_value = SimpleNamespace(video_id=VIDEO_ID, title="指定作品")
+                service._perform_cycle(manual=True, force_comments=False, video_url=URL)
+            self.assertEqual(collector.collect.call_args.kwargs["timeout"], 300)
+            collector.close.assert_called_once()
+            callback.assert_called_once()
+            self.assertEqual(service.storage.counts()["comments"], 1)
+            self.assertEqual(service.status()["comment_time_limits_reached"], 1)
+            self.assertFalse(service.status()["last_error"])
+
     def test_miscellaneous_download_uses_an_isolated_source_and_fixed_author(self):
         with self.service(link_only=True) as (service, callback):
             with patch.object(creator_sync, "ProfileScanner") as scanner, \

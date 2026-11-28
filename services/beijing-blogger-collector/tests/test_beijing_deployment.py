@@ -93,7 +93,7 @@ class BeijingDeploymentContractTests(unittest.TestCase):
         self.assertIn('id="addCreatorButton"', collector_html)
         self.assertIn('id="settingsHistoryLimit"', collector_html)
         self.assertIn('id="settingsCommentLimit"', collector_html)
-        self.assertIn('id="settingsTrackingMinutes"', collector_html)
+        self.assertIn('id="settingsCommentMinutes"', collector_html)
         self.assertIn('id="saveAndRunButton"', collector_html)
         self.assertIn('id="settingsVideoUrl"', collector_html)
         self.assertIn('id="runSingleVideoButton"', collector_html)
@@ -114,7 +114,7 @@ class BeijingDeploymentContractTests(unittest.TestCase):
         self.assertIn('"short_name": "北极采集"', manifest)
         self.assertIn('url.pathname.includes("/api/collector/")', service_worker)
         self.assertIn("SCOPE_PATH", service_worker)
-        self.assertIn("north-pole-collector-shell-v8", service_worker)
+        self.assertIn("north-pole-collector-shell-v9", service_worker)
 
     def test_unified_domain_reuses_model_login_and_keeps_both_backends_loopback(self) -> None:
         caddy = self.read("collector.Caddyfile.example")
