@@ -1,7 +1,7 @@
 # ADR-0096：北京采集器零数量与分钟级评论窗口
 
 - 日期：2026-11-28
-- 状态：IMPLEMENTED / TESTED / RELEASE_PENDING
+- 状态：IMPLEMENTED / TESTED / RELEASED / SERVER_AND_PUBLIC_VERIFIED
 - 目标版本：北京博主采集器1.3.2
 - 授权：所有者要求修复单链接下载时数量无法填0、评论跟踪时长不能按分钟设置，并明确“完善结束以后直接发布即可”。本句已授权同一任务中的正式北京发布，不再要求固定口令逐字复述。
 
@@ -25,3 +25,11 @@
 按所有者本次明确授权，提交并推送main，使用既有脚本安全快进beijing-production，再经beijing-admin调用一次root固定套件发布器。模型子树未变化，按现有tree门禁跳过；上线后验证公网精确版本、运行摘要及认证，Git timer保持disabled/inactive。即时AI0.36.0候选不在本次发布范围。
 
 回滚用新的revert提交继续前进。原数据不删除；旧程序对0及不足1小时的值会重新应用旧下限，因此回滚不能宣称仍保有分钟精度。正式结果在实际完成后追加。
+
+## 正式发布结果
+
+所有者本次直接发布授权已执行。beijing-production从6920057安全快进到1ab367ef2608c9d1e2ebbf0f862f97ee4e41599f，一次root固定套件发布器返回BEIJING_COLLECTION_SUITE_PUBLISH_VERIFIED，公网等待器返回BEIJING_GIT_PUBLISH_OK。服务器266项隔离检查通过，采集器12:22:28重启；模型子树未变，原发布器跳过构建/重启。
+
+公网与回环版本均1.3.2/完整目标SHA，VERSION、五个Python模块及HTML/JS/Service Worker共9文件摘要逐字节匹配。首页、采集页与私有dashboard匿名请求均302到登录页。旧7博主配置等值保留，截图博主1小时→60分钟，其余24小时→1440分钟；数量保留各自原值，0/15分钟持久化由隔离HTTP和真实页面验收，不为生产验证擅自改主人设置。作品69、资产69、评论11143前后不变，所有博主空闲。
+
+采集器InvocationID更新为c38153239b0a43b3bc82f61145b6d2e7；模型worker/web、社区、北京Caddy的InvocationID保持，五服务active、Git timer disabled/inactive。无即时AI/罗盘/社区发布或真实抖音/ASR/AI任务。正式证据位于Git外`/tmp/blogger-settings-release-20261128.c6mWbg`，包括branch-publish.log、suite-publish.log、services-after.log及settings-after.json；手机真实操作仍由主人下一次使用确认。
