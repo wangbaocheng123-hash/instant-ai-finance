@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, urlsplit
 from .collector_export import CollectorContentReadyAdapter
 from .creators import CreatorRegistry, CreatorSyncManager
 from .roles import ApplicationRole, require_role
-from .settings import CONFIG_DIR, DATA_DIR, ROOT_DIR, load_settings
+from .settings import CONFIG_DIR, DATA_DIR, ROOT_DIR, load_settings, comment_tracking_minutes
 from .storage import Storage
 from .single_video import VideoLinkError, normalize_video_link, resolve_video_link
 from .model_downloader_bridge import ModelDownloaderBridge
@@ -63,6 +63,7 @@ CREATOR_INPUT_FIELDS = {
     "comments_enabled",
     "comment_limit",
     "comment_tracking_hours",
+    "comment_tracking_minutes",
 }
 
 
@@ -442,6 +443,8 @@ class CollectorRuntime:
         link_only = str(creator.get("collection_kind") or "") == "link_only"
         if link_only and not str(video_url or "").strip():
             raise VideoLinkError("大杂烩不扫描博主主页，请先粘贴一条抖音视频链接。")
+        if int(creator.get("creator_sync_history_limit", 1)) == 0 and not str(video_url or "").strip():
+            raise VideoLinkError("按数量抓取已设为 0，请先粘贴一条视频链接；不会扫描博主主页。")
         options = {"force_comments": bool(force_comments), "videos_only": bool(videos_only)}
         if video_url:
             options["video_url"] = normalize_video_link(video_url)
@@ -467,16 +470,14 @@ class CollectorRuntime:
             "profile_url": _safe_text(creator.get("profile_url"), 1000),
             "collection_mode": "manual_only",
             "history_limit": max(
-                1, min(1000, int(creator.get("creator_sync_history_limit") or 1))
+                0, min(1000, int(creator.get("creator_sync_history_limit", 1)))
             ),
             "comments_enabled": bool(creator.get("creator_comments_enabled")),
             "comment_limit": max(
                 20, min(50000, int(creator.get("creator_comment_limit") or 20))
             ),
-            "comment_tracking_hours": max(
-                1,
-                min(720, int(creator.get("creator_comment_tracking_hours") or 1)),
-            ),
+            "comment_tracking_minutes": comment_tracking_minutes(creator),
+            "comment_tracking_hours": comment_tracking_minutes(creator) / 60,
         }
 
     @staticmethod
@@ -495,7 +496,9 @@ class CollectorRuntime:
             result["creator_comments_enabled"] = payload.get("comments_enabled")
         if "comment_limit" in payload:
             result["creator_comment_limit"] = payload.get("comment_limit")
-        if "comment_tracking_hours" in payload:
+        if "comment_tracking_minutes" in payload:
+            result["creator_comment_tracking_minutes"] = payload["comment_tracking_minutes"]
+        elif "comment_tracking_hours" in payload:
             result["creator_comment_tracking_hours"] = payload.get(
                 "comment_tracking_hours"
             )
@@ -603,7 +606,7 @@ class CollectorRuntime:
                     "link_only": str(creator.get("collection_kind") or "") == "link_only",
                     "profile_configured": bool(creator.get("profile_url")),
                     "history_limit": max(
-                        1, int(creator.get("creator_sync_history_limit") or 1)
+                        0, int(creator.get("creator_sync_history_limit", 1))
                     ),
                     "comments_enabled": bool(creator.get("creator_comments_enabled")),
                     "sync": {
@@ -1182,6 +1185,7 @@ class CollectorRequestHandler(BaseHTTPRequestHandler):
                 "history_limit",
                 "comment_limit",
                 "comment_tracking_hours",
+                "comment_tracking_minutes",
             )
         ):
             self._json({"error": "invalid_request"}, HTTPStatus.BAD_REQUEST)

@@ -4,6 +4,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Mapping
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -40,6 +41,23 @@ WEB_DIR = ROOT_DIR / "web"
 ARCHIVE_DIR = DATA_DIR / "archive"
 DEFAULT_DOUBAO_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_DOUBAO_TEXT_MODEL = "doubao-seed-2-1-turbo-260628"
+MAX_COMMENT_TRACKING_MINUTES = 30 * 24 * 60
+
+
+def comment_tracking_minutes(settings: object) -> int:
+    """Read the minute setting, converting legacy hour values only once."""
+    def value(name: str, default=None):
+        if isinstance(settings, Mapping):
+            return settings.get(name, default)
+        return getattr(settings, name, default)
+
+    minutes = value("creator_comment_tracking_minutes")
+    try:
+        if minutes is None:
+            minutes = float(value("creator_comment_tracking_hours", 24)) * 60
+        return max(1, min(MAX_COMMENT_TRACKING_MINUTES, int(minutes)))
+    except (TypeError, ValueError, OverflowError):
+        return 24 * 60
 
 
 @dataclass
@@ -65,7 +83,7 @@ class Settings:
     creator_comments_enabled: bool
     creator_comment_limit: int
     creator_comment_refresh_minutes: int
-    creator_comment_tracking_hours: int
+    creator_comment_tracking_hours: float
     database_path: Path
     openai_api_key: str | None
     doubao_asr_api_key: str | None
@@ -76,6 +94,7 @@ class Settings:
     doubao_ark_base_url: str
     doubao_text_model: str | None
     doubao_vision_model: str | None
+    creator_comment_tracking_minutes: int | None = None
 
 
 def load_settings() -> Settings:
@@ -92,6 +111,7 @@ def load_settings() -> Settings:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         config_path.write_text(example_path.read_text(encoding="utf-8"), encoding="utf-8")
     config = json.loads(config_path.read_text(encoding="utf-8"))
+    tracking_minutes = comment_tracking_minutes(config)
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -136,7 +156,7 @@ def load_settings() -> Settings:
             3, int(config.get("creator_sync_interval_minutes", 10))
         ),
         creator_sync_history_limit=max(
-            1, min(1000, int(config.get("creator_sync_history_limit", 500)))
+            0, min(1000, int(config.get("creator_sync_history_limit", 500)))
         ),
         creator_comments_enabled=bool(config.get("creator_comments_enabled", True)),
         creator_comment_limit=max(
@@ -145,9 +165,8 @@ def load_settings() -> Settings:
         creator_comment_refresh_minutes=max(
             30, int(config.get("creator_comment_refresh_minutes", 60))
         ),
-        creator_comment_tracking_hours=max(
-            1, min(720, int(config.get("creator_comment_tracking_hours", 24)))
-        ),
+        creator_comment_tracking_hours=tracking_minutes / 60,
+        creator_comment_tracking_minutes=tracking_minutes,
         database_path=_runtime_path(
             "BLOGGER_AGENT_DATABASE_PATH",
             DATA_DIR / "mx_agent.sqlite3",

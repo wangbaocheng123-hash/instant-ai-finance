@@ -1,4 +1,4 @@
-const SHELL_CACHE = "north-pole-collector-shell-v7";
+const SHELL_CACHE = "north-pole-collector-shell-v8";
 const SCOPE_PATH = new URL(self.registration.scope).pathname.replace(/\/$/, "");
 const scoped = (path) => `${SCOPE_PATH}${path}` || "/";
 const SHELL_FILES = [

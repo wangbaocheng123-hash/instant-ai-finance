@@ -12,7 +12,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .creator_sync import CreatorSyncService
-from .settings import CONFIG_DIR, Settings
+from .settings import CONFIG_DIR, Settings, comment_tracking_minutes
 from .storage import Storage
 
 
@@ -24,10 +24,9 @@ DOUYIN_PROFILE_RE = re.compile(
 DOUYIN_USER_PATH_RE = re.compile(r"/user/([^/?#]+)", re.IGNORECASE)
 INT_FIELDS = {
     "creator_sync_interval_minutes": (3, 1440),
-    "creator_sync_history_limit": (1, 1000),
+    "creator_sync_history_limit": (0, 1000),
     "creator_comment_limit": (20, 50000),
     "creator_comment_refresh_minutes": (30, 1440),
-    "creator_comment_tracking_hours": (1, 720),
 }
 PROFILE_COLLECTION_KIND = "profile"
 LINK_ONLY_COLLECTION_KIND = "link_only"
@@ -109,7 +108,8 @@ class CreatorRegistry:
             "creator_comments_enabled": bool(settings.creator_comments_enabled),
             "creator_comment_limit": int(settings.creator_comment_limit),
             "creator_comment_refresh_minutes": int(settings.creator_comment_refresh_minutes),
-            "creator_comment_tracking_hours": int(settings.creator_comment_tracking_hours),
+            "creator_comment_tracking_hours": comment_tracking_minutes(settings) / 60,
+            "creator_comment_tracking_minutes": comment_tracking_minutes(settings),
         }
 
     def _load_or_migrate(self) -> list[dict[str, Any]]:
@@ -151,6 +151,10 @@ class CreatorRegistry:
 
     def _misc_creator(self, existing: dict[str, Any] | None = None) -> dict[str, Any]:
         raw = {**self._legacy_creator(), **(existing or {})}
+        if existing and any(field in existing for field in (
+            "creator_comment_tracking_minutes", "creator_comment_tracking_hours",
+        )):
+            raw["creator_comment_tracking_minutes"] = comment_tracking_minutes(existing)
         raw.update(
             {
                 # Preserve the runtime key as well as UUID: pending delivery
@@ -210,6 +214,12 @@ class CreatorRegistry:
             except (TypeError, ValueError):
                 value = int(defaults[field])
             creator[field] = max(minimum, min(maximum, value))
+        tracking = raw if any(
+            field in raw
+            for field in ("creator_comment_tracking_minutes", "creator_comment_tracking_hours")
+        ) else defaults
+        creator["creator_comment_tracking_minutes"] = comment_tracking_minutes(tracking)
+        creator["creator_comment_tracking_hours"] = creator["creator_comment_tracking_minutes"] / 60
         return creator
 
     def _write(self, creators: list[dict[str, Any]]) -> None:
@@ -304,6 +314,11 @@ class CreatorRegistry:
             ):
                 if field in payload:
                     raw[field] = payload[field]
+            if "creator_comment_tracking_minutes" in payload:
+                raw["creator_comment_tracking_minutes"] = payload["creator_comment_tracking_minutes"]
+            elif "creator_comment_tracking_hours" in payload:
+                raw.pop("creator_comment_tracking_minutes", None)
+                raw["creator_comment_tracking_hours"] = payload["creator_comment_tracking_hours"]
             updated = self._normalize(raw, fallback_id=creator_id)
             if updated["creator_sync_mode"] == "realtime" and not updated["profile_url"]:
                 raise ValueError("选择实时更新前，请先填写抖音博主主页链接。")
@@ -326,6 +341,7 @@ class CreatorRegistry:
             creator_comment_limit=creator["creator_comment_limit"],
             creator_comment_refresh_minutes=creator["creator_comment_refresh_minutes"],
             creator_comment_tracking_hours=creator["creator_comment_tracking_hours"],
+            creator_comment_tracking_minutes=creator["creator_comment_tracking_minutes"],
         )
 
 

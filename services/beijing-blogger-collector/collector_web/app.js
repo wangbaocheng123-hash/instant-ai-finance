@@ -137,8 +137,8 @@ function renderCreatorHeadline() {
       : `${creator.name}已采集作品展示；查看不会打开抖音浏览器。`)
     : "点击加号新增第一个博主。";
   $("#settingsButton").disabled = !creator;
-  const count = Number(creator?.history_limit || 1);
-  $("#runButton").textContent = linkOnly ? "粘贴链接抓取" : `抓取最近 ${count} 条`;
+  const count = Number(creator?.history_limit ?? 1);
+  $("#runButton").textContent = linkOnly || count === 0 ? "粘贴链接抓取" : `抓取最近 ${count} 条`;
 }
 
 function renderSyncStatus() {
@@ -168,7 +168,7 @@ function renderSyncStatus() {
     line.textContent = `上次采集完成 ${formatDate(sync.last_finished_at)}；发送结果见下方传输状态。`;
   } else if (sync.last_content_ready_at) {
     line.textContent = sync.message || "已交接发送队列，送达结果见下方传输状态。";
-  } else if (linkOnly) {
+  } else if (linkOnly || Number(creator.history_limit ?? 1) === 0) {
     line.textContent = "当前等待指定链接；不会扫描任何博主主页，也不会定时采集。";
   } else {
     line.textContent = "当前没有采集任务。只有点击抓取按钮并确认后才会运行。";
@@ -328,7 +328,7 @@ function settingsPayload() {
     history_limit: linkOnly ? 1 : Number($("#settingsHistoryLimit").value),
     comments_enabled: $("#settingsCommentsEnabled").checked,
     comment_limit: Number($("#settingsCommentLimit").value),
-    comment_tracking_hours: Number($("#settingsTrackingHours").value),
+    comment_tracking_minutes: Number($("#settingsTrackingMinutes").value),
   };
 }
 
@@ -340,10 +340,12 @@ async function openSettings() {
   const linkOnly = isLinkOnly(creator) || settings.link_only;
   $("#settingsName").value = settings.name || "";
   $("#settingsProfileUrl").value = settings.profile_url || "";
-  $("#settingsHistoryLimit").value = String(settings.history_limit || 1);
+  $("#settingsHistoryLimit").value = String(settings.history_limit ?? 1);
   $("#settingsCommentsEnabled").checked = Boolean(settings.comments_enabled);
   $("#settingsCommentLimit").value = String(settings.comment_limit || 5000);
-  $("#settingsTrackingHours").value = String(settings.comment_tracking_hours || 24);
+  $("#settingsTrackingMinutes").value = String(
+    settings.comment_tracking_minutes ?? Math.round((settings.comment_tracking_hours ?? 24) * 60),
+  );
   $("#profileSettingsFields").hidden = linkOnly;
   $("#bulkSettingsCard").hidden = linkOnly;
   $("#settingsName").disabled = linkOnly;
@@ -394,11 +396,11 @@ async function saveSettings({ close = true } = {}) {
 async function runSelected({ forceComments = false } = {}) {
   const creator = currentCreator();
   if (!creator) return;
-  if (isLinkOnly(creator)) {
+  const count = Number(creator.history_limit ?? state.selectedSettings?.history_limit ?? 1);
+  if (isLinkOnly(creator) || count === 0) {
     await openSettings();
     return;
   }
-  const count = Number(creator.history_limit || state.selectedSettings?.history_limit || 1);
   const action = forceComments
     ? `补抓“${creator.name}”最近 ${count} 条作品的当前可见评论`
     : `抓取“${creator.name}”最近 ${count} 条作品`;
@@ -419,7 +421,7 @@ async function runSelected({ forceComments = false } = {}) {
 function toggleCommentOptions() {
   const disabled = !$("#settingsCommentsEnabled").checked;
   $("#settingsCommentLimit").disabled = disabled;
-  $("#settingsTrackingHours").disabled = disabled;
+  $("#settingsTrackingMinutes").disabled = disabled;
   $("#forceCommentsButton").disabled = disabled;
   updateSingleVideoControls();
 }
@@ -429,13 +431,14 @@ function updateSingleVideoControls() {
   const ready = Boolean(state.singleVideo) && hasInput;
   const pending = state.singleVideoSubmitting || (hasInput && !ready);
   const linkOnly = isLinkOnly();
+  const requiresLink = linkOnly || Number($("#settingsHistoryLimit").value) === 0;
   $("#settingsVideoUrl").disabled = state.singleVideoSubmitting;
   $("#runSingleVideoButton").disabled = !ready || state.singleVideoSubmitting;
-  $("#saveAndRunButton").disabled = linkOnly ? !ready || state.singleVideoSubmitting : pending;
+  $("#saveAndRunButton").disabled = requiresLink ? !ready || state.singleVideoSubmitting : pending;
   $("#saveAndRunButton").textContent = linkOnly
     ? "抓取并归入大杂烩"
-    : (hasInput ? "保存并抓取这条视频" : "保存并抓取");
-  $("#forceCommentsButton").disabled = (linkOnly && !ready) || pending || !$("#settingsCommentsEnabled").checked;
+    : (hasInput ? "保存并抓取这条视频" : (requiresLink ? "请先粘贴视频链接" : "保存并抓取"));
+  $("#forceCommentsButton").disabled = (requiresLink && !ready) || pending || !$("#settingsCommentsEnabled").checked;
   $("#forceCommentsButton").textContent = hasInput ? "补抓这条视频评论" : "补抓当前可见评论";
 }
 
@@ -616,6 +619,7 @@ $("#addCreatorForm").addEventListener("submit", async (event) => {
 });
 $("#settingsButton").addEventListener("click", () => openSettings().catch((error) => showToast(error.message)));
 $("#settingsCommentsEnabled").addEventListener("change", toggleCommentOptions);
+$("#settingsHistoryLimit").addEventListener("input", updateSingleVideoControls);
 $("#settingsVideoUrl").addEventListener("input", scheduleVideoLookup);
 $("#runSingleVideoButton").addEventListener("click", () => runSingleVideo().catch((error) => showToast(error.message)));
 $("#settingsForm").addEventListener("submit", (event) => {

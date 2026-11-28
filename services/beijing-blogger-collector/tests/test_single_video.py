@@ -154,6 +154,31 @@ class SingleVideoCollectionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "不扫描博主主页"):
                 service.run_now()
 
+    def test_zero_count_blocks_homepage_but_downloads_the_explicit_target(self):
+        with self.service() as (service, callback):
+            service.settings.creator_sync_history_limit = 0
+            with patch.object(creator_sync, "ProfileScanner") as scanner:
+                with self.assertRaisesRegex(VideoLinkError, "设为 0"):
+                    service.run_now()
+                self.assertFalse(service.status()["queued"])
+                # A queued task may observe settings changed to zero before it
+                # runs; guard that path before opening any homepage browser.
+                service._perform_cycle(manual=True, force_comments=False)
+                scanner.assert_not_called()
+                callback.assert_not_called()
+            queued = service.run_now(video_url=URL, videos_only=True)
+            self.assertTrue(queued["queued"])
+            with patch.object(creator_sync, "ProfileScanner") as scanner, \
+                 patch.object(creator_sync, "DouyinResolver") as resolver, \
+                 patch.object(creator_sync, "download_video", side_effect=self.fake_download), \
+                 patch.object(creator_sync, "inspect_mp4", return_value={"has_mdat": True, "has_video": True}):
+                resolver.return_value.resolve.return_value = SimpleNamespace(video_id=VIDEO_ID, title="指定作品")
+                service._perform_cycle(manual=True, force_comments=False, videos_only=True, video_url=URL)
+            scanner.assert_not_called()
+            callback.assert_called_once()
+            self.assertEqual(service.status()["new_downloads"], 1)
+            self.assertEqual(service.status()["history_limit"], 0)
+
     def test_miscellaneous_download_uses_an_isolated_source_and_fixed_author(self):
         with self.service(link_only=True) as (service, callback):
             with patch.object(creator_sync, "ProfileScanner") as scanner, \

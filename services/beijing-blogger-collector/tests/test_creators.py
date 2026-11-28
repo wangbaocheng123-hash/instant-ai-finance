@@ -106,6 +106,36 @@ class CreatorRegistryTests(unittest.TestCase):
 
         self.assertEqual(len(registry.list()), 2)
 
+    def test_zero_count_and_minute_window_survive_reload_and_legacy_hour_updates(self) -> None:
+        registry = CreatorRegistry(self.settings, path=self.registry_path)
+        original_identity = registry.get("primary")["creator_uuid"]
+        for minutes in (1, 15, 90, 43200):
+            with self.subTest(minutes=minutes):
+                registry.update("primary", {
+                    "creator_sync_history_limit": 0,
+                    "creator_comment_tracking_minutes": minutes,
+                })
+                registry = CreatorRegistry(self.settings, path=self.registry_path)
+                settings = registry.settings_for("primary")
+                self.assertEqual(settings.creator_sync_history_limit, 0)
+                self.assertEqual(settings.creator_comment_tracking_minutes, minutes)
+                self.assertEqual(settings.creator_comment_tracking_hours, minutes / 60)
+                self.assertEqual(registry.get("primary")["creator_uuid"], original_identity)
+        updated, _ = registry.update("primary", {"creator_comment_tracking_hours": 2})
+        self.assertEqual(updated["creator_comment_tracking_minutes"], 120)
+
+    def test_legacy_hour_windows_migrate_for_profile_and_miscellaneous(self) -> None:
+        registry = CreatorRegistry(self.settings, path=self.registry_path)
+        creators = registry.list()
+        for row in creators:
+            row.pop("creator_comment_tracking_minutes", None)
+            row["creator_comment_tracking_hours"] = 1
+        self.registry_path.write_text(json.dumps({"version": 2, "creators": creators}), encoding="utf-8")
+        registry = CreatorRegistry(self.settings, path=self.registry_path)
+        for row in registry.list():
+            self.assertEqual(row["creator_comment_tracking_minutes"], 60)
+            self.assertEqual(row["creator_comment_tracking_hours"], 1)
+
     def test_existing_named_miscellaneous_creator_is_upgraded_without_identity_change(self) -> None:
         existing_uuid = "e20f3957-28ad-4faa-a210-b43493c3f31d"
         self.registry_path.write_text(

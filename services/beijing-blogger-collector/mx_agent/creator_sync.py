@@ -34,7 +34,7 @@ from .downloader_engine.profile_monitor import (
     refine_created_at_from_title,
     video_created_at,
 )
-from .settings import DATA_DIR, ROOT_DIR, Settings
+from .settings import DATA_DIR, ROOT_DIR, Settings, comment_tracking_minutes
 from .single_video import VideoLinkError, normalize_video_link, resolve_video_link
 from .storage import Storage, from_json, now_iso
 
@@ -408,6 +408,8 @@ class CreatorSyncService:
         target_url = normalize_video_link(video_url) if video_url else ""
         if self.link_only and not target_url:
             raise ValueError("大杂烩不扫描博主主页，请先粘贴一条抖音视频链接。")
+        if not target_url and self._sync_mode() == "count" and int(self.settings.creator_sync_history_limit) == 0:
+            raise VideoLinkError("按数量抓取已设为 0，请先粘贴一条视频链接；不会扫描博主主页。")
         if not self.settings.creator_profile_url and not (self.link_only and target_url):
             raise ValueError("请先在设置中填写抖音博主主页链接。")
         if target_url and start_date:
@@ -481,9 +483,8 @@ class CreatorSyncService:
                 "comment_refresh_minutes": int(
                     self.settings.creator_comment_refresh_minutes
                 ),
-                "comment_tracking_hours": int(
-                    self.settings.creator_comment_tracking_hours
-                ),
+                "comment_tracking_minutes": comment_tracking_minutes(self.settings),
+                "comment_tracking_hours": comment_tracking_minutes(self.settings) / 60,
                 "video_dir": str(self.video_dir),
                 "image_dir": str(self.image_dir),
                 "profile_dir": str(self.profile_dir),
@@ -630,6 +631,9 @@ class CreatorSyncService:
         profile_url = str(self.settings.creator_profile_url or "").strip()
         sync_mode = self._sync_mode()
         try:
+            count_target = int(self.settings.creator_sync_history_limit)
+            if not video_url and (self.link_only or (sync_mode == "count" and count_target == 0)):
+                raise VideoLinkError("请先粘贴一条视频链接；当前设置不会扫描博主主页。")
             if video_url:
                 self._event("正在识别指定视频，只抓取这一条，不扫描博主主页。")
             elif start_date:
@@ -642,7 +646,6 @@ class CreatorSyncService:
                 self._event(
                     f"正在扫描博主主页，准备抓取最近 {int(self.settings.creator_sync_history_limit)} 条视频。"
                 )
-            count_target = int(self.settings.creator_sync_history_limit)
             tracked_count = len(self._state.get("videos") or {})
             count_scan_limit = min(
                 1000,
@@ -1399,7 +1402,7 @@ class CreatorSyncService:
             return True
         age = _china_now() - video.created_at.replace(tzinfo=CHINA_TZ)
         if age < timedelta(0) or age > timedelta(
-            hours=int(self.settings.creator_comment_tracking_hours)
+            minutes=comment_tracking_minutes(self.settings)
         ):
             return False
         entry = self._state.setdefault("videos", {}).setdefault(video.video_id, {})

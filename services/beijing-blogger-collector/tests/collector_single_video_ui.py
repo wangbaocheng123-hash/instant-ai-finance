@@ -4,7 +4,9 @@ Uses the real collector HTTP/UI with synthetic storage and a fake task manager.
 No real downloads, creator settings, secrets, or remote services are touched.
 """
 from pathlib import Path
+import os
 import sys
+import tempfile
 import threading
 from unittest.mock import patch
 
@@ -39,16 +41,24 @@ def main():
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         runtime.start()
-        preview = ROOT / "tmp" / "single-video-acceptance"
-        preview.mkdir(parents=True, exist_ok=True)
+        preview = Path(tempfile.mkdtemp(prefix="collector-settings-acceptance-"))
         with patch.object(collector_server, "resolve_video_link", side_effect=fixture_resolve), sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
+            browser = playwright.chromium.launch(
+                headless=True,
+                executable_path=os.getenv("COLLECTOR_TEST_BROWSER_PATH") or None,
+            )
             context = browser.new_context(viewport={"width": 1440, "height": 1100}, service_workers="block")
             page = context.new_page()
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(f"http://127.0.0.1:{server.server_port}/collector/")
             page.locator("#settingsButton").click()
+            assert page.locator("#settingsTrackingMinutes").input_value() == "1440"
+            page.locator("#settingsHistoryLimit").fill("0")
+            page.locator("#settingsTrackingMinutes").fill("15")
+            assert page.locator("#settingsForm").evaluate("e => e.checkValidity()")
+            assert page.locator("#saveAndRunButton").is_disabled()
+            assert page.locator("#forceCommentsButton").is_disabled()
             page.locator("#settingsVideoUrl").fill(SHARE)
             page.locator("#singleVideoPreview").filter(has_text="已识别视频").wait_for()
             assert manager.run_requests == [], "Pasting a link must not collect"
@@ -66,12 +76,20 @@ def main():
             page.locator("#settingsDialog").wait_for(state="hidden")
             assert manager.run_requests == ["creator-one"]
             assert manager.run_options[0]["video_url"] == URL
-            assert runtime.registry.creators[0]["creator_sync_history_limit"] == 50
+            assert runtime.registry.creators[0]["creator_sync_history_limit"] == 0
+            assert runtime.registry.creators[0]["creator_comment_tracking_minutes"] == 15
+            assert page.locator("#runButton").inner_text() == "粘贴链接抓取"
 
             page.locator("#settingsButton").click()
             page.locator("#settingsDialog").wait_for(state="visible")
             assert page.locator("#settingsVideoUrl").input_value() == ""
-            assert page.locator("#saveAndRunButton").inner_text() == "保存并抓取"
+            assert page.locator("#settingsHistoryLimit").input_value() == "0"
+            assert page.locator("#settingsTrackingMinutes").input_value() == "15"
+            assert page.locator("#saveAndRunButton").is_disabled()
+            page.locator("#settingsHistoryLimit").fill("2")
+            assert page.locator("#saveAndRunButton").is_enabled()
+            page.locator("#settingsHistoryLimit").fill("0")
+            assert page.locator("#saveAndRunButton").is_disabled()
             page.locator("#settingsVideoUrl").fill("https://www.douyin.com/user/not-a-video")
             page.locator('#singleVideoPreview[data-error="true"]').wait_for()
             assert page.locator("#saveAndRunButton").is_disabled()
@@ -95,7 +113,7 @@ def main():
             assert not errors, errors
             context.close()
             browser.close()
-        print("PASS: auto preview, no automatic collection, confirmation/cancel, selected creator, single target, invalid input, mobile 390/320 px, no browser errors")
+        print("PASS: zero count/minute window saved and reopened, legacy hours converted, link-only guards, auto preview, confirmation/cancel, selected creator, single target, invalid input, mobile 390/320 px, no browser errors")
         print(preview)
     finally:
         if server:

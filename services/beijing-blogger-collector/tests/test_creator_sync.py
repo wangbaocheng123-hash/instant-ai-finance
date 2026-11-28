@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -90,6 +90,28 @@ class CreatorSyncTests(unittest.TestCase):
             creator_comment_refresh_minutes=60,
             creator_comment_tracking_hours=24,
         )
+
+    def test_comment_window_uses_exact_minutes_and_keeps_manual_overrides(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            settings = self.make_settings()
+            settings.creator_comment_tracking_minutes = 15
+            settings.creator_comment_refresh_minutes = 1
+            with patch.object(creator_sync, "RUNTIME_DIR", root / "runtime"), \
+                 patch.object(creator_sync, "PROFILE_DIR", root / "profile"), \
+                 patch.object(creator_sync, "STATE_PATH", root / "state.json"):
+                service = CreatorSyncService(settings, Storage(root / "agent.sqlite3"), content_root=root / "creators")
+            now = datetime(2026, 11, 28, 12, 0, tzinfo=creator_sync.CHINA_TZ)
+            work = ProfileVideo(video_id="7000000000000000001", url="https://www.douyin.com/video/7000000000000000001", title="样本", created_at=now - timedelta(minutes=15))
+            with patch.object(creator_sync, "_china_now", return_value=now):
+                self.assertTrue(service._comments_due(work, newly_downloaded=False, force=False))
+            with patch.object(creator_sync, "_china_now", return_value=now + timedelta(seconds=1)):
+                self.assertFalse(service._comments_due(work, newly_downloaded=False, force=False))
+                self.assertTrue(service._comments_due(work, newly_downloaded=True, force=False))
+                self.assertTrue(service._comments_due(work, newly_downloaded=False, force=True))
+            service._state["videos"] = {work.video_id: {"last_comment_sync_at": now.isoformat()}}
+            with patch.object(creator_sync, "_china_now", return_value=now):
+                self.assertFalse(service._comments_due(work, newly_downloaded=False, force=False))
 
     def test_creators_share_one_login_profile_but_keep_runtime_state_isolated(self):
         with tempfile.TemporaryDirectory() as folder:

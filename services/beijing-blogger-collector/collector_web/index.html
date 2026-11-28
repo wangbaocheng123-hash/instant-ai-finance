@@ -115,8 +115,9 @@
           </div>
           <label>
             <span>每次抓取最近多少条作品</span>
-            <input id="settingsHistoryLimit" name="history_limit" type="number" min="1" max="1000" required>
+            <input id="settingsHistoryLimit" name="history_limit" type="number" min="0" max="1000" step="1" required>
           </label>
+          <p class="single-video-help">填 0 表示关闭按数量抓取，仅使用下方指定的一条视频链接；填写链接时，无论此处多少都只抓取该视频。</p>
         </section>
 
         <section class="setting-card single-video-card">
@@ -143,12 +144,13 @@
               <input id="settingsCommentLimit" name="comment_limit" type="number" min="20" max="50000" required>
             </label>
             <label>
-              <span>新作品评论跟踪时间（小时）</span>
-              <input id="settingsTrackingHours" name="comment_tracking_hours" type="number" min="1" max="720" required>
+              <span>新作品评论跟踪时长（分钟）</span>
+              <input id="settingsTrackingMinutes" name="comment_tracking_minutes" type="number" min="1" max="43200" step="1" required>
             </label>
           </div>
         </section>
 
+        <p class="single-video-help">评论跟踪时长可填 1～43200 分钟，例如 15、30、60。按作品发布时间计算跟踪窗口；首次抓取和手动补抓不受窗口限制。手动模式不会定时自动抓评。</p>
         <div id="settingsNote" class="settings-note">指定视频沿用下方评论设置。保存设置不会开始采集；抓取前会再次确认。</div>
         <div class="dialog-actions split-actions">
           <button id="forceCommentsButton" type="button">补抓当前可见评论</button>

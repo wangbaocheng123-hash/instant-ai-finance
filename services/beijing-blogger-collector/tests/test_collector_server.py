@@ -13,6 +13,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from mx_agent import collector_server
+from mx_agent.creators import CreatorRegistry
+from mx_agent.settings import load_settings
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -78,6 +80,7 @@ class FakeRegistry:
             "creator_comments_enabled": "creator_comments_enabled",
             "creator_comment_limit": "creator_comment_limit",
             "creator_comment_tracking_hours": "creator_comment_tracking_hours",
+            "creator_comment_tracking_minutes": "creator_comment_tracking_minutes",
         }
         for source, target in field_map.items():
             if source in payload:
@@ -624,6 +627,51 @@ print(json.dumps(sorted(set(loaded))))
             server.server_close()
             thread.join(timeout=3)
             runtime.close()
+
+    def test_zero_count_and_minute_settings_roundtrip_over_http(self) -> None:
+        runtime, manager = self.runtime(configured=False)
+        registry_path = self.root / "creators.json"
+        settings = load_settings()
+        runtime.registry = CreatorRegistry(settings, path=registry_path)
+        server = collector_server.create_http_server(runtime, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def post(path, payload):
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+            connection.request("POST", path, json.dumps(payload).encode(), {"Content-Type": "application/json"})
+            response = connection.getresponse()
+            result = response.status, json.loads(response.read())
+            connection.close()
+            return result
+
+        try:
+            status, saved = post("/collector/api/collector/creators/primary/settings", {
+                "history_limit": 0, "comment_tracking_minutes": 15,
+            })
+            self.assertEqual(status, 200)
+            self.assertEqual(saved["history_limit"], 0)
+            self.assertEqual(saved["comment_tracking_minutes"], 15)
+            self.assertEqual(saved["comment_tracking_hours"], 0.25)
+            runtime.registry = CreatorRegistry(settings, path=registry_path)
+            self.assertEqual(runtime.creator_settings("primary"), saved)
+            self.assertEqual(runtime.creator_summaries()[0]["history_limit"], 0)
+            for value in (False, "15", 1.5):
+                status, _ = post("/api/collector/creators/primary/settings", {"comment_tracking_minutes": value})
+                self.assertEqual(status, 400)
+            status, error = post("/api/collector/run-once", {"creator_id": "primary"})
+            self.assertEqual(status, 400)
+            self.assertIn("设为 0", error["error"])
+            self.assertEqual(manager.run_requests, [])
+            status, _ = post("/api/collector/run-once", {
+                "creator_id": "primary", "video_url": "https://www.douyin.com/video/7678988051075051365",
+            })
+            self.assertEqual(status, 202)
+            self.assertEqual(manager.run_requests, ["primary"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
 
     def test_management_centre_lists_safe_data_and_streams_media_by_range(self) -> None:
         media_dir = self.root / "media-private"

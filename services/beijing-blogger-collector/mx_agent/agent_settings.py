@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .settings import CONFIG_DIR, ROOT_DIR, Settings
+from .settings import CONFIG_DIR, ROOT_DIR, Settings, comment_tracking_minutes
 
 
 ENV_PATH = Path(
@@ -91,7 +91,8 @@ def public_agent_settings(settings: Settings) -> dict[str, Any]:
         "creator_comments_enabled": settings.creator_comments_enabled,
         "creator_comment_limit": settings.creator_comment_limit,
         "creator_comment_refresh_minutes": settings.creator_comment_refresh_minutes,
-        "creator_comment_tracking_hours": settings.creator_comment_tracking_hours,
+        "creator_comment_tracking_hours": comment_tracking_minutes(settings) / 60,
+        "creator_comment_tracking_minutes": comment_tracking_minutes(settings),
         "api_keys_are_local": True,
         "restart_required": False,
     }
@@ -143,10 +144,9 @@ def update_agent_settings(settings: Settings, payload: dict[str, Any]) -> dict[s
 
     int_fields = {
         "creator_sync_interval_minutes": (3, 1440),
-        "creator_sync_history_limit": (1, 1000),
+        "creator_sync_history_limit": (0, 1000),
         "creator_comment_limit": (20, 50000),
         "creator_comment_refresh_minutes": (30, 1440),
-        "creator_comment_tracking_hours": (1, 720),
     }
     for field, (minimum, maximum) in int_fields.items():
         if field not in payload:
@@ -158,6 +158,15 @@ def update_agent_settings(settings: Settings, payload: dict[str, Any]) -> dict[s
         value = max(minimum, min(maximum, value))
         config[field] = value
         setattr(settings, field, value)
+
+    if any(field in payload for field in (
+        "creator_comment_tracking_minutes", "creator_comment_tracking_hours",
+    )):
+        minutes = comment_tracking_minutes(payload)
+        config["creator_comment_tracking_minutes"] = minutes
+        config["creator_comment_tracking_hours"] = minutes / 60
+        settings.creator_comment_tracking_minutes = minutes
+        settings.creator_comment_tracking_hours = minutes / 60
 
     if config.get("creator_sync_mode") == "realtime" and not str(
         config.get("creator_profile_url") or ""
